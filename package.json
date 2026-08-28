@@ -3,21 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Static, serverless P2P file transfer over WebRTC, authenticated by a QR-shared key.",
+  "description": "Tests and tooling for qrbeam. The site itself is built by Hugo and needs none of this.",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
     "test": "node --test",
-    "test:e2e": "node e2e/transfer.e2e.mjs"
+    "test:e2e": "hugo --gc && node e2e/transfer.e2e.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.61.1",
-    "vite": "^7.1.5"
-  },
-  "dependencies": {
-    "@noble/secp256k1": "^3.1.0",
-    "jsqr": "^1.4.0",
-    "qrcode-generator": "^2.0.4"
+    "playwright": "^1.61.1"
   }
 }

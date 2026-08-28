@@ -2,63 +2,87 @@
  * Two real browsers, one real file, over real public relays.
  *
  * The unit suite covers the crypto and the framing with fakes. This covers what
- * fakes cannot: that Nostr relays actually accept our events, that WebRTC
- * negotiates, that both peers land on the same SAS, and that the bytes arriving
- * at a download are the bytes that went in.
+ * fakes cannot: that Trystero pairs over live Nostr relays, that the modules
+ * load from the CDN under the page's CSP, that both peers land on the same SAS,
+ * and that the bytes arriving at a download are the bytes that went in.
  *
  * Kept out of `npm test` deliberately -- it needs a network and the goodwill of
  * public infrastructure, so it must never be the thing that fails a unit run.
- * Run it with `npm run test:e2e`.
+ * Run it with `npm run test:e2e`, which builds the site with Hugo first.
+ *
+ * Serves the built site from a small static server rather than a dev server, so
+ * the only tools involved are hugo and node.
  */
 
 import { chromium } from 'playwright'
-import { spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 
 const PORT = 4173
 const ORIGIN = `http://127.0.0.1:${PORT}`
+const ROOT = 'public'
 const TIMEOUT = 90_000
+
 // 1 MB is 64 chunks: enough to guarantee frames arrive in bursts rather than
 // one settled delivery at a time, which is the condition ordering bugs need.
 const PAYLOAD_BYTES = 1024 * 1024
 
-const sha = buf => createHash('sha256').update(buf).digest('hex')
-
-async function waitForServer(url, ms = 30_000) {
-  const deadline = Date.now() + ms
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return
-    } catch {
-      // Not up yet.
-    }
-    await new Promise(r => setTimeout(r, 250))
-  }
-  throw new Error(`Preview server never came up at ${url}`)
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
 }
 
+const sha = buf => createHash('sha256').update(buf).digest('hex')
 const log = (...a) => console.log('  ', ...a)
 
+function startServer(root, port) {
+  const server = http.createServer((req, res) => {
+    let pathname = decodeURIComponent(new URL(req.url, ORIGIN).pathname)
+    if (pathname.endsWith('/')) pathname += 'index.html'
+
+    // Confine to root: this serves a build directory, but a path-traversal hole
+    // in a test harness is still a path-traversal hole.
+    const file = path.join(root, path.normalize(pathname))
+    if (!path.resolve(file).startsWith(path.resolve(root))) {
+      res.writeHead(403).end('forbidden')
+      return
+    }
+
+    fs.readFile(file, (err, data) => {
+      if (err) {
+        res.writeHead(404).end('not found')
+        return
+      }
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream',
+      })
+      res.end(data)
+    })
+  })
+
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => resolve(server))
+  })
+}
+
 async function main() {
+  if (!fs.existsSync(path.join(ROOT, 'index.html'))) {
+    throw new Error(`No build found in ${ROOT}/. Run \`hugo\` first.`)
+  }
+
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qrbeam-e2e-'))
   const sourcePath = path.join(tmp, 'payload.bin')
   const payload = randomBytes(PAYLOAD_BYTES)
   fs.writeFileSync(sourcePath, payload)
 
-  // Spawned without a shell, straight at vite's entry point: `npx` through a
-  // shell needs shell:true, which Node now warns about because the arguments
-  // are concatenated rather than escaped.
-  const server = spawn(
-    process.execPath,
-    ['node_modules/vite/bin/vite.js', 'preview', '--port', String(PORT), '--strictPort'],
-    { stdio: 'ignore' },
-  )
-
   let browser
+  let server
   const pages = []
 
   /** On failure, say what each page was actually showing rather than just timing out. */
@@ -86,8 +110,8 @@ async function main() {
   }
 
   try {
-    await waitForServer(ORIGIN)
-    log('preview server up')
+    server = await startServer(ROOT, PORT)
+    log(`serving ${ROOT}/ at ${ORIGIN}`)
 
     browser = await chromium.launch({
       args: [
@@ -118,7 +142,6 @@ async function main() {
 
     const a = await context.newPage()
     const b = await context.newPage()
-
     pages.push(['sender', a], ['receiver', b])
 
     const errors = []
@@ -128,7 +151,7 @@ async function main() {
       page.on('console', m => {
         if (m.type() !== 'error') return
         // A public relay refusing a connection is the expected weather, not a
-        // fault -- it is the reason four are used at once. The transfer
+        // fault -- it is the reason several are used at once. The transfer
         // completing at all proves enough of them worked.
         if (/WebSocket connection to 'wss:\/\/[^']*' failed/.test(m.text())) {
           relayFailures.push(m.text().match(/wss:\/\/[^/']*/)?.[0] ?? 'unknown')
@@ -162,7 +185,7 @@ async function main() {
     await b.click('#screen-receive .manual summary')
     await b.fill('#manual-input', code)
     await b.click('#manual-form button[type=submit]')
-    log('receiver joined, negotiating...')
+    log('receiver joined, pairing via Trystero...')
 
     // --- both should reach the same SAS -------------------------------------
     await a.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
@@ -219,11 +242,7 @@ async function main() {
     throw error
   } finally {
     await browser?.close()
-    server.kill()
-    // vite preview spawns through a shell on Windows; make sure it is gone.
-    if (process.platform === 'win32' && server.pid) {
-      spawn('taskkill', ['/pid', String(server.pid), '/T', '/F'], { stdio: 'ignore' })
-    }
+    server?.close()
   }
 }
 

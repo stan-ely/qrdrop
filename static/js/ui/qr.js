@@ -9,15 +9,19 @@
  * whose job is to be read by a camera rather than a person.
  */
 
-import qrcode from 'qrcode-generator'
+import { qrcode, loadJsQR } from '../deps.js'
 
+/** Returns an <svg> element, so callers never have to touch innerHTML. */
 export function renderQR(text, { cellSize = 6, margin = 3 } = {}) {
   // Type 0 auto-sizes to the data; 'M' correction tolerates ~15% damage, which
   // is ample for a screen and keeps the modules large enough to scan easily.
   const qr = qrcode(0, 'M')
   qr.addData(text)
   qr.make()
-  return qr.createSvgTag({ cellSize, margin, scalable: true })
+
+  const template = document.createElement('template')
+  template.innerHTML = qr.createSvgTag({ cellSize, margin, scalable: true })
+  return template.content.firstElementChild
 }
 
 /**
@@ -42,7 +46,7 @@ async function createDetector() {
     }
   }
 
-  const { default: jsQR } = await import('jsqr')
+  const jsQR = await loadJsQR()
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
 

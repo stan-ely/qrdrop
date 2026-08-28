@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
   seal, open, sealControl, openControl, decodeHeader,
   TYPE_CHUNK, CHUNK_SIZE, HEADER_BYTES, MAX_FRAME_BYTES,
-} from '../src/transfer/frame.js'
+} from '../static/js/transfer/frame.js'
 
 const key = async () => crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
 const body = (n = 100, fill = 42) => new Uint8Array(n).fill(fill)

@@ -1,5 +1,8 @@
 node_modules/
 dist/
+public/
+resources/
+.hugo_build.lock
 .vite/
 *.local
 .DS_Store

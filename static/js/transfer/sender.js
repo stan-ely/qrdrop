@@ -45,7 +45,7 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
   channel.bufferedAmountLowThreshold = LOW_WATER
 
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
-  channel.send(await sealControl(key, nextControlIndex(), {
+  await channel.send(await sealControl(key, nextControlIndex(), {
     t: 'manifest',
     seq: fileSeq,
     name: file.name,
@@ -69,7 +69,11 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
     const chunk = new Uint8Array(await file.slice(start, start + CHUNK_SIZE).arrayBuffer())
     digest = await chainHash(digest, chunk)
 
-    channel.send(await seal(
+    // Awaited, not fired off: on a raw RTCDataChannel send() returns
+    // undefined and this costs nothing, but Trystero returns a promise that
+    // settles when the frame is actually out, which is the backpressure on
+    // that path since its internal buffer keeps bufferedAmount at zero.
+    await channel.send(await seal(
       key,
       { type: TYPE_CHUNK, fileSeq, index, last: index === totalChunks - 1 },
       chunk,
@@ -79,7 +83,7 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
     onProgress?.({ sent, total: file.size, chunk: index + 1, chunks: totalChunks })
   }
 
-  channel.send(await sealControl(key, nextControlIndex(), {
+  await channel.send(await sealControl(key, nextControlIndex(), {
     t: 'complete', seq: fileSeq, chunks: totalChunks, digest: hex(digest),
   }))
 

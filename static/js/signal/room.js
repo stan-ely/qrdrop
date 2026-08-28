@@ -1,0 +1,197 @@
+/**
+ * Pairing, via Trystero.
+ *
+ * Replaces the hand-written Nostr transport and WebRTC negotiation. Trystero
+ * handles relay connections, peer discovery, offer/answer, ICE, and the data
+ * channel; what stays ours is everything above it -- the ECDH session, the SAS,
+ * and the per-chunk AEAD in transfer/.
+ *
+ * WHY `password` IS NOT OPTIONAL HERE:
+ *
+ * Trystero owns the session descriptions now, so we can no longer seal the SDP
+ * ourselves. `password` is what replaces that: it encrypts session descriptions
+ * with AES-GCM as they cross the relays. Without it Trystero falls back to a
+ * key derived from the app ID and room name -- both of which any observer of
+ * the relay already has -- which would leave the DTLS fingerprint substitutable
+ * in transit, the exact man-in-the-middle this design exists to prevent.
+ *
+ * The password is HKDF output from the QR secret, so only someone holding the
+ * code can produce session descriptions either peer will accept.
+ *
+ * Our own ECDH still runs on top of that, and still uses the QR secret as its
+ * HKDF salt. So even if Trystero's signalling encryption were broken outright,
+ * file bytes stay closed: an attacker would also need the secret to derive the
+ * session key. The layers fail independently, which is the point of having two.
+ *
+ * API NOTE: Trystero 0.25 is object-based, not tuple-based. makeAction returns
+ * an object with `send()` and an assignable `onMessage`, and onPeerJoin /
+ * onPeerLeave are assigned rather than called. The older
+ * `const [send, receive] = room.makeAction(...)` form throws "object is not
+ * iterable" against this version.
+ */
+
+import { joinRoom } from '../deps.js'
+import { createEphemeralKeypair, exportPublicKey, establishSession } from '../crypto/session.js'
+import { fromBase64url, toBase64url } from '../crypto/secret.js'
+
+const APP_ID = 'qrbeam'
+const DEFAULT_TIMEOUT_MS = 60_000
+
+/**
+ * Pinned rather than using Trystero's built-in pool of ~44 relays, so the
+ * connect-src allowlist in layouts/index.html can name every host this page
+ * will ever contact. Passing `urls` makes Trystero use exactly this list and
+ * ignore its own.
+ *
+ * Chosen from Trystero's pool by actually connecting to each one. The obvious
+ * picks -- relay.damus.io, relay.nostr.band, relay.snort.social -- are the
+ * best-known Nostr relays and were all unreachable when this list was built;
+ * popularity and availability are not the same thing. Re-test before editing.
+ *
+ * If you change this list, update connect-src in layouts/index.html to match or
+ * the CSP will block the new relays.
+ */
+export const RELAYS = [
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+  'wss://relay.mostr.pub',
+  'wss://purplerelay.com',
+  'wss://nostr.data.haus',
+  'wss://relay.nostr.place',
+  'wss://nostr-01.yakihonne.com',
+  'wss://bucket.coracle.social',
+]
+
+/**
+ * STUN only. TURN entries can be added here: a relay costs no confidentiality,
+ * since it carries DTLS-wrapped frames that are themselves sealed under the
+ * session key, but it does show the operator both IPs and the transfer volume.
+ * Adding `iceTransportPolicy: 'relay'` to rtcConfig would additionally hide
+ * each peer's IP from the other, at the cost of requiring TURN to connect.
+ */
+export const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+]
+
+const toBytes = data => (data instanceof Uint8Array ? data : new Uint8Array(data))
+
+/**
+ * Joins the rendezvous and resolves once a peer is connected and session keys
+ * are agreed.
+ *
+ * `role` is 'host' for the peer that generated the QR, 'guest' for the scanner.
+ * It only decides which direction gets which key; both sides derive both.
+ */
+export async function openRoom({
+  topic,
+  password,
+  secret,
+  role,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  onStatus,
+}) {
+  // Generated BEFORE joining, deliberately. Awaiting anything between
+  // joinRoom() and assigning onPeerJoin leaves a window in which the other peer
+  // can join unobserved -- and that is the normal case here, not a rare one:
+  // the host is already sitting in the room when the guest scans, so the
+  // guest's very first discovery can land inside that gap and be lost.
+  const keypair = await createEphemeralKeypair()
+  const myPublic = toBase64url(await exportPublicKey(keypair))
+
+  const room = joinRoom(
+    {
+      appId: APP_ID,
+      password,
+      relayConfig: { urls: RELAYS },
+      rtcConfig: { iceServers: ICE_SERVERS },
+    },
+    topic,
+  )
+
+  const keyAction = room.makeAction('ecdh')
+  const frameAction = room.makeAction('frame')
+
+  let frameHandler = () => {}
+  frameAction.onMessage = data => frameHandler(toBytes(data))
+
+  onStatus?.('Waiting for the other device…')
+
+  const { session, peerId } = await new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('Timed out waiting for the other device')),
+      timeoutMs,
+    )
+    let settled = false
+
+    room.onPeerJoin = id => {
+      onStatus?.('Found the other device, agreeing keys…')
+      // Both sides fire this on connection, so both announce and both receive.
+      keyAction.send(myPublic, { target: id })
+    }
+
+    keyAction.onMessage = async (peerPublic, { peerId: id }) => {
+      // A third party holding the code could also join. We pair with whoever
+      // arrives first and ignore the rest; the SAS is what surfaces a wrong
+      // partner to the user.
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+
+      try {
+        resolve({
+          peerId: id,
+          session: await establishSession({
+            keypair,
+            peerPublicRaw: fromBase64url(peerPublic),
+            secret,
+            role,
+          }),
+        })
+      } catch (error) {
+        reject(error)
+      }
+    }
+  })
+
+  return {
+    session,
+    peerId,
+
+    /**
+     * Adapter matching what transfer/sender.js and receiver.js expect.
+     *
+     * send() returns Trystero's promise, which settles when local sending is
+     * complete, and sender.js awaits it -- that await IS the backpressure now.
+     * Trystero manages the data channel's buffer internally, so bufferedAmount
+     * stays 0 and the manual high/low watermark logic in sender.js never fires
+     * on this path.
+     */
+    channel: {
+      send: bytes => frameAction.send(bytes, { target: peerId }),
+      bufferedAmount: 0,
+      bufferedAmountLowThreshold: 0,
+      addEventListener() {},
+      removeEventListener() {},
+    },
+
+    /** Register the inbound frame handler. */
+    onFrame(callback) {
+      frameHandler = callback
+    },
+
+    onPeerLeave(callback) {
+      room.onPeerLeave = id => {
+        if (id === peerId) callback()
+      }
+    },
+
+    close() {
+      try {
+        room.leave()
+      } catch {
+        // Already gone.
+      }
+    },
+  }
+}

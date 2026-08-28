@@ -54,10 +54,20 @@ export async function deriveTopic(secret, epoch = null) {
   return toBase64url(await hkdf(secret, info, TOPIC_BYTES))
 }
 
-/** AES-GCM key protecting the signalling payload (SDP + ECDH public keys). */
-export async function deriveSignalKey(secret) {
-  const raw = await hkdf(secret, 'signal', 32)
-  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt'])
+/**
+ * The password Trystero uses to encrypt session descriptions.
+ *
+ * Returned as a string because that is what Trystero's config takes; it hands
+ * it to PBKDF2 internally. The entropy is ours either way -- this is 256 bits
+ * of HKDF output, not a passphrase -- so the stretching is redundant rather
+ * than load-bearing.
+ *
+ * Trystero without a password derives its key from the app ID and room name,
+ * both of which any relay observer already has. That would leave the DTLS
+ * fingerprint substitutable in transit, so this is not optional.
+ */
+export async function derivePassword(secret) {
+  return toBase64url(await hkdf(secret, 'signal', 32))
 }
 
 export function toBase64url(bytes) {

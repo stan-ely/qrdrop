@@ -1,13 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { generateSecret } from '../src/crypto/secret.js'
-import { createEphemeralKeypair, exportPublicKey, establishSession } from '../src/crypto/session.js'
-import { createControlStream } from '../src/transfer/control.js'
-import { createReceiver } from '../src/transfer/receiver.js'
-import { sendFile } from '../src/transfer/sender.js'
-import { CHUNK_SIZE } from '../src/transfer/frame.js'
-import { safeFilename } from '../src/transfer/sink.js'
+import { generateSecret } from '../static/js/crypto/secret.js'
+import { createEphemeralKeypair, exportPublicKey, establishSession } from '../static/js/crypto/session.js'
+import { createControlStream } from '../static/js/transfer/control.js'
+import { createReceiver } from '../static/js/transfer/receiver.js'
+import { sendFile } from '../static/js/transfer/sender.js'
+import { CHUNK_SIZE } from '../static/js/transfer/frame.js'
+import { safeFilename } from '../static/js/transfer/sink.js'
 
 /**
  * A DataChannel stand-in.

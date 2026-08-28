@@ -11,9 +11,8 @@
  *     a save destination (see transfer/sink.js)
  */
 
-import { generateSecret, encodeSecret, decodeSecret, deriveTopic, deriveSignalKey } from './crypto/secret.js'
-import { joinRendezvous } from './signal/nostr.js'
-import { connectPeers } from './signal/webrtc.js'
+import { generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword } from './crypto/secret.js'
+import { openRoom } from './signal/room.js'
 import { createControlStream } from './transfer/control.js'
 import { createReceiver } from './transfer/receiver.js'
 import { sendFile } from './transfer/sender.js'
@@ -33,9 +32,23 @@ if (window.top !== window.self) {
 const $ = id => document.getElementById(id)
 
 const SCREENS = ['choose', 'send', 'receive', 'verify', 'transfer', 'done']
+
+/**
+ * Whether the exchange has reached a terminal state.
+ *
+ * Both peers call room.close() once a transfer finishes, so each one sees the
+ * other disappear. Without this flag that normal ending is reported as "The
+ * other device disconnected" on a screen that has just said the transfer
+ * succeeded. A disconnect still needs reporting while a transfer is live --
+ * that is what rescues a sender otherwise blocked forever waiting for a 'done'
+ * that is never coming -- so the signal is suppressed rather than removed.
+ */
+let sessionEnded = false
+
 const show = name => {
   for (const s of SCREENS) $(`screen-${s}`).hidden = s !== name
   $('error').hidden = true
+  if (name === 'done') sessionEnded = true
 }
 
 const fail = error => {
@@ -81,16 +94,16 @@ function reset() {
   show('choose')
 }
 
-/** Everything both roles need once the channel is up. */
-function attachReceiver({ channel, session, onOffer, onProgress, onFileDone }) {
+/** Everything both roles need once the room is up. */
+function attachReceiver({ room, onOffer, onProgress, onFileDone }) {
   const control = createControlStream()
   let controlOut = 0
   const nextControlIndex = () => controlOut++
 
   const receiver = createReceiver({
-    channel,
-    sendKey: session.sendKey,
-    recvKey: session.recvKey,
+    channel: room.channel,
+    sendKey: room.session.sendKey,
+    recvKey: room.session.recvKey,
     control,
     nextControlIndex,
     onOffer,
@@ -99,9 +112,8 @@ function attachReceiver({ channel, session, onOffer, onProgress, onFileDone }) {
     onError: failTransfer,
   })
 
-  channel.addEventListener('message', ev => {
-    receiver.handleFrame(new Uint8Array(ev.data)).catch(fail)
-  })
+  // handleFrame serialises internally, so a burst of frames cannot race.
+  room.onFrame(frame => { receiver.handleFrame(frame).catch(fail) })
 
   return { control, nextControlIndex }
 }
@@ -114,63 +126,42 @@ function trackProgress({ statusEl, verb }) {
   }
 }
 
-/** Opens the rendezvous and brings up the peer connection. Shared by both roles. */
+/** Opens the rendezvous and pairs. Shared by both roles. */
 async function establish({ secret, role, statusEl }) {
-  const [topic, signalKey] = await Promise.all([deriveTopic(secret), deriveSignalKey(secret)])
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
 
-  const signal = joinRendezvous({
+  const room = await openRoom({
     topic,
-    signalKey,
-    onStatus: ({ connected, total }) => {
-      if (!connected) statusEl.textContent = 'Connecting to relays…'
-      else statusEl.textContent = `Waiting for the other device… (${connected}/${total} relays)`
-    },
-  })
-
-  const controller = new AbortController()
-  teardown = () => { controller.abort(); signal.close() }
-
-  const peer = await connectPeers({
-    signal,
-    role,
+    password,
     secret,
-    onState: s => { if (s === 'connected') statusEl.textContent = 'Connected' },
+    role,
+    onStatus: text => { statusEl.textContent = text },
   })
 
-  // The rendezvous is not closed the moment the channel opens. ICE keeps
-  // trickling after that, and a better route discovered a second later still
-  // needs a path to reach the peer. Holding the relays briefly costs a few
-  // idle sockets; closing too early costs a connection that cannot recover.
-  const relayLinger = setTimeout(() => signal.close(), 15_000)
+  sessionEnded = false
+  teardown = () => room.close()
+  room.onPeerLeave(() => {
+    if (!sessionEnded) fail(new Error('The other device disconnected.'))
+  })
 
-  teardown = () => {
-    clearTimeout(relayLinger)
-    controller.abort()
-    signal.close()
-    peer.close()
-  }
-
-  return peer
+  return room
 }
 
 async function startSend(file) {
   const secret = generateSecret()
   const code = encodeSecret(secret)
 
-  $('qr').innerHTML = renderQR(code)
+  $('qr').replaceChildren(renderQR(code))
   $('manual-code').textContent = code
   show('send')
 
-  const peer = await establish({ secret, role: 'host', statusEl: $('send-status') })
-  const { control, nextControlIndex } = attachReceiver({
-    channel: peer.channel,
-    session: peer.session,
-  })
+  const room = await establish({ secret, role: 'host', statusEl: $('send-status') })
+  const { control, nextControlIndex } = attachReceiver({ room })
 
   // Verify before anything about the file leaves this device -- the manifest
   // alone would disclose its name and size.
   show('verify')
-  $('sas').textContent = peer.session.sas
+  $('sas').textContent = room.session.sas
 
   const go = document.createElement('button')
   go.className = 'primary'
@@ -185,14 +176,16 @@ async function startSend(file) {
 
     try {
       const result = await sendFile({
-        channel: peer.channel,
-        key: peer.session.sendKey,
+        channel: room.channel,
+        key: room.session.sendKey,
         file,
         fileSeq: 0,
         control,
         nextControlIndex,
         onProgress: trackProgress({ statusEl: $('transfer-status'), verb: 'Sent' }),
       })
+
+      sessionEnded = true
 
       if (result.declined) {
         show('done')
@@ -209,20 +202,18 @@ async function startSend(file) {
     } catch (error) {
       failTransfer(error)
     } finally {
-      peer.close()
+      room.close()
     }
   }, { once: true })
 }
 
 async function startReceive(secret) {
-  const peer = await establish({ secret, role: 'guest', statusEl: $('receive-status') })
+  const room = await establish({ secret, role: 'guest', statusEl: $('receive-status') })
 
-  // Handlers go on before anything is drawn. A DataChannel drops messages that
-  // arrive with no listener attached, and the sender is free to offer the
-  // moment its side is up.
+  // Handlers go on before anything is drawn, so a manifest arriving the instant
+  // the sender is ready has somewhere to land.
   attachReceiver({
-    channel: peer.channel,
-    session: peer.session,
+    room,
 
     onOffer: ({ manifest, accept, decline }) => {
       const name = document.createTextNode(`${manifest.name} (${bytes(manifest.size)}) `)
@@ -257,16 +248,17 @@ async function startReceive(secret) {
     onProgress: trackProgress({ statusEl: $('transfer-status'), verb: 'Received' }),
 
     onFileDone: file => {
+      sessionEnded = true
       show('done')
       $('done-title').textContent = 'Received'
       $('done-file').textContent = file.name
       $('done-digest').textContent = file.digest
-      peer.close()
+      room.close()
     },
   })
 
   show('verify')
-  $('sas').textContent = peer.session.sas
+  $('sas').textContent = room.session.sas
   $('verify-status').textContent = 'Waiting for the sender to offer a file…'
 }
 

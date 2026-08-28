@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 
 import {
   generateSecret, encodeSecret, decodeSecret, deriveTopic, toBase64url,
-} from '../src/crypto/secret.js'
+} from '../static/js/crypto/secret.js'
 import {
   createEphemeralKeypair, exportPublicKey, establishSession,
-} from '../src/crypto/session.js'
+} from '../static/js/crypto/session.js'
 
 const bytesEqual = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0
 const decrypts = async (key, iv, ct) => {

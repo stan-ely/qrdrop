@@ -32,6 +32,7 @@ export function createReceiver({
 
   const sendControl = async obj => channel.send(await sealControl(sendKey, nextControlIndex(), obj))
 
+
   /**
    * Tell the peer before giving up locally.
    *
