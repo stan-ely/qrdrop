@@ -26,28 +26,85 @@ import {
   generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword,
   openRoom, STRATEGIES, RELAYED_MAX_BYTES, createControlStream, createReceiver, sendFile,
 } from './index.js'
+import { encodeSecretURL } from './core/secret.js'
+import { bytes as formatBytes } from './core/format.js'
+import { relayCapMessage, relayCapDeclineMessage, PEER_DISCONNECTED } from './core/messages.js'
 import { createFileSink, fromPath, renderQRToTerminal, loadRTCPolyfill } from './node/index.js'
+import { styleFor } from './cli/style.js'
+
+/**
+ * The options table `--help` is generated from, rather than a hand-aligned
+ * literal. `--strategy <name>` used to overrun the description column while
+ * `--relay`/`--yes` sat one column to its left -- a one-line diff to any flag
+ * name would silently reintroduce that drift in a literal. Computing the
+ * column from the longest flag, once, makes it impossible instead of just
+ * fixed-for-now.
+ *
+ * @type {ReadonlyArray<{ flag: string, desc: readonly string[] }>}
+ */
+const OPTIONS = [
+  { flag: '--no-qr', desc: [
+    `Don't draw the QR code (the qrdrop:... code is always printed too)`,
+  ] },
+  { flag: '--out <dir>', desc: [
+    'Directory to save into (receive only; default: current directory)',
+  ] },
+  { flag: '--strategy <name>', desc: [
+    'Pair over one signalling network only: nostr or torrent.',
+    'Default races both and uses whichever connects first.',
+  ] },
+  { flag: '--relay <url>', desc: [
+    'Pair over Nostr only, using these relays instead of the',
+    'built-in list (repeatable; implies --strategy nostr)',
+  ] },
+  { flag: '--qr-url <base>', desc: [
+    'Encode the QR as <base>#qrdrop:<code> so a phone camera can',
+    'open the web app directly, instead of a code no camera app',
+    'can follow. No default: that would silently point CLI users',
+    `at a host they didn't choose -- see the code comment on`,
+    '--qr-url below.',
+  ] },
+  { flag: '--yes', desc: [
+    `Skip the "accept this file?" prompt on receive.`,
+    'Never skips the code-match confirmation -- see below.',
+  ] },
+  { flag: '--debug', desc: [
+    'Print stack traces instead of one-line error messages',
+  ] },
+  { flag: '--help', desc: [
+    'Show this message',
+  ] },
+  { flag: '--version', desc: [
+    'Show the installed version',
+  ] },
+]
+
+// Two spaces of gap after the longest flag, so nothing ever butts up against
+// its own description the way --strategy <name> used to.
+const DESC_COL = 2 + Math.max(...OPTIONS.map(o => o.flag.length)) + 2
+
+/**
+ * @param {ReadonlyArray<{ flag: string, desc: readonly string[] }>} options
+ * @returns {string}
+ */
+function formatOptions(options) {
+  return options.map(({ flag, desc }) => {
+    const pad = ' '.repeat(DESC_COL - 2 - flag.length)
+    const indent = ' '.repeat(DESC_COL)
+    return desc.map((line, i) => (i === 0 ? `  ${flag}${pad}${line}` : `${indent}${line}`)).join('\n')
+  }).join('\n')
+}
 
 const USAGE = `qrdrop -- send a file peer-to-peer, keyed by a QR code
 
 Usage:
-  qrdrop send <file> [--no-qr] [--yes] [--strategy <name>] [--relay <url>]... [--debug]
+  qrdrop send <file> [--no-qr] [--yes] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
   qrdrop receive [code] [--out <dir>] [--yes] [--strategy <name>] [--relay <url>]... [--debug]
   qrdrop --help
   qrdrop --version
 
 Options:
-  --no-qr          Don't draw the QR code (the qrdrop:... code is always printed too)
-  --out <dir>      Directory to save into (receive only; default: current directory)
-  --strategy <name> Pair over one signalling network only: nostr or torrent.
-                    Default races both and uses whichever connects first.
-  --relay <url>    Pair over Nostr only, using these relays instead of the
-                    built-in list (repeatable; implies --strategy nostr)
-  --yes            Skip the "accept this file?" prompt on receive.
-                    Never skips the code-match confirmation -- see below.
-  --debug          Print stack traces instead of one-line error messages
-  --help           Show this message
-  --version        Show the installed version
+${formatOptions(OPTIONS)}
 
 A transfer that ends up going through a public TURN relay (rare -- only when a
 direct connection cannot be made) is capped at ${Math.round(RELAYED_MAX_BYTES / (1024 * 1024))} MB.
@@ -57,16 +114,6 @@ confirm they match on both devices before anything about the file moves. That
 check is what stops a third party from slipping into the exchange; --yes does
 not and cannot skip it.
 `
-
-/** @param {number} n */
-function formatBytes(n) {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let v = n / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
-}
 
 class UsageError extends Error {}
 
@@ -220,6 +267,10 @@ function resolveStrategies({ relays, strategy }) {
 async function establish({ secret, role, relays, strategy, prompter }) {
   const rtcPolyfill = await loadRTCPolyfill()
   const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  // The SAS prompt is asked through the readline interface, whose output is
+  // wired to stdout in main() -- so its colour decision is stdout's, not the
+  // stderr write two lines below.
+  const style = styleFor(process.stdout)
 
   process.stderr.write('Waiting for the other device…\n')
   const room = await openRoom({
@@ -232,8 +283,19 @@ async function establish({ secret, role, relays, strategy, prompter }) {
     onStatus: text => process.stderr.write(`${text}\n`),
   })
 
+  // Each emoji is shown next to its word name (session.js's sasWords, same
+  // order as the emoji in session.sas) so two people on a phone call can read
+  // the code aloud and agree on it without both staring at the same screen --
+  // "cactus" survives a bad connection in a way that describing a small green
+  // emoji does not. The raw emoji from session.sas are still exactly what is
+  // on screen; only the words are added alongside them.
+  const withWords = room.session.sas
+    .split(' ')
+    .map((emoji, i) => `${emoji} ${room.session.sasWords[i]}`)
+    .join('   ')
+
   const matched = await prompter.confirm(
-    `\nBoth devices should be showing:\n\n  ${room.session.sas}\n\nDo they match?`,
+    `\nBoth devices should be showing:\n\n  ${style.bold(withWords)}\n\nDo they match?`,
   )
   if (!matched) {
     room.close()
@@ -249,20 +311,27 @@ async function establish({ secret, role, relays, strategy, prompter }) {
  * @param {boolean} args.showQR
  * @param {readonly string[] | undefined} args.relays
  * @param {string | undefined} args.strategy
+ * @param {string | undefined} args.qrUrl
  * @param {ReturnType<typeof makePrompter>} args.prompter
  */
-async function runSend({ filePath, showQR, relays, strategy, prompter }) {
+async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) {
   const source = await fromPath(filePath)
+  const style = styleFor(process.stdout)
   let room
 
   try {
     const secret = generateSecret()
     const code = encodeSecret(secret)
 
-    if (showQR) {
-      process.stdout.write(`\n${renderQRToTerminal(code)}\n\n`)
-    }
-    process.stdout.write(`Code: ${code}\n`)
+    // --qr-url, when given, is the only thing that changes what the QR
+    // encodes -- see the flag's own comment in parseCliArgs for why there is
+    // no default to fall back to here. The bare code is printed either way,
+    // labelled "Code:": e2e/interop.e2e.mjs and every "type the code in by
+    // hand" path depend on that exact form still being there.
+    const qrText = qrUrl ? encodeSecretURL(secret, qrUrl) : code
+    if (showQR) process.stdout.write(`\n${renderQRToTerminal(qrText)}\n\n`)
+    if (qrUrl) process.stdout.write(`URL: ${style.accent(qrText)}\n`)
+    process.stdout.write(`Code: ${style.accent(code)}\n`)
 
     const sessionEnded = { done: false }
     room = await establish({ secret, role: 'host', relays, strategy, prompter })
@@ -270,11 +339,7 @@ async function runSend({ filePath, showQR, relays, strategy, prompter }) {
     // Free TURN is metered; a large file over it will be throttled or cut.
     // Refuse before the manifest goes out rather than fail partway through.
     if (source.size > RELAYED_MAX_BYTES && await room.isRelayed()) {
-      throw new Error(
-        `This connection is going through a public relay, capped at `
-        + `${formatBytes(RELAYED_MAX_BYTES)}. ${source.name} is ${formatBytes(source.size)}. `
-        + `Try again on a network where a direct connection is possible.`,
-      )
+      throw new Error(relayCapMessage({ name: source.name, size: source.size, limit: RELAYED_MAX_BYTES }))
     }
     const { control, nextControlIndex } = attachReceiver({ room, createSink: async () => {
       throw new Error('Peer tried to send us a file mid-send')
@@ -293,7 +358,7 @@ async function runSend({ filePath, showQR, relays, strategy, prompter }) {
     // interop e2e caught that as 'The other device disconnected.' printed
     // immediately before 'Sent.'
     room.onPeerLeave(() => {
-      if (!sessionEnded.done) control.fail(new Error('The other device disconnected.'))
+      if (!sessionEnded.done) control.fail(new Error(PEER_DISCONNECTED))
     })
 
     process.stdout.write(`\nSending ${source.name} (${formatBytes(source.size)})…\n`)
@@ -314,11 +379,11 @@ async function runSend({ filePath, showQR, relays, strategy, prompter }) {
     sessionEnded.done = true
 
     if (result.declined) {
-      process.stdout.write('The other device declined the file.\n')
+      process.stdout.write(`${style.warn('The other device declined the file.')}\n`)
       return 1
     }
 
-    process.stdout.write(`Sent. digest=${result.digest}\n`)
+    process.stdout.write(`${style.ok('Sent.')} digest=${result.digest}\n`)
     return 0
   } finally {
     room?.close()
@@ -339,6 +404,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
   const raw = code ?? await prompter.ask('Code: ')
   const secret = decodeSecret(raw)
   const createSink = createFileSink({ outDir })
+  const style = styleFor(process.stdout)
 
   /** @type {PairedRoom | undefined} */
   let room
@@ -373,7 +439,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
       // pending with nothing to settle it. Rejecting is what turns that into
       // a reported failure instead of a process that never exits.
       paired.onPeerLeave(() => {
-        if (!sessionEnded.done) reject(new Error('The other device disconnected.'))
+        if (!sessionEnded.done) reject(new Error(PEER_DISCONNECTED))
       })
 
       attachReceiver({
@@ -389,10 +455,10 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
           ;(async () => {
             try {
               if (manifest.size > RELAYED_MAX_BYTES && await paired.isRelayed()) {
-                process.stdout.write(
-                  `\nRefused: ${describe} is over the ${formatBytes(RELAYED_MAX_BYTES)} limit `
-                  + `for a transfer going through a public relay.\n`,
-                )
+                const refusal = relayCapDeclineMessage({
+                  name: manifest.name, size: manifest.size, limit: RELAYED_MAX_BYTES,
+                })
+                process.stdout.write(`\n${style.warn(`Refused: ${refusal}`)}\n`)
                 await decline()
                 resolve({ kind: 'declined' })
                 return
@@ -416,11 +482,11 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
     sessionEnded.done = true
 
     if (outcome.kind === 'declined') {
-      process.stdout.write('Declined.\n')
+      process.stdout.write(`${style.warn('Declined.')}\n`)
       return 0
     }
 
-    process.stdout.write(`Received ${outcome.file.name}. digest=${outcome.file.digest}\n`)
+    process.stdout.write(`${style.ok(`Received ${outcome.file.name}.`)} digest=${outcome.file.digest}\n`)
     return 0
   } finally {
     room?.close()
@@ -438,7 +504,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
  * @typedef {
  *   | { command: 'help' }
  *   | { command: 'version' }
- *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, debug: boolean }
+ *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, qrUrl: string | undefined, debug: boolean }
  *   | { command: 'receive', code: string | undefined, outDir: string, assumeYes: boolean, relays: readonly string[] | undefined, strategy: string | undefined, debug: boolean }
  * } ParsedArgs
  */
@@ -474,6 +540,11 @@ function parseCliArgs(argv) {
       out: { type: 'string', default: '.' },
       relay: { type: 'string', multiple: true },
       strategy: { type: 'string' },
+      // No default -- deliberately. A default here would be a hosted origin
+      // this project doesn't control, and every CLI user who never asked for
+      // it would have their code silently start pointing a scanning phone at
+      // that origin instead of at nothing. Send-only, and opt-in per run.
+      'qr-url': { type: 'string' },
       debug: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -493,6 +564,7 @@ function parseCliArgs(argv) {
       showQR: !values['no-qr'] && Boolean(process.stdout.isTTY),
       relays: values.relay,
       strategy: values.strategy,
+      qrUrl: values['qr-url'],
       debug: values.debug,
     }
   }
@@ -546,7 +618,7 @@ async function main() {
     if (parsed.command === 'send') {
       return await runSend({
         filePath: parsed.filePath, showQR: parsed.showQR,
-        relays: parsed.relays, strategy: parsed.strategy, prompter,
+        relays: parsed.relays, strategy: parsed.strategy, qrUrl: parsed.qrUrl, prompter,
       })
     }
     return await runReceive({
@@ -557,7 +629,8 @@ async function main() {
     if (parsed.debug) {
       console.error(error)
     } else {
-      process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`)
+      const style = styleFor(process.stderr)
+      process.stderr.write(`${style.bad('Error:')} ${error instanceof Error ? error.message : String(error)}\n`)
     }
     return 1
   } finally {

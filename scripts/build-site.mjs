@@ -21,6 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { SIGNALING_URLS } from '../src/transport/room.js'
+import { tokensCSS } from '../src/web/tokens.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const SITE = path.join(ROOT, 'site')
@@ -178,7 +179,16 @@ async function main() {
     )
   }
 
-  await copyFile(path.join(SITE, 'styles.css'), path.join(DIST, 'styles.css'))
+  // site/styles.css consumes tokens (--bg, --sp-*, --fs-*, ...) but no longer
+  // defines them -- see the comment at the top of that file. Writing the
+  // dist copy is therefore `tokensCSS(':root') + the file`, not a copyFile,
+  // so the page gets the same token values the component defines for its own
+  // shadow root (src/web/tokens.js, via src/web/styles.js). Two token lists
+  // that must agree but are not the same list is exactly the footgun
+  // `buildCSP` above avoids for the CSP allowlist: one generator, read from
+  // two places, instead of a second list someone has to remember to update.
+  const siteCSS = await readFile(path.join(SITE, 'styles.css'), 'utf8')
+  await writeFile(path.join(DIST, 'styles.css'), tokensCSS(':root') + siteCSS)
   await copyFile(path.join(SITE, '_headers'), path.join(DIST, '_headers'))
   await writeFile(path.join(DIST, 'CNAME'), 'share.stan-ely.com\n')
 

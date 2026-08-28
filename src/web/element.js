@@ -1,5 +1,6 @@
 /**
- * The `<qr-drop>` custom element: screen flow and wiring.
+ * The `<qr-drop>` custom element: session wiring, teardown, and the DOM the
+ * pure `render()` cannot own.
  *
  * Both peers run a receiver, always. A sending peer still has to read the
  * accept/done/error replies coming back, and those arrive as control frames on
@@ -15,9 +16,8 @@
  * package export -- a consumer embedding qrdrop into their own site would
  * collide on every id the moment they had two of anything on the page, or
  * even one <qr-drop> twice. A shadow root gives this component its own
- * element scope: `$()` below is a shadow-scoped querySelector, so the ids are
- * only unique within one instance, the way ids in a component are supposed to
- * work.
+ * element scope: ids in the rendered markup are only unique within one
+ * instance, the way ids in a component are supposed to work.
  *
  * The frame-refusal check that used to live at the top of this file (refusing
  * to run inside an iframe) is NOT here any more -- see site/main.js. A page
@@ -26,322 +26,108 @@
  * some *other*, unrelated page decided to frame the specific deployment at
  * share.stan-ely.com. That refusal is a property of the hosted site, not of
  * the component, so it moved to the site's own entry point.
+ *
+ * WHY THIS FILE IS SMALL NOW: src/web/view.js is a pure function from a plain
+ * state object to a vnode tree, and src/web/vdom.js turns that into real DOM.
+ * What is left here is exactly what a pure function cannot hold: the
+ * session/room objects, the receiver wiring, teardown, the `_sessionEnded`
+ * flag, and the handful of native browser events (drag, drop, paste,
+ * `location.hash`) that happen to the whole component rather than to any one
+ * rendered element.
  */
 
-import { generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword } from '../core/secret.js'
+import {
+  generateSecret, encodeSecret, encodeSecretURL, decodeSecret, deriveTopic, derivePassword,
+} from '../core/secret.js'
 import { openRoom, RELAYED_MAX_BYTES } from '../transport/room.js'
 import { createControlStream } from '../core/control.js'
 import { createReceiver } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
+import { relayCapMessage, relayCapDeclineMessage, PEER_DISCONNECTED } from '../core/messages.js'
+import { bytes } from '../core/format.js'
 import { createSink, canStreamToDisk } from './sink.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
 import { fromFile } from './source.js'
-
-const SCREENS = ['choose', 'send', 'receive', 'verify', 'transfer', 'done']
+import { patch } from './vdom.js'
+import { render } from './view.js'
+import { copyText } from './copy.js'
+import { STYLES } from './styles.js'
 
 /**
- * The component's markup and styling, built once per instance into the shadow
- * root. Shadow DOM does not inherit page stylesheets -- that isolation is the
- * whole point of using one -- so the page's styles.css is inlined here as a
- * <style> block rather than linked. That is also what makes the element
- * self-contained: drop it into any page and it looks right without that page
- * remembering to also load a stylesheet.
- *
- * The CSS below is the former site/styles.css verbatim; only its selectors'
- * meaning changed (they now resolve inside the shadow tree instead of the
- * document). See site/index.html for the light-DOM page chrome (h1, tagline,
- * footer disclosure) that intentionally stays outside this element, since it
- * is content about the *page*, not about the component.
+ * Shown on the choose screen only when this browser cannot stream a
+ * download straight to disk (see web/sink.js's canStreamToDisk). Computed
+ * once per instance -- the capability does not change mid-session.
  */
-const TEMPLATE = document.createElement('template')
-TEMPLATE.innerHTML = `
-<style>
-:host {
-  all: initial;
-  display: block;
-  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  color: var(--text);
-}
+const CAPABILITY_NOTE =
+  'This browser cannot stream downloads to disk, so received files are held in '
+  + 'memory until complete. Expect trouble much above a gigabyte.'
 
-:host {
-  --bg: #fbfbfa;
-  --surface: #ffffff;
-  --text: #1a1a19;
-  --muted: #6b6b66;
-  --line: #e3e3df;
-  --accent: #b8563a;
-  --accent-text: #ffffff;
-  --ok: #2f6f4e;
-  --bad: #a33328;
-  --radius: 10px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :host {
-    --bg: #16161a;
-    --surface: #1f1f24;
-    --text: #ecebe8;
-    --muted: #9d9d98;
-    --line: #33333a;
-    --accent: #d4735a;
-    --accent-text: #17171a;
-    --ok: #7fc39b;
-    --bad: #e08b7f;
+/**
+ * One CSSStyleSheet for every instance on the page. Null on browsers without
+ * constructable stylesheets, which fall back to a <style> child; see the
+ * constructor.
+ * @type {CSSStyleSheet | null}
+ */
+const SHEET = (() => {
+  try {
+    const sheet = new CSSStyleSheet()
+    sheet.replaceSync(STYLES)
+    return sheet
+  } catch {
+    return null
   }
-}
-
-* { box-sizing: border-box; }
-
-h2 {
-  margin: 0 0 1rem;
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-section {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-}
-
-button {
-  font: inherit;
-  font-weight: 500;
-  padding: 0.6rem 1.1rem;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-button:hover { border-color: var(--muted); }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button:disabled { opacity: 0.5; cursor: default; }
-
-button.primary {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: transparent;
-}
-
-button.ghost {
-  border: none;
-  background: none;
-  color: var(--muted);
-  padding-left: 0;
-  margin-top: 0.75rem;
-}
-
-.choices { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-.choices button { flex: 1 1 12rem; }
-
-/* Always light, whatever the page theme: scanners read dark-on-light best. */
-.qr {
-  background: #ffffff;
-  border-radius: 8px;
-  padding: 0.75rem;
-  width: min(16rem, 100%);
-  margin: 0 auto 1.25rem;
-}
-.qr svg { display: block; width: 100%; height: auto; }
-
-.scanner {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  background: #000;
-  border-radius: 8px;
-  margin-bottom: 1rem;
-}
-
-.sas {
-  font-size: 2.4rem;
-  letter-spacing: 0.3em;
-  text-align: center;
-  margin: 1.25rem 0;
-  /* Emoji fonts vary; give the glyphs room so they cannot be mistaken. */
-  line-height: 1.4;
-}
-
-.code {
-  display: block;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
-  word-break: break-all;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.6rem;
-  margin-top: 0.5rem;
-}
-
-.bar {
-  height: 6px;
-  background: var(--line);
-  border-radius: 999px;
-  overflow: hidden;
-  margin: 1rem 0 0.75rem;
-}
-
-.bar-fill {
-  height: 100%;
-  width: var(--progress, 0%);
-  background: var(--accent);
-  border-radius: 999px;
-  transition: width 0.2s ease-out;
-}
-
-.status { color: var(--muted); font-size: 0.875rem; margin: 0.5rem 0 0; }
-.note { color: var(--muted); font-size: 0.8rem; }
-.filename { font-weight: 600; margin: 0; word-break: break-all; }
-
-.error {
-  margin-top: 1rem;
-  padding: 0.85rem 1rem;
-  border-radius: 8px;
-  border: 1px solid var(--bad);
-  color: var(--bad);
-  font-size: 0.875rem;
-}
-
-.manual { margin-top: 1rem; }
-
-summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-#manual-form { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
-
-input[type="text"] {
-  flex: 1;
-  font: inherit;
-  font-size: 0.875rem;
-  padding: 0.55rem 0.7rem;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--text);
-  min-width: 0;
-}
-
-section + section { margin-top: 1.5rem; }
-
-@media (max-width: 30rem) {
-  section { padding: 1.15rem; }
-  .sas { font-size: 1.9rem; letter-spacing: 0.2em; }
-}
-</style>
-
-<section id="screen-choose">
-  <div class="choices">
-    <button id="btn-send" class="primary">Send a file</button>
-    <button id="btn-receive">Receive a file</button>
-  </div>
-  <p class="note" id="capability-note" hidden></p>
-</section>
-
-<section id="screen-send" hidden>
-  <h2>Scan this on the other device</h2>
-  <div id="qr" class="qr"></div>
-
-  <details class="manual">
-    <summary>Can't scan? Use the code instead</summary>
-    <p class="note">Read this out or paste it into the other device. Anyone who
-      learns it can join this transfer, so treat it like a password.</p>
-    <code id="manual-code" class="code"></code>
-  </details>
-
-  <p class="status" id="send-status">Starting…</p>
-  <button id="send-cancel" class="ghost">Cancel</button>
-</section>
-
-<section id="screen-receive" hidden>
-  <h2>Scan the sender's code</h2>
-  <video id="scanner" class="scanner" muted playsinline></video>
-
-  <details class="manual">
-    <summary>Enter the code by hand</summary>
-    <form id="manual-form">
-      <input id="manual-input" type="text" placeholder="qrdrop:…" autocomplete="off"
-             spellcheck="false" aria-label="Transfer code">
-      <button type="submit">Join</button>
-    </form>
-  </details>
-
-  <p class="status" id="receive-status"></p>
-  <button id="receive-cancel" class="ghost">Cancel</button>
-</section>
-
-<section id="screen-verify" hidden>
-  <h2>Check both devices show the same symbols</h2>
-  <p class="sas" id="sas"></p>
-  <p class="note">
-    If these differ, someone is between you. Stop, and start over with a fresh code.
-  </p>
-  <p class="status" id="verify-status"></p>
-</section>
-
-<section id="screen-transfer" hidden>
-  <h2 id="transfer-title">Transferring</h2>
-  <p class="filename" id="transfer-file"></p>
-  <div class="bar"><div class="bar-fill" id="progress-fill"></div></div>
-  <p class="status" id="transfer-status"></p>
-  <button id="transfer-cancel" class="ghost">Cancel</button>
-</section>
-
-<section id="screen-done" hidden>
-  <h2 id="done-title">Done</h2>
-  <p class="filename" id="done-file"></p>
-  <details>
-    <summary>Verification digest</summary>
-    <code id="done-digest" class="code"></code>
-    <p class="note">Both devices computed this independently from the file contents.</p>
-  </details>
-  <button id="done-again" class="primary">Send another</button>
-</section>
-
-<p class="error" id="error" hidden></p>
-`
+})()
 
 /**
  * A self-contained P2P encrypted file transfer widget.
  *
  * Usage: `<qr-drop></qr-drop>` after calling `defineQRDrop()`. Everything the
  * component needs -- markup, styles, behaviour -- lives inside its shadow
- * root; the host page supplies nothing but the tag.
+ * root; the host page supplies nothing but the tag, and optionally a
+ * `base-url` attribute (see `attributeChangedCallback`).
  */
 export class QRDropElement extends HTMLElement {
+  static get observedAttributes() { return ['base-url'] }
+
   constructor() {
     super()
     const root = this.attachShadow({ mode: 'open' })
-    root.append(TEMPLATE.content.cloneNode(true))
     this._root = root
 
-    /**
-     * Every id below is one this component's own template defines, so a miss
-     * means the template and this file have drifted apart.
-     *
-     * It throws rather than returning null. That is not a behaviour change
-     * worth arguing about -- every call site immediately dereferences the
-     * result, so the status quo was a TypeError one line later with no clue
-     * which id was missing -- and it is what lets the return type be
-     * HTMLElement instead of `HTMLElement | null`, which otherwise needs a
-     * null check at all forty-odd call sites to say nothing useful.
-     *
-     * @param {string} id
-     * @returns {HTMLElement}
-     */
-    this._$ = id => {
-      const el = root.getElementById(id)
-      if (!el) throw new Error(`Template is missing #${id}`)
-      return el
+    // The stylesheet is adopted rather than appended as a <style> child, and
+    // that is load-bearing rather than a modernisation. patch() owns every
+    // child of this root: anything the view did not describe gets removed as
+    // stale. A <style> element sitting at childNodes[0] is therefore
+    // overwritten by the first screen vnode on the very first render, which
+    // silently strips the component back to unstyled browser defaults --
+    // buttons as grey chrome, the step rail as a bulleted list -- while every
+    // test still passes, because the e2e reads text and visibility, not
+    // paint. An adopted sheet is not a child node at all, so it is genuinely
+    // outside the patched region in the way a <style> child only looked.
+    //
+    // It is also constructed once at module scope and shared by every
+    // instance: two <qr-drop>s on a page then parse this CSS once between
+    // them rather than once each.
+    if (SHEET) root.adoptedStyleSheets = [SHEET]
+    else {
+      // No constructable stylesheets. Re-appended after each patch instead --
+      // see _render.
+      this._styleEl = document.createElement('style')
+      this._styleEl.textContent = STYLES
     }
+
+    /** @type {HTMLStyleElement | null} Fallback only; see above and _render. */
+    this._styleEl = null
+
+    /** @type {string | null} Set via the `base-url` attribute; see below. */
+    this._baseURL = this.getAttribute('base-url') || null
+
+    /**
+     * The document-level paste listener, kept so disconnectedCallback can
+     * take it off again. See connectedCallback for why it is not on `this`.
+     * @type {((ev: ClipboardEvent) => void) | null}
+     */
+    this._onPaste = null
 
     /**
      * Whether the exchange has reached a terminal state.
@@ -360,41 +146,157 @@ export class QRDropElement extends HTMLElement {
     // relay socket open, or a half-built peer connection lingering.
     /** @type {(() => void) | null} */
     this._teardown = null
+
+    // One-shot closures for the two safety gestures. Set when the relevant
+    // offer/SAS becomes available, cleared the instant they fire (mirroring
+    // the old `{ once: true }` listeners) so a slow double-click cannot
+    // re-enter `showSaveFilePicker` or send a manifest twice.
+    /** @type {(() => void) | null} */
+    this._onVerifyConfirm = null
+    /** @type {(() => void) | null} */
+    this._onOfferAccept = null
+    /** @type {(() => void) | null} */
+    this._onOfferDecline = null
+
+    /** @type {number | undefined} */
+    this._copyTimer = undefined
+
+    this._dispatch = this._dispatch.bind(this)
+
+    this._state = this._initialState()
+    /** @type {import('./vdom.js').VNode[] | null} */
+    this._prev = null
+  }
+
+  /** @returns {import('./view.js').State} */
+  _initialState() {
+    return {
+      screen: 'choose',
+      role: /** @type {'sender' | 'receiver' | null} */ (null),
+      status: '',
+      error: /** @type {string | null} */ (null),
+      code: '',
+      qrNode: /** @type {Element | null} */ (null),
+      cameraAvailable: cameraAvailable(),
+      capabilityNote: canStreamToDisk() ? null : CAPABILITY_NOTE,
+      sas: '',
+      sasWords: /** @type {string[]} */ ([]),
+      offer: /** @type {{ name: string, size: number } | null} */ (null),
+      file: /** @type {{ name: string, size: number } | null} */ (null),
+      progress: /** @type {{ moved: number, total: number } | null} */ (null),
+      outcome: /** @type {'sent' | 'received' | 'declined' | 'failed' | 'too-large' | null} */ (null),
+      message: /** @type {string | null} */ (null),
+      digest: '',
+      dragging: false,
+      copied: /** @type {'code' | 'digest' | null} */ (null),
+      pairing: false,
+    }
+  }
+
+  /**
+   * @param {string} name
+   * @param {string | null} _old
+   * @param {string | null} value
+   */
+  attributeChangedCallback(name, _old, value) {
+    if (name === 'base-url') this._baseURL = value || null
   }
 
   connectedCallback() {
-    const $ = this._$
-
-    if (!canStreamToDisk()) {
-      const note = $('capability-note')
-      note.textContent =
-        'This browser cannot stream downloads to disk, so received files are held in '
-        + 'memory until complete. Expect trouble much above a gigabyte.'
-      note.hidden = false
-    }
-
     if (!window.isSecureContext) {
       this._fail(new Error('This page must be served over HTTPS: WebCrypto and the camera are unavailable otherwise.'))
     }
 
-    $('btn-send').addEventListener('click', () => this._pickFile())
-    $('btn-receive').addEventListener('click', () => this._beginScan().catch(e => this._fail(e)))
-    $('send-cancel').addEventListener('click', () => this._reset())
-    $('receive-cancel').addEventListener('click', () => this._reset())
-    $('transfer-cancel').addEventListener('click', () => this._reset())
-    $('done-again').addEventListener('click', () => this._reset())
+    // Render once before wiring anything else, so the ids referenced below
+    // (and by drag/drop/paste guards) actually exist.
+    this._render()
 
-    $('manual-form').addEventListener('submit', ev => {
+    // Drop/paste apply to the whole component, not to any one rendered
+    // element -- "drop a file anywhere on qrdrop" is a property of the host,
+    // which is why these listeners live here instead of as vnode props in
+    // view.js. Guarded to the choose screen so a file cannot be dropped or
+    // pasted mid-transfer, clobbering a session already in flight.
+    //
+    // The drag highlight is driven by a depth counter rather than by
+    // dragenter/dragleave directly. Those two fire again on every crossing
+    // between child elements, so a pointer moved from the dropzone onto the
+    // button inside it emits a leave immediately followed by an enter --
+    // clearing and re-setting the highlight, which reads as a flicker for
+    // exactly as long as the user is deciding where to let go. Counting
+    // enters against leaves means the highlight only clears when the pointer
+    // has actually left the component.
+    let dragDepth = 0
+    const setDragging = (/** @type {boolean} */ on) => {
+      if (this._state.dragging !== on) this._setState({ dragging: on })
+    }
+
+    this.addEventListener('dragenter', ev => {
+      if (this._state.screen !== 'choose') return
       ev.preventDefault()
-      try {
-        const input = /** @type {HTMLInputElement} */ ($('manual-input'))
-        const secret = decodeSecret(input.value)
-        this._teardown?.()
-        this._startReceive(secret).catch(e => this._fail(e))
-      } catch (error) {
-        this._fail(error)
-      }
+      dragDepth++
+      setDragging(true)
     })
+    this.addEventListener('dragover', ev => {
+      if (this._state.screen !== 'choose') return
+      ev.preventDefault() // otherwise the browser navigates to the dropped file
+    })
+    this.addEventListener('dragleave', () => {
+      if (this._state.screen !== 'choose') return
+      dragDepth = Math.max(0, dragDepth - 1)
+      if (dragDepth === 0) setDragging(false)
+    })
+    this.addEventListener('drop', ev => {
+      if (this._state.screen !== 'choose') return
+      ev.preventDefault()
+      dragDepth = 0
+      setDragging(false)
+      const file = ev.dataTransfer?.files?.[0]
+      if (file) this._startSend(file).catch(e => this._fail(e))
+    })
+
+    // Paste is bound to the document, not to this element, and that is not an
+    // oversight. A paste event targets whatever has focus; on a freshly
+    // loaded page that is <body>, and events do not travel *down* into
+    // children, so a listener on this host would simply never hear the one
+    // keystroke it exists to catch. Binding the document is the only way
+    // "press Ctrl-V to send what you copied" actually works.
+    //
+    // The cost is that this component then hears pastes meant for the rest of
+    // an embedder's page, so it declines any that landed in somewhere a
+    // person was plainly typing, and -- as with drop -- any that arrive when
+    // this is not the choose screen. It is removed again on disconnect.
+    this._onPaste = ev => {
+      if (this._state.screen !== 'choose') return
+      const target = ev.composedPath()[0]
+      if (target instanceof HTMLElement
+        && (target.isContentEditable || target.closest('input, textarea'))) return
+      const file = [...(ev.clipboardData?.files ?? [])][0]
+      if (file) this._startSend(file).catch(e => this._fail(e))
+    }
+    document.addEventListener('paste', this._onPaste)
+
+    // Auto-join: a code carried in the URL fragment (see core/secret.js's
+    // encodeSecretURL) skips the "tap Receive" click, but not the SAS screen
+    // -- _startReceive below still stops there like every other path, so
+    // this never bypasses either safety gesture, only the click that gets a
+    // user to the same waiting room a scan or a pasted code would.
+    //
+    // The hash is cleared immediately, before the code inside it is even
+    // decoded, via replaceState rather than a normal navigation (which would
+    // add a history entry). A decryption key sitting in the address bar can
+    // be copied, bookmarked, or synced to another device's history without
+    // anyone realising it is sensitive -- the bare `qrdrop:` code never had
+    // that problem because it never went in a URL at all.
+    const hash = location.hash.slice(1)
+    if (hash) {
+      history.replaceState(null, '', location.pathname + location.search)
+      try {
+        this._startReceive(decodeSecret(hash)).catch(e => this._fail(e))
+      } catch {
+        // Not a qrdrop code -- an ordinary in-page anchor, most likely.
+        // Nothing to do; this element does not own the rest of the page's hashes.
+      }
+    }
   }
 
   /**
@@ -403,50 +305,145 @@ export class QRDropElement extends HTMLElement {
    * leave a camera or a peer connection behind it.
    */
   disconnectedCallback() {
+    // The document-level paste listener above outlives this element unless it
+    // is taken off by hand; left behind, it would keep a detached component
+    // (and the session it may still be holding) alive for the page's lifetime.
+    if (this._onPaste) document.removeEventListener('paste', this._onPaste)
+    this._onPaste = null
+
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
+    clearTimeout(this._copyTimer)
   }
 
-  /** @param {typeof SCREENS[number]} name */
-  _show(name) {
-    const $ = this._$
-    for (const s of SCREENS) $(`screen-${s}`).hidden = s !== name
-    $('error').hidden = true
-    if (name === 'done') this._sessionEnded = true
+  /**
+   * @param {string} intent
+   * @param {any} [payload]
+   */
+  _dispatch(intent, payload) {
+    switch (intent) {
+      case 'send:pick': return this._pickFile()
+      case 'receive:scan': return void this._beginScan().catch(e => this._fail(e))
+      case 'manual:submit': return this._submitManualCode(payload)
+      case 'verify:confirm': return this._onVerifyConfirm?.()
+      case 'offer:accept': return this._onOfferAccept?.()
+      case 'offer:decline': return this._onOfferDecline?.()
+      case 'cancel': return this._reset()
+      case 'restart': return this._reset()
+      case 'copy': return void this._copy(payload)
+      default: throw new Error(`Unknown intent: ${intent}`)
+    }
+  }
+
+  /**
+   * Applies a partial state update and re-renders synchronously.
+   *
+   * Two behaviours are folded in here rather than left for every call site
+   * to remember:
+   *
+   *  - A screen change clears any stale error banner unless the same update
+   *    sets a new one. The old version's error banner was a sibling of every
+   *    section, cleared only by the imperative `_show()`, so it could linger
+   *    across a transition; here it is simply a fact about `state.error`.
+   *  - Reaching 'done' sets `_sessionEnded`, same as the old `_show('done')`
+   *    did -- see the flag's own comment in the constructor for why it
+   *    exists at all.
+   *
+   * @param {Partial<ReturnType<QRDropElement['_initialState']>>} partial
+   */
+  _setState(partial) {
+    const prevScreen = this._state.screen
+    if ('screen' in partial && partial.screen !== prevScreen) {
+      partial = { error: null, ...partial }
+    }
+    if (partial.screen === 'done') this._sessionEnded = true
+
+    this._state = { ...this._state, ...partial }
+    this._render()
+
+    if (this._state.screen !== prevScreen) this._focusScreenHeading()
+  }
+
+  _render() {
+    this._prev = patch(this._root, render(this._state, this._dispatch), this._prev)
+    // Only reached on browsers without constructable stylesheets, where the
+    // sheet has to be a real child and patch() has just discarded it.
+    if (this._styleEl) this._root.append(this._styleEl)
+  }
+
+  /**
+   * Moves focus to the new screen's <h2> so assistive tech announces the
+   * transition instead of leaving focus stranded on a button that just went
+   * `hidden`. Deliberately never called for the SAS-confirm or Accept
+   * buttons specifically -- those are safety gestures (see the class
+   * comment) and must not be dismissible by a stray Enter keypress, which is
+   * exactly what auto-focusing a primary button would invite.
+   */
+  _focusScreenHeading() {
+    const heading = this._root.getElementById(`screen-${this._state.screen}`)?.querySelector('h2')
+    if (heading instanceof HTMLElement) heading.focus()
   }
 
   /** @param {unknown} error */
   _fail(error) {
     console.error(error)
-    const el = this._$('error')
     // textContent, never innerHTML: some of these strings originate from the peer.
-    el.textContent = error instanceof Error ? error.message : String(error)
-    el.hidden = false
+    this._setState({ error: error instanceof Error ? error.message : String(error) })
   }
 
   /**
    * A failed transfer must look failed.
    *
-   * Showing only the error banner left the progress bar frozen mid-transfer,
-   * which reads as a hang rather than a fault -- the user sees "Received 80 KB
-   * of 300 KB" and waits for a transfer that has already been abandoned.
-   * _show() clears the banner, so it has to run before _fail().
+   * Landing on 'done' with outcome 'failed' clears the frozen progress bar
+   * that a plain error banner would leave behind -- without this, "Received
+   * 80 KB of 300 KB" would just sit there looking like a hang rather than a
+   * fault the transfer has already given up on.
    *
    * @param {unknown} error
    */
   _failTransfer(error) {
-    const $ = this._$
-    this._show('done')
-    $('done-title').textContent = 'Transfer failed'
-    $('done-file').textContent = 'Nothing was saved. Start over with a fresh code.'
-    $('done-digest').textContent = ''
+    this._setState({ screen: 'done', outcome: 'failed', file: null, digest: '', message: null })
     this._fail(error)
   }
 
   _reset() {
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
-    this._show('choose')
+    this._onVerifyConfirm = null
+    this._onOfferAccept = null
+    this._onOfferDecline = null
+    clearTimeout(this._copyTimer)
+    this._setState({
+      screen: 'choose', role: null, status: '', code: '', qrNode: null,
+      sas: '', sasWords: [], offer: null, file: null, progress: null,
+      outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
+    })
+  }
+
+  /**
+   * @param {'code' | 'digest'} target
+   */
+  async _copy(target) {
+    const text = target === 'code' ? this._state.code : this._state.digest
+    if (!text) return
+    const ok = await copyText(text)
+    if (!ok) return
+    clearTimeout(this._copyTimer)
+    this._setState({ copied: target })
+    // Transient confirmation, not a permanent state -- it reverts on its own
+    // rather than waiting for the next unrelated re-render to clear it.
+    this._copyTimer = setTimeout(() => this._setState({ copied: null }), 1500)
+  }
+
+  /** @param {string} raw */
+  _submitManualCode(raw) {
+    try {
+      const secret = decodeSecret(raw)
+      this._teardown?.()
+      this._startReceive(secret).catch(e => this._fail(e))
+    } catch (error) {
+      this._fail(error)
+    }
   }
 
   /**
@@ -494,19 +491,19 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
-   * One progress renderer for both directions, which is why it reads the union.
+   * One progress renderer for both directions, which is why it reads the
+   * union `TransferProgress`.
    *
-   * @param {object} args
-   * @param {HTMLElement} args.statusEl
-   * @param {string} args.verb
+   * @param {string} verb 'Sent' or 'Received'.
    * @returns {(p: TransferProgress) => void}
    */
-  _trackProgress({ statusEl, verb }) {
-    const $ = this._$
+  _trackProgress(verb) {
     return p => {
       const moved = 'sent' in p ? p.sent : p.received
-      $('progress-fill').style.setProperty('--progress', `${(moved / (p.total || 1)) * 100}%`)
-      statusEl.textContent = `${verb} ${bytes(moved)} of ${bytes(p.total)}`
+      this._setState({
+        progress: { moved, total: p.total },
+        status: `${verb} ${bytes(moved)} of ${bytes(p.total)}`,
+      })
     }
   }
 
@@ -516,10 +513,9 @@ export class QRDropElement extends HTMLElement {
    * @param {object} args
    * @param {Bytes} args.secret
    * @param {'host' | 'guest'} args.role
-   * @param {HTMLElement} args.statusEl
    * @returns {Promise<PairedRoom>}
    */
-  async _establish({ secret, role, statusEl }) {
+  async _establish({ secret, role }) {
     const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
 
     const room = await openRoom({
@@ -527,13 +523,13 @@ export class QRDropElement extends HTMLElement {
       password,
       secret,
       role,
-      onStatus: text => { statusEl.textContent = text },
+      onStatus: text => this._setState({ status: text }),
     })
 
     this._sessionEnded = false
     this._teardown = () => room.close()
     room.onPeerLeave(() => {
-      if (!this._sessionEnded) this._fail(new Error('The other device disconnected.'))
+      if (!this._sessionEnded) this._fail(new Error(PEER_DISCONNECTED))
     })
 
     return room
@@ -541,47 +537,52 @@ export class QRDropElement extends HTMLElement {
 
   /** @param {File} file */
   async _startSend(file) {
-    const $ = this._$
     const secret = generateSecret()
+
+    // The QR and #manual-code deliberately encode different strings when
+    // base-url is set. The QR is for a phone's own camera app -- it needs
+    // the URL form, since a bare `qrdrop:` string is not something that app
+    // knows how to open (see core/secret.js's encodeSecretURL). The manual
+    // code exists for the opposite case: a human reading it aloud or typing
+    // it in by hand, for whom the bare form is strictly better -- shorter,
+    // and with no scheme/host noise to transcribe. `decodeSecret` accepts
+    // both forms on the way back in, so nothing is lost by keeping the two
+    // independent; a receiver typing the bare code in gets exactly the same
+    // session as one who scanned the URL.
+    const qrText = this._baseURL ? encodeSecretURL(secret, this._baseURL) : encodeSecret(secret)
     const code = encodeSecret(secret)
 
-    $('qr').replaceChildren(renderQR(code))
-    $('manual-code').textContent = code
-    this._show('send')
+    this._setState({
+      screen: 'send', role: 'sender', code, qrNode: renderQR(qrText),
+      status: 'Starting…', pairing: true, file: { name: file.name, size: file.size },
+    })
 
-    const room = await this._establish({ secret, role: 'host', statusEl: $('send-status') })
+    const room = await this._establish({ secret, role: 'host' })
+    this._setState({ pairing: false })
 
     // Free TURN is metered; refuse a large file before the manifest goes out
     // rather than have it throttled or cut partway. Only bites on a relayed
     // path -- a direct connection has no such limit.
     if (file.size > RELAYED_MAX_BYTES && await room.isRelayed()) {
       room.close()
-      throw new Error(
-        `This connection is going through a public relay, capped at ${bytes(RELAYED_MAX_BYTES)}. `
-        + `${file.name} is ${bytes(file.size)}. Try again on a network where a direct `
-        + `connection is possible.`,
-      )
+      throw new Error(relayCapMessage({ name: file.name, size: file.size, limit: RELAYED_MAX_BYTES }))
     }
 
     const { control, nextControlIndex } = this._attachReceiver({ room })
 
     // Verify before anything about the file leaves this device -- the
     // manifest alone would disclose its name and size.
-    this._show('verify')
-    $('sas').textContent = room.session.sas
-
-    const go = document.createElement('button')
-    go.className = 'primary'
-    go.textContent = `They match — send ${file.name}`
-    $('verify-status').replaceChildren(go)
+    this._setState({ screen: 'verify', sas: room.session.sas, sasWords: room.session.sasWords })
 
     const source = fromFile(file)
 
-    go.addEventListener('click', async () => {
-      go.disabled = true
-      this._show('transfer')
-      $('transfer-title').textContent = 'Sending'
-      $('transfer-file').textContent = `${file.name} (${bytes(file.size)})`
+    this._onVerifyConfirm = async () => {
+      // One-shot, mirroring the old button's `{ once: true }` listener: this
+      // is the sender's half of the two safety gestures, and it must not be
+      // re-triggerable while the send it just started is in flight.
+      this._onVerifyConfirm = null
+
+      this._setState({ screen: 'transfer', status: '', progress: { moved: 0, total: file.size } })
 
       try {
         const result = await sendFile({
@@ -591,35 +592,31 @@ export class QRDropElement extends HTMLElement {
           fileSeq: 0,
           control,
           nextControlIndex,
-          onProgress: this._trackProgress({ statusEl: $('transfer-status'), verb: 'Sent' }),
+          onProgress: this._trackProgress('Sent'),
         })
 
         this._sessionEnded = true
 
         if (result.declined) {
-          this._show('done')
-          $('done-title').textContent = 'Declined'
-          $('done-file').textContent = 'The other device turned down the file.'
-          $('done-digest').textContent = ''
+          this._setState({ screen: 'done', outcome: 'declined' })
           return
         }
 
-        this._show('done')
-        $('done-title').textContent = 'Sent'
-        $('done-file').textContent = file.name
-        $('done-digest').textContent = result.digest
+        this._setState({ screen: 'done', outcome: 'sent', digest: result.digest })
       } catch (error) {
         this._failTransfer(error)
       } finally {
         room.close()
       }
-    }, { once: true })
+    }
   }
 
   /** @param {Bytes} secret */
   async _startReceive(secret) {
-    const $ = this._$
-    const room = await this._establish({ secret, role: 'guest', statusEl: $('receive-status') })
+    this._setState({ screen: 'receive', role: 'receiver', status: 'Starting…', pairing: true })
+
+    const room = await this._establish({ secret, role: 'guest' })
+    this._setState({ pairing: false })
 
     // Handlers go on before anything is drawn, so a manifest arriving the
     // instant the sender is ready has somewhere to land.
@@ -632,60 +629,56 @@ export class QRDropElement extends HTMLElement {
         void (async () => {
           if (manifest.size > RELAYED_MAX_BYTES && await room.isRelayed()) {
             await decline()
-            this._show('done')
-            $('done-title').textContent = 'Too large for this connection'
-            $('done-file').textContent =
-              `${manifest.name} (${bytes(manifest.size)}) is over the ${bytes(RELAYED_MAX_BYTES)} `
-              + `limit for a transfer going through a public relay.`
-            $('done-digest').textContent = ''
+            this._setState({
+              screen: 'done', outcome: 'too-large',
+              message: relayCapDeclineMessage({ name: manifest.name, size: manifest.size, limit: RELAYED_MAX_BYTES }),
+            })
             return
           }
 
-          const name = document.createTextNode(`${manifest.name} (${bytes(manifest.size)}) `)
-          const yes = Object.assign(document.createElement('button'), {
-            className: 'primary', textContent: 'Accept',
-          })
-          const no = Object.assign(document.createElement('button'), {
-            className: 'ghost', textContent: 'Decline',
-          })
-          // Names come from the peer, so they are inserted as text nodes only.
-          $('verify-status').replaceChildren(name, yes, no)
+          this._onOfferDecline = async () => {
+            this._onOfferDecline = null
+            this._onOfferAccept = null
+            try { await decline() } catch (e) { this._fail(e) }
+            this._reset()
+          }
 
-          no.addEventListener('click', () => { decline().catch(e => this._fail(e)); this._reset() }, { once: true })
+          // This is the receiver's half of the two safety gestures: this
+          // click is what permits showSaveFilePicker to open (see
+          // web/sink.js), so it has to stay a real, synchronous-enough user
+          // gesture -- one-shot for the same reason the sender's confirm is.
+          this._onOfferAccept = async () => {
+            this._onOfferAccept = null
+            this._onOfferDecline = null
 
-          // This click is what permits showSaveFilePicker to open.
-          yes.addEventListener('click', async () => {
-            yes.disabled = true
-            no.disabled = true
             const sink = await accept()
-            if (!sink) return this._reset()   // the save dialog was dismissed
+            if (!sink) return this._reset() // the save dialog was dismissed
 
-            this._show('transfer')
-            $('transfer-title').textContent = 'Receiving'
-            $('transfer-file').textContent = `${manifest.name} (${bytes(manifest.size)})`
-            if (!sink.streaming) {
-              $('transfer-status').textContent =
-                'This browser buffers the file in memory before saving it.'
-            }
-          }, { once: true })
+            this._setState({
+              screen: 'transfer',
+              file: { name: manifest.name, size: manifest.size },
+              status: sink.streaming ? '' : 'This browser buffers the file in memory before saving it.',
+              progress: { moved: 0, total: manifest.size },
+            })
+          }
+
+          this._setState({ offer: { name: manifest.name, size: manifest.size } })
         })().catch(e => this._fail(e))
       },
 
-      onProgress: this._trackProgress({ statusEl: $('transfer-status'), verb: 'Received' }),
+      onProgress: this._trackProgress('Received'),
 
       onFileDone: file => {
         this._sessionEnded = true
-        this._show('done')
-        $('done-title').textContent = 'Received'
-        $('done-file').textContent = file.name
-        $('done-digest').textContent = file.digest
+        this._setState({
+          screen: 'done', outcome: 'received',
+          file: { name: file.name, size: file.size }, digest: file.digest,
+        })
         room.close()
       },
     })
 
-    this._show('verify')
-    $('sas').textContent = room.session.sas
-    $('verify-status').textContent = 'Waiting for the sender to offer a file…'
+    this._setState({ screen: 'verify', sas: room.session.sas, sasWords: room.session.sasWords })
   }
 
   _pickFile() {
@@ -698,11 +691,12 @@ export class QRDropElement extends HTMLElement {
   }
 
   async _beginScan() {
-    const $ = this._$
-    this._show('receive')
-    $('receive-status').textContent = cameraAvailable()
-      ? 'Point the camera at the code.'
-      : 'No camera available — enter the code by hand.'
+    this._setState({
+      screen: 'receive', role: 'receiver',
+      status: cameraAvailable()
+        ? 'Point the camera at the code.'
+        : 'No camera available — enter the code by hand.',
+    })
 
     if (!cameraAvailable()) return
 
@@ -710,7 +704,7 @@ export class QRDropElement extends HTMLElement {
     this._teardown = () => controller.abort()
 
     try {
-      const video = /** @type {HTMLVideoElement} */ ($('scanner'))
+      const video = /** @type {HTMLVideoElement} */ (this._root.getElementById('scanner'))
       const value = await scanQR({ video, signal: controller.signal })
       this._startReceive(decodeSecret(value)).catch(e => this._fail(e))
     } catch (error) {
@@ -718,16 +712,6 @@ export class QRDropElement extends HTMLElement {
       if (!(error instanceof Error) || error.name !== 'AbortError') this._fail(error)
     }
   }
-}
-
-/** @param {number} n */
-function bytes(n) {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let v = n / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
 }
 
 /**

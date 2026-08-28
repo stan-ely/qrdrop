@@ -24,7 +24,7 @@
 <main>
   <header>
     <h1>qrdrop</h1>
-    <p class="tagline">Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.</p>
+    <p class="tagline">Scan a code, send a file, device to device. Nothing in between ever holds a readable copy.</p>
   </header>
 
   <qr-drop></qr-drop>
@@ -47,6 +47,14 @@
           is gone. What remains: the server hosting this page could still serve modified
           code, the same way any web app's server could. No in-browser design prevents
           that. For genuinely sensitive material, use a tool you can verify before running.</li>
+        <li><strong>The QR code can encode a link, and that link still keeps the key off
+          the wire.</strong> Scanning it with a phone's own camera app opens this page
+          with the key in the URL's <em>fragment</em> -- the part after <code>#</code>.
+          A fragment is never sent to a server as part of the HTTP request; the browser
+          keeps it local and hands it to this page's own script. So yes, you should be
+          wary of a link containing what looks like a key -- that instinct is correct in
+          general -- but here the fragment is exactly what stops it from leaving your
+          device, the same guarantee the plain <code>qrdrop:</code> code has always had.</li>
       </ul>
     </details>
   </footer>

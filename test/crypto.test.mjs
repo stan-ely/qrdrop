@@ -5,8 +5,10 @@ import {
   generateSecret, encodeSecret, decodeSecret, deriveTopic, toBase64url,
 } from '../src/core/secret.js'
 import {
-  createEphemeralKeypair, exportPublicKey, establishSession,
+  createEphemeralKeypair, exportPublicKey, establishSession, SAS_EMOJI,
 } from '../src/core/session.js'
+
+const SAS_WORD_BY_EMOJI = new Map(SAS_EMOJI)
 
 /**
  * @param {Bytes} a
@@ -67,6 +69,16 @@ test('both peers derive matching directional keys and the same SAS', async () =>
 
   assert.equal(host.sas, guest.sas, 'users compare these visually')
   assert.equal(host.sas.split(' ').length, 4)
+
+  // sasWords lets the same comparison happen by voice, over a phone call.
+  assert.equal(host.sasWords.length, 4)
+  assert.deepEqual(host.sasWords, guest.sasWords, 'users compare these aloud')
+  host.sas.split(' ').forEach((emoji, i) => {
+    assert.ok(
+      SAS_WORD_BY_EMOJI.get(emoji) === host.sasWords[i],
+      `sasWords[${i}] must name the emoji at the same position in sas`,
+    )
+  })
 
   const iv = new Uint8Array(12).fill(1)
   const pt = new TextEncoder().encode('secret file bytes')

@@ -121,6 +121,11 @@ interface SessionKeys {
   recvKey: CryptoKey
   /** Four emoji, space-separated. Both peers must see the same four, in order. */
   sas: string
+  /**
+   * The word name for each emoji in `sas`, same order, same four. Lets two
+   * people read the SAS aloud over a phone call instead of describing emoji.
+   */
+  sasWords: string[]
 }
 
 /** What transport/room.js resolves with once a peer is paired. */

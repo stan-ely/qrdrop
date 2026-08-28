@@ -5,34 +5,17 @@
  * progress bar, and so on) moved into <qr-drop>'s own shadow root in
  * src/web/element.js, because shadow DOM does not inherit a page stylesheet
  * and the component needs to look right with none of this loaded at all.
+ *
+ * The design tokens this file reads (--bg, --surface, --sp-*, --fs-*, ...)
+ * used to be a `:root { ... }` block pasted here verbatim from the `:host`
+ * block in src/web/element.js's TEMPLATE -- two copies of the same list that
+ * could only drift apart, never be checked against each other. They are
+ * generated instead: scripts/build-site.mjs prepends `tokensCSS(':root')`
+ * (src/web/tokens.js) to this file's contents when it writes
+ * site/dist/styles.css, so this stylesheet only ever consumes tokens, never
+ * redefines them. Do not add a `:root` block back here -- add the token to
+ * tokens.js, where both this page and the component pick it up from.
  */
-
-:root {
-  --bg: #fbfbfa;
-  --surface: #ffffff;
-  --text: #1a1a19;
-  --muted: #6b6b66;
-  --line: #e3e3df;
-  --accent: #b8563a;
-  --accent-text: #ffffff;
-  --ok: #2f6f4e;
-  --bad: #a33328;
-  --radius: 10px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16161a;
-    --surface: #1f1f24;
-    --text: #ecebe8;
-    --muted: #9d9d98;
-    --line: #33333a;
-    --accent: #d4735a;
-    --accent-text: #17171a;
-    --ok: #7fc39b;
-    --bad: #e08b7f;
-  }
-}
 
 * { box-sizing: border-box; }
 
@@ -40,42 +23,43 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: var(--fs-0)/var(--lh-body) var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
 main {
   max-width: 34rem;
   margin: 0 auto;
-  padding: 2.5rem 1.25rem 4rem;
+  padding: var(--sp-7) var(--sp-4) var(--sp-7);
 }
 
-header { margin-bottom: 2rem; }
+header { margin-bottom: var(--sp-6); }
 
 h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: var(--fs-2);
+  line-height: var(--lh-tight);
   letter-spacing: -0.02em;
 }
 
 .tagline {
-  margin: 0.35rem 0 0;
+  margin: var(--sp-2) 0 0;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--fs--1);
 }
 
 qr-drop { display: block; }
 
-footer { margin-top: 1.75rem; }
+footer { margin-top: var(--sp-5); }
 footer summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--fs--1);
 }
-footer ul { padding-left: 1.1rem; color: var(--muted); font-size: 0.82rem; }
-footer li { margin-bottom: 0.5rem; }
+footer ul { padding-left: 1.1rem; color: var(--muted); font-size: var(--fs--1); }
+footer li { margin-bottom: var(--sp-2); }
 footer strong { color: var(--text); font-weight: 600; }
 
 @media (max-width: 30rem) {
-  main { padding: 1.5rem 1rem 3rem; }
+  main { padding: var(--sp-5) var(--sp-3) var(--sp-6); }
 }

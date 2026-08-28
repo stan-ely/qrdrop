@@ -30,3 +30,13 @@ if (window.top !== window.self) {
 }
 
 defineQRDrop()
+
+// This deployment IS the landing page a QR code can point at, so it is safe
+// -- and worth doing -- to have the component's QR encode a URL a phone's
+// own camera app can open, rather than the bare `qrdrop:` form (see
+// core/secret.js's encodeSecretURL). An embedder who has not set up their
+// own page for this does not get this attribute for free: `base-url` is
+// opt-in per element.js, precisely so a consumer who never configured a
+// landing page never emits a QR pointing at share.stan-ely.com instead of
+// their own site.
+document.querySelector('qr-drop')?.setAttribute('base-url', location.origin + location.pathname)

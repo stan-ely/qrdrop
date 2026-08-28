@@ -161,29 +161,57 @@ export async function establishSession({ keypair, peerPublicRaw, secret, role })
   const hostKey = await derive(shared, secret, 'host->guest', transcript, 'key')
   const guestKey = await derive(shared, secret, 'guest->host', transcript, 'key')
   const sasBytes = await derive(shared, secret, 'sas', transcript, 'bits')
+  const { sas, sasWords } = renderSAS(sasBytes)
 
   return {
     sendKey: role === 'host' ? hostKey : guestKey,
     recvKey: role === 'host' ? guestKey : hostKey,
-    sas: renderSAS(sasBytes),
+    sas,
+    sasWords,
   }
 }
 
-// Visually distinct, describable out loud, no near-duplicate pairs.
-const SAS_EMOJI = [
-  '🍎', '🐝', '🌵', '🐬', '🐘', '🔥', '👻', '🍄', '🧊', '🔑', '🍋', '🌙',
-  '🦉', '🐙', '🌴', '👑', '🌈', '🐍', '🌻', '🌮', '🦄', '🌊', '⌛', '🦓',
-  '⚓', '🎈', '🕯️', '💎', '🥚', '🎸', '🔨', '🧲', '🎺', '🪐', '🧩', '🚀',
-  '✂️', '💀', '🔭', '🌪️', '🧵', '🚂', '☂️', '🎻', '⚡', '🪓', '🧶', '🦴',
-  '🏹', '🧱', '🕰️', '🍩', '🥁', '🪶', '🍇', '🔔', '🪁', '🍿', '🎯', '🧭',
-  '🪞', '🧪', '🌡️', '🪄',
+// Visually distinct, describable out loud, no near-duplicate pairs. Each
+// entry is [emoji, name]; the name exists so two people on a phone call can
+// read the SAS aloud and agree on it without staring at the same screen --
+// "cactus" is unambiguous over a bad connection in a way that trying to
+// describe a small green emoji is not. The same "no near-duplicates" rule
+// applies to the names themselves: no two are near-homophones (nothing like
+// "whale"/"wale", no two names sharing a first syllable), since a pair that
+// sounds alike read aloud defeats the point as thoroughly as two emoji that
+// look alike on screen.
+//
+// Exported so tests can check sas and sasWords line up positionally without
+// keeping a second copy of this table.
+/** @type {ReadonlyArray<[string, string]>} */
+export const SAS_EMOJI = [
+  ['🍎', 'apple'], ['🐝', 'bee'], ['🌵', 'cactus'], ['🐬', 'dolphin'],
+  ['🐘', 'elephant'], ['🔥', 'fire'], ['👻', 'ghost'], ['🍄', 'mushroom'],
+  ['🧊', 'ice'], ['🔑', 'key'], ['🍋', 'lemon'], ['🌙', 'moon'],
+  ['🦉', 'owl'], ['🐙', 'octopus'], ['🌴', 'palm'], ['👑', 'crown'],
+  ['🌈', 'rainbow'], ['🐍', 'snake'], ['🌻', 'sunflower'], ['🌮', 'taco'],
+  ['🦄', 'unicorn'], ['🌊', 'wave'], ['⌛', 'hourglass'], ['🦓', 'zebra'],
+  ['⚓', 'anchor'], ['🎈', 'balloon'], ['🕯️', 'candle'], ['💎', 'diamond'],
+  ['🥚', 'egg'], ['🎸', 'guitar'], ['🔨', 'hammer'], ['🧲', 'magnet'],
+  ['🎺', 'trumpet'], ['🪐', 'saturn'], ['🧩', 'puzzle'], ['🚀', 'rocket'],
+  ['✂️', 'scissors'], ['💀', 'skull'], ['🔭', 'telescope'], ['🌪️', 'tornado'],
+  ['🧵', 'thread'], ['🚂', 'train'], ['☂️', 'umbrella'], ['🎻', 'violin'],
+  ['⚡', 'lightning'], ['🪓', 'axe'], ['🧶', 'yarn'], ['🦴', 'bone'],
+  ['🏹', 'arrow'], ['🧱', 'brick'], ['🕰️', 'clock'], ['🍩', 'donut'],
+  ['🥁', 'drum'], ['🪶', 'feather'], ['🍇', 'grapes'], ['🔔', 'bell'],
+  ['🪁', 'kite'], ['🍿', 'popcorn'], ['🎯', 'target'], ['🧭', 'compass'],
+  ['🪞', 'mirror'], ['🧪', 'flask'], ['🌡️', 'thermometer'], ['🪄', 'wand'],
 ]
 
 /**
  * 4 emoji out of 64 = 24 bits. Both peers must see the same four, in order.
  * @param {Bytes} bytes
- * @returns {string}
+ * @returns {{ sas: string, sasWords: string[] }}
  */
 function renderSAS(bytes) {
-  return [0, 1, 2, 3].map(i => SAS_EMOJI[bytes[i] & 0x3f]).join(' ')
+  const picked = [0, 1, 2, 3].map(i => SAS_EMOJI[bytes[i] & 0x3f])
+  return {
+    sas: picked.map(([emoji]) => emoji).join(' '),
+    sasWords: picked.map(([, name]) => name),
+  }
 }

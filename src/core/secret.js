@@ -106,7 +106,8 @@ export function fromBase64url(str) {
 }
 
 /**
- * What actually goes in the QR image. ~43 chars, trivially small for a QR.
+ * What actually goes in the QR image when there is nowhere for the QR to send
+ * a stranger's camera. ~43 chars, trivially small for a QR.
  * @param {Bytes} secret
  * @returns {string}
  */
@@ -115,13 +116,97 @@ export function encodeSecret(secret) {
 }
 
 /**
+ * The URL form: what lets a phone's built-in camera app actually do something
+ * with the code, instead of the bare `qrdrop:` string above, which no camera
+ * app treats as an openable link. Scanning it just opens the page, which is
+ * where the web component picks the code back up (see element.js's
+ * `location.hash` handling).
+ *
+ * The code goes in the URL's FRAGMENT, not a query parameter, and that choice
+ * is load-bearing: a fragment is the one part of a URL a browser never
+ * includes in the HTTP request it sends to the server. Putting the secret in
+ * `?code=...` instead would still "work" -- and would silently start leaking
+ * it to whatever serves that origin, plus every proxy and access log along
+ * the way. `decodeSecret` below enforces the same rule on the way back in.
+ *
+ * @param {Bytes} secret
+ * @param {string} baseURL Must be an absolute http(s) URL. Any existing
+ *   fragment or query on it is discarded -- the code is the only thing that
+ *   belongs there.
+ * @returns {string}
+ */
+export function encodeSecretURL(secret, baseURL) {
+  let url
+  try {
+    url = new URL(baseURL)
+  } catch {
+    throw new Error('base-url must be an absolute http(s) URL')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('base-url must be an absolute http(s) URL')
+  }
+  url.hash = ''
+  url.search = ''
+  return `${url.toString()}#${encodeSecret(secret)}`
+}
+
+// Shared by both decodeSecret branches: turn a 43-char base64url code into
+// the underlying bytes, validating length. Wrong length means truncation or
+// corruption somewhere upstream -- silently accepting it would hand a short
+// or padded key straight to HKDF.
+/**
+ * @param {string} code
+ * @returns {Bytes}
+ */
+function decodeCode(code) {
+  const bytes = fromBase64url(code)
+  if (bytes.length !== SECRET_BYTES) throw new Error('Malformed qrdrop code')
+  return bytes
+}
+
+const CODE_RE = /^qrdrop:([A-Za-z0-9_-]{43})$/
+
+/**
  * @param {string} text Untrusted: this is whatever the camera decoded.
  * @returns {Bytes}
  */
 export function decodeSecret(text) {
-  const m = /^qrdrop:([A-Za-z0-9_-]{43})$/.exec(text.trim())
-  if (!m) throw new Error('Not a qrdrop code')
-  const bytes = fromBase64url(m[1])
-  if (bytes.length !== SECRET_BYTES) throw new Error('Malformed qrdrop code')
-  return bytes
+  const trimmed = text.trim()
+
+  // The bare form, unchanged. This is what CLI<->browser interop depends on
+  // (e2e/interop.e2e.mjs) -- the CLI never gained a web page to point a URL
+  // form at, so it always emits this, and this branch must keep accepting it
+  // forever regardless of what the URL form below grows into.
+  const bare = CODE_RE.exec(trimmed)
+  if (bare) return decodeCode(bare[1])
+
+  // The URL form. Only http(s) URLs are considered -- anything else (a bare
+  // string that happens to parse as some other URL scheme, garbage, etc.)
+  // falls through to the generic error below.
+  let url
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('Not a qrdrop code')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Not a qrdrop code')
+  }
+
+  // The code must live in the fragment. A fragment is the one part of a URL
+  // that is never sent to the server in the HTTP request, which is the whole
+  // reason this format is safe to put a decryption key in: the secret still
+  // never leaves the device, exactly as with the bare form. Accepting the
+  // code out of the query string or path would quietly throw that property
+  // away for anyone who constructs -- or is tricked into scanning -- such a
+  // URL, so that case gets its own error rather than falling through
+  // silently to "Not a qrdrop code".
+  const fragment = CODE_RE.exec(url.hash.slice(1))
+  if (fragment) return decodeCode(fragment[1])
+
+  if (/qrdrop:[A-Za-z0-9_-]+/.test(url.search) || /qrdrop:[A-Za-z0-9_-]+/.test(url.pathname)) {
+    throw new Error('qrdrop code must be in the URL fragment (after #), not the query string or path')
+  }
+
+  throw new Error('Not a qrdrop code')
 }
