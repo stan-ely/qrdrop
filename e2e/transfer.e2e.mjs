@@ -100,7 +100,7 @@ async function main() {
     throw new Error(`No build found in ${ROOT}/. Run \`hugo\` first.`)
   }
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qrbeam-e2e-'))
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qrdrop-e2e-'))
   const sourcePath = path.join(tmp, 'payload.bin')
   const payload = randomBytes(PAYLOAD_BYTES)
   fs.writeFileSync(sourcePath, payload)
@@ -168,7 +168,7 @@ async function main() {
     // and the File System Access streaming path is not covered here.
     await context.addInitScript(() => {
       // Not in lib.dom -- File System Access is Chromium-only. See
-      // static/js/transfer/sink.js, which feature-detects the same property.
+      // src/web/sink.js, which feature-detects the same property.
       delete (/** @type {any} */ (window)).showSaveFilePicker
     })
 
@@ -206,7 +206,7 @@ async function main() {
 
     await a.waitForSelector('#screen-send:not([hidden])', { timeout: TIMEOUT })
     const code = await text(a, '#manual-code')
-    if (!/^qrbeam:[A-Za-z0-9_-]{43}$/.test(code)) throw new Error(`Bad code: ${code}`)
+    if (!/^qrdrop:[A-Za-z0-9_-]{43}$/.test(code)) throw new Error(`Bad code: ${code}`)
     log('code generated:', code.slice(0, 20) + '...')
 
     const qr = await a.innerHTML('#qr')

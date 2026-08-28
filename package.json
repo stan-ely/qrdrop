@@ -1,20 +1,54 @@
 {
-  "name": "qrbeam",
+  "name": "qrdrop",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Tests and tooling for qrbeam. The site itself is built by Hugo and needs none of this.",
+  "description": "Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.",
+  "license": "MIT",
+  "keywords": [
+    "file-transfer",
+    "webrtc",
+    "p2p",
+    "qrcode",
+    "end-to-end-encryption",
+    "cli"
+  ],
+  "bin": {
+    "qrdrop": "./src/cli.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./web": "./src/web/index.js",
+    "./node": "./src/node/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "dist",
+    "types"
+  ],
   "scripts": {
     "test": "node --test",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "test:e2e": "hugo --gc && node e2e/transfer.e2e.mjs"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "build": "node scripts/build-site.mjs",
+    "start": "node scripts/build-site.mjs --serve",
+    "test:e2e": "npm run build && node e2e/transfer.e2e.mjs",
+    "test:e2e:interop": "npm run build && node e2e/interop.e2e.mjs"
+  },
+  "dependencies": {
+    "@trystero-p2p/nostr": "0.25.3",
+    "jsqr": "^1.4.0",
+    "qrcode-generator": "^2.0.4"
+  },
+  "optionalDependencies": {
+    "node-datachannel": "^0.33.1"
   },
   "devDependencies": {
-    "@trystero-p2p/nostr": "^0.25.3",
     "@types/node": "^26.4.0",
-    "jsqr": "^1.4.0",
+    "esbuild": "^0.25.0",
     "playwright": "^1.61.1",
-    "qrcode-generator": "^2.0.4",
     "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

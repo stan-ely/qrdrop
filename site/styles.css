@@ -1,0 +1,81 @@
+/**
+ * Page chrome only -- the h1, tagline, and footer disclosure that stay in the
+ * light DOM (see site/index.html). Everything that used to style the
+ * transfer UI itself (sections, buttons, the QR box, the SAS display, the
+ * progress bar, and so on) moved into <qr-drop>'s own shadow root in
+ * src/web/element.js, because shadow DOM does not inherit a page stylesheet
+ * and the component needs to look right with none of this loaded at all.
+ */
+
+:root {
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --text: #1a1a19;
+  --muted: #6b6b66;
+  --line: #e3e3df;
+  --accent: #b8563a;
+  --accent-text: #ffffff;
+  --ok: #2f6f4e;
+  --bad: #a33328;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16161a;
+    --surface: #1f1f24;
+    --text: #ecebe8;
+    --muted: #9d9d98;
+    --line: #33333a;
+    --accent: #d4735a;
+    --accent-text: #17171a;
+    --ok: #7fc39b;
+    --bad: #e08b7f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+header { margin-bottom: 2rem; }
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+qr-drop { display: block; }
+
+footer { margin-top: 1.75rem; }
+footer summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+footer ul { padding-left: 1.1rem; color: var(--muted); font-size: 0.82rem; }
+footer li { margin-bottom: 0.5rem; }
+footer strong { color: var(--text); font-weight: 600; }
+
+@media (max-width: 30rem) {
+  main { padding: 1.5rem 1rem 3rem; }
+}

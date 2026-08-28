@@ -1,7 +1,7 @@
 /**
  * The channel contract, enforced.
  *
- * types/qrbeam.d.ts describes what a transport owes transfer/sender.js and
+ * types/qrdrop.d.ts describes what a transport owes transfer/sender.js and
  * transfer/receiver.js. The type checker holds the shipped adapter to that
  * description; this file holds it to the behaviour, and -- more usefully --
  * holds transfer/ to the claim that the contract is all it needs.
@@ -18,14 +18,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createChannel } from '../static/js/signal/channel.js'
-import { createControlStream } from '../static/js/transfer/control.js'
-import { createReceiver } from '../static/js/transfer/receiver.js'
-import { sendFile, _internals } from '../static/js/transfer/sender.js'
-import { generateSecret } from '../static/js/crypto/secret.js'
+import { createChannel } from '../src/transport/channel.js'
+import { createControlStream } from '../src/core/control.js'
+import { createReceiver } from '../src/core/receiver.js'
+import { sendFile, _internals } from '../src/core/sender.js'
+import { fromBytes } from '../src/core/source.js'
+import { generateSecret } from '../src/core/secret.js'
 import {
   createEphemeralKeypair, exportPublicKey, establishSession,
-} from '../static/js/crypto/session.js'
+} from '../src/core/session.js'
 
 const { drain, HIGH_WATER } = _internals
 
@@ -179,6 +180,12 @@ test('a full transfer runs over a channel implementing only the contract', async
     nextControlIndex: () => hostCtl++,
     onOffer: () => {},
     onError: e => errors.push(e),
+    // The sending peer runs a receiver only to read its own accept/done
+    // replies -- it has nowhere to put an inbound file, and being offered one
+    // means the peer is misbehaving. createSink is required rather than
+    // defaulted precisely so this case has to be answered out loud instead of
+    // silently inheriting a browser save dialog.
+    createSink: async () => { throw new Error('The sending peer accepts no files') },
   })
   ends.host.deliver = hostRx.handleFrame
 
@@ -206,7 +213,7 @@ test('a full transfer runs over a channel implementing only the contract', async
   const result = await sendFile({
     channel: hostCh,
     key: host.sendKey,
-    file: new File([payload], 'conformance.bin'),
+    file: fromBytes({ bytes: payload, name: 'conformance.bin' }),
     fileSeq: 0,
     control: hostControl,
     nextControlIndex: () => hostCtl++,

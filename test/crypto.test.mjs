@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 
 import {
   generateSecret, encodeSecret, decodeSecret, deriveTopic, toBase64url,
-} from '../static/js/crypto/secret.js'
+} from '../src/core/secret.js'
 import {
   createEphemeralKeypair, exportPublicKey, establishSession,
-} from '../static/js/crypto/session.js'
+} from '../src/core/session.js'
 
 /**
  * @param {Bytes} a
@@ -33,8 +33,8 @@ test('secret encodes to a QR-sized payload and round-trips', () => {
 
 test('malformed codes are rejected rather than silently truncated', () => {
   assert.throws(() => decodeSecret('nope'))
-  assert.throws(() => decodeSecret('qrbeam:tooshort'))
-  assert.throws(() => decodeSecret(toBase64url(generateSecret())), /Not a qrbeam code/)
+  assert.throws(() => decodeSecret('qrdrop:tooshort'))
+  assert.throws(() => decodeSecret(toBase64url(generateSecret())), /Not a qrdrop code/)
 })
 
 test('rendezvous topic is deterministic but does not leak the secret', async () => {

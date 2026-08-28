@@ -1,10 +1,10 @@
 /**
- * Shared type vocabulary for qrbeam.
+ * Shared type vocabulary for qrdrop.
  *
  * Deliberately a global (script-scope) declaration file: it has no top-level
- * import or export, so every name below is visible from JSDoc in static/js/
- * without an import line. Nothing here ships -- it lives outside static/, so
- * Hugo never copies it to the site.
+ * import or export, so every name below is visible from JSDoc in src/ without
+ * an import line. Nothing here executes -- it is erased at publish time into
+ * the .d.ts that ships alongside the sources.
  *
  * The point of this file is the Channel type. Everything else is convenience.
  */
@@ -38,13 +38,14 @@ type Bytes = Uint8Array<ArrayBuffer>
  * derived from the QR secret, so a peer that got this far is holding the code,
  * but a *buggy or hostile* one can still send the wrong shape.
  *
- * signal/room.js narrows it at the boundary. Nothing downstream sees this type.
+ * transport/room.js narrows it at the boundary. Nothing downstream sees this type.
  *
- * The URL is the one pinned in static/js/deps.js; tsconfig maps it to the same
- * version installed under devDependencies. Keep all three in step.
+ * A bare specifier now, resolved from node_modules like any other import. It
+ * used to be a pinned jsDelivr URL that tsconfig `paths` mapped back onto the
+ * installed package -- three places that had to be kept in step by hand. The
+ * package is the single source of the version now.
  */
-type TrysteroPayload =
-  import('https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.3/+esm').DataPayload
+type TrysteroPayload = import('@trystero-p2p/nostr').DataPayload
 
 // ---------------------------------------------------------------------------
 // The transport seam
@@ -53,14 +54,14 @@ type TrysteroPayload =
 /**
  * THE CONTRACT EVERY TRANSPORT MUST MEET.
  *
- * transfer/sender.js and transfer/receiver.js are written against this and
+ * core/sender.js and core/receiver.js are written against this and
  * nothing else. That is what let the entire signalling layer be replaced --
  * hand-rolled Nostr + WebRTC for Trystero -- without touching a line of
  * transfer/. Whatever comes next only has to satisfy these five members.
  *
  * Three implementations exist today and all three must keep conforming:
  *
- *   1. signal/room.js -- wraps a Trystero action. send() returns a promise
+ *   1. transport/room.js -- wraps a Trystero action. send() returns a promise
  *      that settles when the frame is actually out; Trystero manages the data
  *      channel's buffer itself, so bufferedAmount is pinned at 0 and the
  *      listener pair is inert.
@@ -122,7 +123,7 @@ interface SessionKeys {
   sas: string
 }
 
-/** What signal/room.js resolves with once a peer is paired. */
+/** What transport/room.js resolves with once a peer is paired. */
 interface PairedRoom {
   session: SessionKeys
   peerId: string
@@ -143,7 +144,7 @@ interface Manifest {
   t: 'manifest'
   /** Per-session file counter, and the AEAD nonce prefix for its chunks. */
   seq: number
-  /** Untrusted. Pass through transfer/sink.js safeFilename() before use. */
+  /** Untrusted. Pass through web/sink.js safeFilename() before use. */
   name: string
   size: number
   mime: string
@@ -162,7 +163,7 @@ type ControlMessage =
 type ControlType = ControlMessage['t']
 
 /**
- * The awaitable inbound-control queue from transfer/control.js.
+ * The awaitable inbound-control queue from core/control.js.
  *
  * Exists because frames arrive on an event handler that cannot be paused,
  * while the sender wants to read the exchange as straight-line async code.
@@ -209,7 +210,13 @@ type FrameExpectation = Pick<FrameHeader, 'type' | 'fileSeq' | 'index'>
 // Destinations
 // ---------------------------------------------------------------------------
 
-/** Where received bytes land. See transfer/sink.js for the two implementations. */
+/**
+ * Where sent bytes come from. Defined in src/core/source.js, which also holds
+ * the reasoning; re-exported here so JSDoc can name it without an import.
+ */
+type FileSource = import('../src/core/source.js').FileSource
+
+/** Where received bytes land. See web/sink.js for the two implementations. */
 interface Sink {
   /** False when the whole file must accumulate in memory before it can be saved. */
   streaming: boolean

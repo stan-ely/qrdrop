@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qrdrop</title>
+<meta name="description" content="Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.">
+
+<!--
+  The content attribute just below is replaced by scripts/build-site.mjs with
+  a generated Content-Security-Policy, never hand-edited here. See that
+  script for the reasoning behind every directive -- in short: connect-src is
+  built from RELAYS in src/transport/room.js so the allowlist cannot drift
+  out of step with the hosts the code actually dials, and script-src is
+  'self' only, because the bundle below is self-hosted rather than loaded
+  from a CDN.
+-->
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<main>
+  <header>
+    <h1>qrdrop</h1>
+    <p class="tagline">Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.</p>
+  </header>
+
+  <qr-drop></qr-drop>
+
+  <footer>
+    <details>
+      <summary>What this does and does not protect</summary>
+      <ul>
+        <li><strong>Files are encrypted end to end</strong> under a key derived from the
+          QR code, on top of WebRTC's own encryption. Relays and TURN servers see
+          ciphertext and byte counts, never contents.</li>
+        <li><strong>Each transfer uses fresh keys.</strong> A code captured later cannot
+          decrypt a transfer that already happened.</li>
+        <li><strong>Anyone with the code can join.</strong> It is the entire credential.
+          Show the QR to the person you mean to send to, and not to a room.</li>
+        <li><strong>Both devices learn each other's IP address.</strong> That is inherent
+          to a direct connection.</li>
+        <li><strong>Code is self-hosted, not loaded from a CDN.</strong> This page serves
+          a bundle built from source, so the jsDelivr risk that used to be listed here
+          is gone. What remains: the server hosting this page could still serve modified
+          code, the same way any web app's server could. No in-browser design prevents
+          that. For genuinely sensitive material, use a tool you can verify before running.</li>
+      </ul>
+    </details>
+  </footer>
+</main>
+
+<!-- script src is rewritten by scripts/build-site.mjs to the content-hashed bundle filename. -->
+<script type="module" src="__SCRIPT__"></script>
+</body>
+</html>

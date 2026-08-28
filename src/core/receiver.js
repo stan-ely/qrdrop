@@ -16,7 +16,6 @@ import {
   HEADER_BYTES, TYPE_CHUNK, TYPE_CONTROL, decodeHeader, open, openControl, sealControl,
 } from './frame.js'
 import { EMPTY_CHAIN, chainHash, hex, equalHex } from './digest.js'
-import { createSink as defaultCreateSink } from './sink.js'
 
 // Replies to our sender, versus offers addressed to us.
 const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
@@ -32,14 +31,17 @@ const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
  * @param {(p: ReceiveProgress) => void} [args.onProgress]
  * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
  * @param {(error: unknown) => void} [args.onError]
- * @param {(manifest: Manifest) => Promise<Sink>} [args.createSink]
- *   Injectable so the transfer can be exercised without a browser.
+ * @param {(manifest: Manifest) => Promise<Sink>} args.createSink Where received
+ *   bytes land. Required, and deliberately not defaulted: this module is the
+ *   runtime-agnostic core, and a default would have to name either the browser
+ *   sink (File System Access) or the Node one (fs), dragging one runtime's
+ *   globals into a file that must run in both. src/web/ and src/node/ each
+ *   supply their own; the tests supply a third.
  * @returns {{ handleFrame: (bytes: Bytes) => Promise<void>, readonly busy: boolean }}
  */
 export function createReceiver({
   channel, sendKey, recvKey, control, nextControlIndex,
-  onOffer, onProgress, onFileDone, onError,
-  createSink = defaultCreateSink,
+  onOffer, onProgress, onFileDone, onError, createSink,
 }) {
   let controlIn = 0
 

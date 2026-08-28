@@ -30,27 +30,27 @@
  * iterable" against this version.
  */
 
-import { joinRoom } from '../deps.js'
+import { joinRoom } from '@trystero-p2p/nostr'
 import { createChannel } from './channel.js'
-import { createEphemeralKeypair, exportPublicKey, establishSession } from '../crypto/session.js'
-import { fromBase64url, toBase64url } from '../crypto/secret.js'
+import { createEphemeralKeypair, exportPublicKey, establishSession } from '../core/session.js'
+import { fromBase64url, toBase64url } from '../core/secret.js'
 
-const APP_ID = 'qrbeam'
+const APP_ID = 'qrdrop'
 const DEFAULT_TIMEOUT_MS = 60_000
 
 /**
  * Pinned rather than using Trystero's built-in pool of ~44 relays, so the
- * connect-src allowlist in layouts/index.html can name every host this page
- * will ever contact. Passing `urls` makes Trystero use exactly this list and
- * ignore its own.
+ * connect-src allowlist on the page can name every host it will ever contact.
+ * Passing `urls` makes Trystero use exactly this list and ignore its own.
  *
  * Chosen from Trystero's pool by actually connecting to each one. The obvious
  * picks -- relay.damus.io, relay.nostr.band, relay.snort.social -- are the
  * best-known Nostr relays and were all unreachable when this list was built;
  * popularity and availability are not the same thing. Re-test before editing.
  *
- * If you change this list, update connect-src in layouts/index.html to match or
- * the CSP will block the new relays.
+ * This array is the single source of truth for the CSP: scripts/build-site.mjs
+ * imports it and generates connect-src from it, so the allowlist cannot drift
+ * out of step with the list the code actually dials. Editing it here is enough.
  */
 export const RELAYS = [
   'wss://nos.lol',
@@ -114,6 +114,12 @@ const toBytes = data => {
  * @param {'host' | 'guest'} args.role
  * @param {number} [args.timeoutMs]
  * @param {(text: string) => void} [args.onStatus]
+ * @param {readonly string[]} [args.relays] Defaults to RELAYS. A caller passing
+ *   its own list is on the hook for the CSP on any page that uses it.
+ * @param {readonly RTCIceServer[]} [args.iceServers] Defaults to ICE_SERVERS.
+ * @param {typeof RTCPeerConnection} [args.rtcPolyfill] Node has no WebRTC.
+ *   The CLI passes node-datachannel's implementation here; browsers leave it
+ *   undefined and Trystero falls back to the global.
  * @returns {Promise<PairedRoom>}
  */
 export async function openRoom({
@@ -123,6 +129,9 @@ export async function openRoom({
   role,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   onStatus,
+  relays = RELAYS,
+  iceServers = ICE_SERVERS,
+  rtcPolyfill,
 }) {
   // Generated BEFORE joining, deliberately. Awaiting anything between
   // joinRoom() and assigning onPeerJoin leaves a window in which the other peer
@@ -136,8 +145,9 @@ export async function openRoom({
     {
       appId: APP_ID,
       password,
-      relayConfig: { urls: RELAYS },
-      rtcConfig: { iceServers: ICE_SERVERS },
+      relayConfig: { urls: [...relays] },
+      rtcConfig: { iceServers: [...iceServers] },
+      ...(rtcPolyfill ? { rtcPolyfill } : {}),
     },
     topic,
   )

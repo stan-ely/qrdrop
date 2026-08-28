@@ -9,7 +9,14 @@
  * whose job is to be read by a camera rather than a person.
  */
 
-import { qrcode, loadJsQR } from '../deps.js'
+import qrcode from 'qrcode-generator'
+
+/**
+ * Loaded on demand: 130 kB, and only needed on browsers without a native
+ * BarcodeDetector. A static import would put it in every bundle for the
+ * benefit of Firefox alone.
+ */
+const loadJsQR = async () => (await import('jsqr')).default
 
 /**
  * Returns an <svg> element, so callers never have to touch innerHTML.

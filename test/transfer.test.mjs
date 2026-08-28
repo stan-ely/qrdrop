@@ -1,13 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { generateSecret } from '../static/js/crypto/secret.js'
-import { createEphemeralKeypair, exportPublicKey, establishSession } from '../static/js/crypto/session.js'
-import { createControlStream } from '../static/js/transfer/control.js'
-import { createReceiver } from '../static/js/transfer/receiver.js'
-import { sendFile } from '../static/js/transfer/sender.js'
-import { CHUNK_SIZE } from '../static/js/transfer/frame.js'
-import { safeFilename } from '../static/js/transfer/sink.js'
+import { generateSecret } from '../src/core/secret.js'
+import { createEphemeralKeypair, exportPublicKey, establishSession } from '../src/core/session.js'
+import { createControlStream } from '../src/core/control.js'
+import { createReceiver } from '../src/core/receiver.js'
+import { sendFile } from '../src/core/sender.js'
+import { fromBytes } from '../src/core/source.js'
+import { CHUNK_SIZE } from '../src/core/frame.js'
+import { safeFilename } from '../src/web/sink.js'
 
 /**
  * A DataChannel stand-in.
@@ -106,7 +107,7 @@ async function pairedSessions() {
  * Wires a full sender to a receiver over the fake channel.
  * `decide` chooses whether the receiver accepts the incoming offer.
  *
- * @param {File} file
+ * @param {import('../src/core/source.js').FileSource} file
  * @param {{
  *   decide?: 'accept' | 'decline',
  *   sink?: MemorySink,
@@ -175,11 +176,16 @@ async function transfer(file, { decide = 'accept', sink = memorySink(), onProgre
 }
 
 /**
+ * sendFile takes a FileSource, not a File -- that indirection is what lets the
+ * transfer core run in Node at all, so the tests exercise the same path the
+ * CLI does rather than a browser-shaped one.
+ *
  * @param {Bytes} bytes
  * @param {string} [name]
+ * @returns {import('../src/core/source.js').FileSource}
  */
 const fileOf = (bytes, name = 'payload.bin') =>
-  new File([bytes], name, { type: 'application/octet-stream' })
+  fromBytes({ bytes, name, mime: 'application/octet-stream' })
 
 /**
  * @param {number} n

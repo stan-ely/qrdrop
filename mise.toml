@@ -1,3 +1,10 @@
+# Hugo is gone: the site is now built by scripts/build-site.mjs, so Node is the
+# whole toolchain. That consolidation was not the goal of the rewrite but it
+# came free with it -- an npm package needs Node regardless, and Hugo was
+# contributing one templated title.
+#
+# Node 24 rather than 22 (the package's declared floor): the CLI relies on a
+# native WebSocket and a native File, both of which landed in 22, and 24 is
+# what this is developed against.
 [tools]
-hugo = "0.165"
 node = "24"

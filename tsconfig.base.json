@@ -1,12 +1,16 @@
 {
-  // Settings shared by the two projects. Not a project itself -- it has no
+  // Settings shared by the three projects. Not a project itself -- it has no
   // `include`, so running tsc against it directly checks nothing.
   //
-  // There are two projects because there are two runtimes. static/js/ runs in
-  // a browser and must not be able to reach Buffer, process, or node:*; test/
-  // and e2e/ run in Node and need all three. One combined project would make
-  // Node globals visible to the browser code, and a stray `Buffer.from` in a
-  // file served to users would typecheck cleanly right up until it threw.
+  // There are three projects because there are three runtimes. src/core/ and
+  // src/transport/ must run in both a browser and Node, so they are checked
+  // twice under two different sets of globals -- that double-check is the only
+  // thing standing between "isomorphic" and "isomorphic until someone reaches
+  // for Buffer". src/web/ needs the DOM; src/node/ and the tests need Node.
+  //
+  // A single combined project would make Node globals visible to browser code,
+  // and a stray `Buffer.from` in a file served to users would typecheck
+  // cleanly right up until it threw.
   "compilerOptions": {
     "noEmit": true,
     "allowJs": true,
@@ -22,24 +26,6 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
-
-    // The site imports third-party code by absolute jsDelivr URL, which no
-    // resolver can follow. These map each pinned URL onto the same package and
-    // version installed under devDependencies, purely so the checker can read
-    // its .d.ts. The mapping is type-time only -- npm installs nothing the site
-    // needs, and the URLs in deps.js are what actually load at runtime.
-    //
-    // KEEP THE VERSIONS IN THREE PLACES IN STEP: the URL in static/js/deps.js,
-    // the specifier here, and the devDependency in package.json. A mismatch
-    // means the checker is describing a different version than the one the
-    // page loads, which is worse than no checking at all.
-    //
-    // qrcode-generator is absent because its .d.ts is an old-style global
-    // script rather than a module; types/shims.d.ts handles that one.
-    "paths": {
-      "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.3/+esm": ["./node_modules/@trystero-p2p/nostr"],
-      "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/+esm": ["./node_modules/jsqr"]
-    },
 
     // Our own code is checked strictly; the dependency graph under
     // node_modules is not ours to fix.

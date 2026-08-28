@@ -1,10 +1,10 @@
 {
-  // The browser project: exactly the files Hugo copies to the site.
+  // The browser project: everything that ships to a page.
   //
-  // Nothing is compiled. `noEmit` is set in the base config, Hugo serves
-  // static/js/ verbatim, and the browser loads those exact files. This project
-  // exists so `npm run typecheck` can read the JSDoc in them and the .d.ts
-  // shipped by the pinned third-party packages, and object when they disagree.
+  // src/core/ and src/transport/ appear here AND in tsconfig.node.json. That
+  // duplication is the point -- they are the isomorphic half of the package,
+  // and checking them under both sets of globals is what enforces the claim.
+  // A `Buffer.from` in core passes the Node project and fails here.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
@@ -15,6 +15,11 @@
     // in scope for code that runs in a browser and has none of them.
     "types": []
   },
-  "include": ["static/js/**/*.js", "types/**/*.d.ts"],
-  "exclude": ["node_modules", "public", "dist", "resources"]
+  "include": [
+    "src/core/**/*.js",
+    "src/transport/**/*.js",
+    "src/web/**/*.js",
+    "types/**/*.d.ts"
+  ],
+  "exclude": ["node_modules", "site/dist", "dist"]
 }

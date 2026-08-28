@@ -1,0 +1,27 @@
+{
+  // The Node project: src/node/, the CLI, the unit tests, and the e2e driver.
+  //
+  // src/core/ and src/transport/ are included as well -- src/node/ and the
+  // tests import them, and the checker must follow those imports. They get
+  // checked twice as a result, once here with Node globals in scope and once
+  // in tsconfig.json without them. The browser project is the one that decides
+  // whether an isomorphic file is allowed to touch something.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // DOM as well as Node: the tests exercise browser code, and the e2e driver
+    // passes functions to Playwright's page.evaluate, which run in a page.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/core/**/*.js",
+    "src/transport/**/*.js",
+    "src/node/**/*.js",
+    "src/cli.js",
+    "scripts/**/*.mjs",
+    "test/**/*.mjs",
+    "e2e/**/*.mjs",
+    "types/**/*.d.ts"
+  ],
+  "exclude": ["node_modules", "site/dist", "dist"]
+}

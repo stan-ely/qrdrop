@@ -1,0 +1,43 @@
+# Unit tests and the type checker, on every push and pull request.
+#
+# The e2e suites are deliberately NOT here. transfer.e2e.mjs needs live public
+# Nostr relays, so it fails for reasons that have nothing to do with this
+# repository and would train everyone to ignore a red tick. It is run by hand.
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # `npm ci` rather than `npm install`: the lockfile is the point of a CI
+      # run. node-datachannel is an optionalDependency carrying a native
+      # binary; it resolves from a prebuild on ubuntu-latest, and if it ever
+      # does not, the CLI tests are what will say so.
+      - run: npm ci
+
+      - run: npm test
+
+      # Both projects. The browser one is checked with `types: []`, which is
+      # what stops a `Buffer` or a `process` reaching code served to a page --
+      # a failure that would otherwise typecheck cleanly and throw at runtime.
+      - run: npm run typecheck
+
+      # The site build is a real consumer of src/, so a build failure is a
+      # source failure. It also proves the CSP generator can still import
+      # RELAYS, which is what keeps the allowlist honest.
+      - run: npm run build

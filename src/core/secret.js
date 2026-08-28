@@ -16,7 +16,7 @@ const TOPIC_BYTES = 16
 
 // Domain separation salt. Fixed and public; its job is to make these
 // derivations meaningless outside this protocol version, not to be secret.
-const SALT = new TextEncoder().encode('qrbeam/v1')
+const SALT = new TextEncoder().encode('qrdrop/v1')
 
 const enc = new TextEncoder()
 
@@ -111,7 +111,7 @@ export function fromBase64url(str) {
  * @returns {string}
  */
 export function encodeSecret(secret) {
-  return `qrbeam:${toBase64url(secret)}`
+  return `qrdrop:${toBase64url(secret)}`
 }
 
 /**
@@ -119,9 +119,9 @@ export function encodeSecret(secret) {
  * @returns {Bytes}
  */
 export function decodeSecret(text) {
-  const m = /^qrbeam:([A-Za-z0-9_-]{43})$/.exec(text.trim())
-  if (!m) throw new Error('Not a qrbeam code')
+  const m = /^qrdrop:([A-Za-z0-9_-]{43})$/.exec(text.trim())
+  if (!m) throw new Error('Not a qrdrop code')
   const bytes = fromBase64url(m[1])
-  if (bytes.length !== SECRET_BYTES) throw new Error('Malformed qrbeam code')
+  if (bytes.length !== SECRET_BYTES) throw new Error('Malformed qrdrop code')
   return bytes
 }

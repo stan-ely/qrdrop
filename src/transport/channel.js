@@ -2,15 +2,15 @@
  * The Channel adapter, kept in its own module and free of third-party imports.
  *
  * Two reasons it does not live in room.js. First, this is the seam: everything
- * in transfer/ is written against the Channel contract in types/qrbeam.d.ts and
+ * in core/ is written against the Channel contract in types/qrdrop.d.ts and
  * nothing else, and a transport swap is a rewrite of room.js plus a rewrite of
  * this function. Naming it makes the boundary something you can point at.
  *
- * Second, testability. room.js imports deps.js, which imports third-party
- * modules by absolute jsDelivr URL -- a specifier Node will not resolve. So
- * nothing that imports room.js can be exercised under `node --test`, and the
- * one part worth exercising there is exactly this adapter. Here, it is
- * importable. See test/channel.test.mjs.
+ * Second, testability. Importing room.js opens a relay connection's worth of
+ * machinery and drags Trystero in with it; this adapter is the part actually
+ * worth exercising under `node --test`, and here it can be imported on its
+ * own. See test/channel.test.mjs, which runs a full sealed transfer over a
+ * channel with exactly the five contract members and nothing else.
  */
 
 /**

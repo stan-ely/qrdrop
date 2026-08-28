@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
   seal, open, sealControl, openControl, decodeHeader,
   TYPE_CHUNK, CHUNK_SIZE, HEADER_BYTES, MAX_FRAME_BYTES,
-} from '../static/js/transfer/frame.js'
+} from '../src/core/frame.js'
 
 const key = async () =>
   /** @type {Promise<CryptoKey>} */ (

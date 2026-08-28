@@ -48,7 +48,9 @@ function drain(channel) {
  * @param {object} args
  * @param {Channel} args.channel
  * @param {CryptoKey} args.key The session's sendKey. Never recvKey.
- * @param {File} args.file
+ * @param {import('./source.js').FileSource} args.file A browser File is not
+ *   accepted directly: wrap it with fromFile() from src/web/. That indirection
+ *   is what keeps this file runnable in Node, and so what makes the CLI possible.
  * @param {number} args.fileSeq uint32, and the AEAD nonce prefix for every chunk.
  * @param {ControlStream} args.control
  * @param {() => number} args.nextControlIndex
@@ -65,7 +67,7 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
     seq: fileSeq,
     name: file.name,
     size: file.size,
-    mime: file.type || 'application/octet-stream',
+    mime: file.mime || 'application/octet-stream',
     chunks: totalChunks,
   }))
 
@@ -81,7 +83,7 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
     await drain(channel)
 
     const start = index * CHUNK_SIZE
-    const chunk = new Uint8Array(await file.slice(start, start + CHUNK_SIZE).arrayBuffer())
+    const chunk = await file.slice(start, Math.min(start + CHUNK_SIZE, file.size))
     digest = await chainHash(digest, chunk)
 
     // Awaited, not fired off: on a raw RTCDataChannel send() returns
