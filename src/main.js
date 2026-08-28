@@ -46,6 +46,22 @@ const fail = error => {
   el.hidden = false
 }
 
+/**
+ * A failed transfer must look failed.
+ *
+ * Showing only the error banner left the progress bar frozen mid-transfer,
+ * which reads as a hang rather than a fault -- the user sees "Received 80 KB of
+ * 300 KB" and waits for a transfer that has already been abandoned. show()
+ * clears the banner, so it has to run before fail().
+ */
+const failTransfer = error => {
+  show('done')
+  $('done-title').textContent = 'Transfer failed'
+  $('done-file').textContent = 'Nothing was saved. Start over with a fresh code.'
+  $('done-digest').textContent = ''
+  fail(error)
+}
+
 const bytes = n => {
   if (n < 1024) return `${n} B`
   const units = ['KB', 'MB', 'GB', 'TB']
@@ -80,7 +96,7 @@ function attachReceiver({ channel, session, onOffer, onProgress, onFileDone }) {
     onOffer,
     onProgress,
     onFileDone,
-    onError: fail,
+    onError: failTransfer,
   })
 
   channel.addEventListener('message', ev => {
@@ -191,7 +207,7 @@ async function startSend(file) {
       $('done-file').textContent = file.name
       $('done-digest').textContent = result.digest
     } catch (error) {
-      fail(error)
+      failTransfer(error)
     } finally {
       peer.close()
     }
