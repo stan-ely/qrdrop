@@ -1,0 +1,20 @@
+{
+  // The browser project: exactly the files Hugo copies to the site.
+  //
+  // Nothing is compiled. `noEmit` is set in the base config, Hugo serves
+  // static/js/ verbatim, and the browser loads those exact files. This project
+  // exists so `npm run typecheck` can read the JSDoc in them and the .d.ts
+  // shipped by the pinned third-party packages, and object when they disagree.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+
+    // Empty on purpose. Without it, every @types package under node_modules is
+    // included automatically -- including @types/node, which is installed for
+    // the test project. That would put Buffer, process, and the Node globals
+    // in scope for code that runs in a browser and has none of them.
+    "types": []
+  },
+  "include": ["static/js/**/*.js", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "public", "dist", "resources"]
+}

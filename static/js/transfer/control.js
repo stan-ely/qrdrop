@@ -6,14 +6,27 @@
  * messages that show up before anyone is waiting, and parks waiters that arrive
  * before their message -- so the sender can read the exchange as straight-line
  * async code instead of a state machine.
+ *
+ * @returns {ControlStream}
  */
 export function createControlStream() {
+  /** @type {ControlMessage[]} */
   const pending = []
+
+  /**
+   * @type {{
+   *   types: readonly ControlType[],
+   *   seq: number | undefined,
+   *   resolve: (msg: ControlMessage) => void,
+   *   reject: (error: unknown) => void,
+   * } | null}
+   */
   let waiter = null
 
   // 'error' matches regardless of seq: a failure means the peer's whole
   // connection state is suspect, not just one file, and the failing side may
   // not even know which file it was -- a malformed control frame has no seq.
+  /** @type {(msg: ControlMessage, types: readonly ControlType[], seq?: number) => boolean} */
   const matches = (msg, types, seq) =>
     types.includes(msg.t) && (seq === undefined || msg.seq === seq || msg.t === 'error')
 

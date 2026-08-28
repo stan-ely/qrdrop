@@ -37,6 +37,11 @@ const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i
  * device-flavoured name sitting prefilled in a save dialog is the kind of thing
  * a hurried user clicks straight through.
  */
+/**
+ * @param {unknown} name Whatever the peer put in the manifest. Any type at all.
+ * @param {string} [fallback]
+ * @returns {string}
+ */
 export function safeFilename(name, fallback = 'received.bin') {
   const base = String(name ?? '')
     .replace(/[\u0000-\u001f\u007f]/g, '')
@@ -54,12 +59,21 @@ export function safeFilename(name, fallback = 'received.bin') {
   return cleaned
 }
 
-/** Must be called from a user gesture: showSaveFilePicker requires one. */
+/**
+ * Must be called from a user gesture: showSaveFilePicker requires one.
+ *
+ * @param {Manifest} manifest
+ * @returns {Promise<Sink>}
+ */
 export async function createSink(manifest) {
   const name = safeFilename(manifest.name)
 
   if (canStreamToDisk()) {
-    const handle = await window.showSaveFilePicker({ suggestedName: name })
+    // showSaveFilePicker is File System Access, which lib.dom does not declare
+    // -- it is Chromium-only and not on a standards track every engine has
+    // signed up to. canStreamToDisk() above is the real guard; this cast is
+    // only telling the checker what that guard already established.
+    const handle = await /** @type {any} */ (window).showSaveFilePicker({ suggestedName: name })
     const writable = await handle.createWritable()
     return {
       streaming: true,
@@ -70,6 +84,7 @@ export async function createSink(manifest) {
     }
   }
 
+  /** @type {Bytes[]} */
   let parts = []
   return {
     streaming: false,

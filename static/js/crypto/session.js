@@ -21,16 +21,33 @@
 
 const enc = new TextEncoder()
 
+/**
+ * @returns {Promise<CryptoKeyPair>}
+ */
 export async function createEphemeralKeypair() {
   // Non-extractable: the private key cannot be read back out by any later code
   // on the page. WebCrypto always leaves the public half exportable.
-  return crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits'])
+  //
+  // generateKey's return type is CryptoKey | CryptoKeyPair because the same
+  // call produces either depending on the algorithm; ECDH always yields a
+  // pair, which the checker cannot know from the object literal alone.
+  return /** @type {CryptoKeyPair} */ (
+    await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits'])
+  )
 }
 
+/**
+ * @param {CryptoKeyPair} keypair
+ * @returns {Promise<Bytes>} The raw uncompressed P-256 point, 65 bytes.
+ */
 export async function exportPublicKey(keypair) {
   return new Uint8Array(await crypto.subtle.exportKey('raw', keypair.publicKey))
 }
 
+/**
+ * @param {Bytes} raw Untrusted: this arrived from the peer.
+ * @returns {Promise<CryptoKey>}
+ */
 async function importPeerKey(raw) {
   return crypto.subtle.importKey('raw', raw, { name: 'ECDH', namedCurve: 'P-256' }, false, [])
 }
@@ -41,6 +58,10 @@ async function importPeerKey(raw) {
  * pins the derived key to this exact pair of keys -- an attacker who replays a
  * public key from another session lands on a different transcript and derives
  * a different, useless key.
+ *
+ * @param {Bytes} a
+ * @param {Bytes} b
+ * @returns {Promise<Bytes>}
  */
 async function transcriptHash(a, b) {
   const [x, y] = compare(a, b) <= 0 ? [a, b] : [b, a]
@@ -50,6 +71,11 @@ async function transcriptHash(a, b) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', joined))
 }
 
+/**
+ * @param {Bytes} a
+ * @param {Bytes} b
+ * @returns {number}
+ */
 function compare(a, b) {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
     if (a[i] !== b[i]) return a[i] - b[i]
@@ -57,6 +83,41 @@ function compare(a, b) {
   return a.length - b.length
 }
 
+/**
+ * One HKDF step, producing either raw bits or an AES-GCM key.
+ *
+ * OVERLOADED ON `usage` DELIBERATELY. This function is the one place in the
+ * codebase that returns key material as two different kinds of thing, and
+ * confusing them is not a loud failure -- a CryptoKey where bytes were wanted
+ * stringifies to "[object CryptoKey]" and a comparison quietly succeeds or
+ * quietly fails. Splitting the signature makes the checker pick the right one
+ * from the literal at each call site.
+ *
+ * @overload
+ * @param {Bytes} sharedBits
+ * @param {Bytes} secret
+ * @param {string} label
+ * @param {Bytes} transcript
+ * @param {'bits'} usage
+ * @returns {Promise<Bytes>}
+ */
+/**
+ * @overload
+ * @param {Bytes} sharedBits
+ * @param {Bytes} secret
+ * @param {string} label
+ * @param {Bytes} transcript
+ * @param {'key'} usage
+ * @returns {Promise<CryptoKey>}
+ */
+/**
+ * @param {Bytes} sharedBits
+ * @param {Bytes} secret HKDF salt -- this is what authenticates the exchange.
+ * @param {string} label
+ * @param {Bytes} transcript
+ * @param {'bits' | 'key'} usage
+ * @returns {Promise<Bytes | CryptoKey>}
+ */
 async function derive(sharedBits, secret, label, transcript, usage) {
   const ikm = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveBits', 'deriveKey'])
   const info = new Uint8Array(enc.encode(label).length + transcript.length)
@@ -79,6 +140,13 @@ async function derive(sharedBits, secret, label, transcript, usage) {
  * public key still cannot land on the same key without the secret.
  *
  * `role` is 'host' for the peer that generated the QR, 'guest' for the scanner.
+ *
+ * @param {object} args
+ * @param {CryptoKeyPair} args.keypair
+ * @param {Bytes} args.peerPublicRaw Untrusted: straight off the relay.
+ * @param {Bytes} args.secret The QR secret, used here as the HKDF salt.
+ * @param {'host' | 'guest'} args.role
+ * @returns {Promise<SessionKeys>}
  */
 export async function establishSession({ keypair, peerPublicRaw, secret, role }) {
   const shared = new Uint8Array(
@@ -111,7 +179,11 @@ const SAS_EMOJI = [
   '🪞', '🧪', '🌡️', '🪄',
 ]
 
-/** 4 emoji out of 64 = 24 bits. Both peers must see the same four, in order. */
+/**
+ * 4 emoji out of 64 = 24 bits. Both peers must see the same four, in order.
+ * @param {Bytes} bytes
+ * @returns {string}
+ */
 function renderSAS(bytes) {
   return [0, 1, 2, 3].map(i => SAS_EMOJI[bytes[i] & 0x3f]).join(' ')
 }

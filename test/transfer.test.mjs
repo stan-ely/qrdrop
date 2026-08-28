@@ -17,9 +17,25 @@ import { safeFilename } from '../static/js/transfer/sink.js'
  * 'message' regardless of whether the last async handler has settled. The
  * serialized mode is the polite fiction; `serialize: false` is what browsers
  * actually do, and is the mode that caught the reentrancy bug.
+ *
+ * The declared type is the point: this must satisfy Channel, the same contract
+ * signal/room.js implements against Trystero. If the two ever drift, the fake
+ * stops typechecking here rather than passing a suite that no longer resembles
+ * what ships. test/channel.test.mjs asserts the same thing at runtime.
+ *
+ * @typedef {Channel & {
+ *   sent: number,
+ *   tail: Promise<unknown>,
+ *   twin: FakeChannel,
+ *   onFrame: (bytes: Bytes) => Promise<void>,
+ * }} FakeChannel
+ *
+ * @param {{ serialize?: boolean }} [options]
+ * @returns {[FakeChannel, FakeChannel]}
  */
 function channelPair({ serialize = true } = {}) {
   const mk = () => {
+    /** @type {FakeChannel} */
     const ch = {
       bufferedAmount: 0,
       bufferedAmountLowThreshold: 0,
@@ -37,6 +53,9 @@ function channelPair({ serialize = true } = {}) {
       },
       tail: Promise.resolve(),
       onFrame: async () => {},
+      // Assigned immediately below; the pair is circular, so neither half can
+      // be constructed already holding the other.
+      twin: /** @type {FakeChannel} */ (/** @type {unknown} */ (null)),
     }
     return ch
   }
@@ -47,7 +66,18 @@ function channelPair({ serialize = true } = {}) {
   return [a, b]
 }
 
+/**
+ * @typedef {Sink & {
+ *   parts: Bytes[],
+ *   closed: boolean,
+ *   aborted: boolean,
+ *   bytes: () => Buffer,
+ * }} MemorySink
+ *
+ * @returns {MemorySink}
+ */
 function memorySink() {
+  /** @type {Bytes[]} */
   const parts = []
   return {
     parts,
@@ -75,11 +105,26 @@ async function pairedSessions() {
 /**
  * Wires a full sender to a receiver over the fake channel.
  * `decide` chooses whether the receiver accepts the incoming offer.
+ *
+ * @param {File} file
+ * @param {{
+ *   decide?: 'accept' | 'decline',
+ *   sink?: MemorySink,
+ *   onProgress?: (p: TransferProgress) => void,
+ *   serialize?: boolean,
+ * }} [options]
  */
 async function transfer(file, { decide = 'accept', sink = memorySink(), onProgress, serialize = true } = {}) {
   const { host, guest } = await pairedSessions()
   const [hostCh, guestCh] = channelPair({ serialize })
 
+  /**
+   * @type {{
+   *   offers: Manifest[],
+   *   done: { name: string, size: number, digest: string }[],
+   *   errors: unknown[],
+   * }}
+   */
   const events = { offers: [], done: [], errors: [] }
 
   // The sending peer also runs a receiver, to pick up accept/done replies.
@@ -129,9 +174,17 @@ async function transfer(file, { decide = 'accept', sink = memorySink(), onProgre
   return { result, events, sink, hostCh, guestCh }
 }
 
+/**
+ * @param {Bytes} bytes
+ * @param {string} [name]
+ */
 const fileOf = (bytes, name = 'payload.bin') =>
   new File([bytes], name, { type: 'application/octet-stream' })
 
+/**
+ * @param {number} n
+ * @returns {Bytes}
+ */
 const randomBytes = n => {
   const b = new Uint8Array(n)
   for (let i = 0; i < n; i += 65536) crypto.getRandomValues(b.subarray(i, Math.min(i + 65536, n)))
@@ -194,10 +247,13 @@ test('declining means no file bytes are ever sent', async () => {
 
 test('progress is reported monotonically and reaches the full size', async () => {
   const size = CHUNK_SIZE * 4 + 10
+  /** @type {TransferProgress[]} */
   const seen = []
   await transfer(fileOf(randomBytes(size)), { onProgress: p => seen.push(p) })
 
-  const sent = seen.filter(p => p.sent !== undefined).map(p => p.sent)
+  // Both peers report here, so the send and receive shapes are mixed together;
+  // this picks out the sending half.
+  const sent = seen.flatMap(p => ('sent' in p ? [p.sent] : []))
   assert.ok(sent.length >= 5)
   assert.deepEqual(sent, [...sent].sort((a, b) => a - b), 'progress never goes backwards')
   assert.equal(sent.at(-1), size)

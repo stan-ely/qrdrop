@@ -29,7 +29,25 @@ if (window.top !== window.self) {
   throw new Error('Refusing to run in a frame')
 }
 
-const $ = id => document.getElementById(id)
+/**
+ * Every id below is one this page's own layout defines, so a miss means the
+ * markup and this file have drifted apart.
+ *
+ * It throws rather than returning null. That is not a behaviour change worth
+ * arguing about -- every call site immediately dereferences the result, so the
+ * status quo was a TypeError one line later with no clue which id was missing
+ * -- and it is what lets the return type be HTMLElement instead of
+ * `HTMLElement | null`, which otherwise needs a null check at all forty-odd
+ * call sites to say nothing useful.
+ *
+ * @param {string} id
+ * @returns {HTMLElement}
+ */
+const $ = id => {
+  const el = document.getElementById(id)
+  if (!el) throw new Error(`Layout is missing #${id}`)
+  return el
+}
 
 const SCREENS = ['choose', 'send', 'receive', 'verify', 'transfer', 'done']
 
@@ -45,17 +63,19 @@ const SCREENS = ['choose', 'send', 'receive', 'verify', 'transfer', 'done']
  */
 let sessionEnded = false
 
+/** @param {typeof SCREENS[number]} name */
 const show = name => {
   for (const s of SCREENS) $(`screen-${s}`).hidden = s !== name
   $('error').hidden = true
   if (name === 'done') sessionEnded = true
 }
 
+/** @param {unknown} error */
 const fail = error => {
   console.error(error)
   const el = $('error')
   // textContent, never innerHTML: some of these strings originate from the peer.
-  el.textContent = error?.message ?? String(error)
+  el.textContent = error instanceof Error ? error.message : String(error)
   el.hidden = false
 }
 
@@ -66,6 +86,8 @@ const fail = error => {
  * which reads as a hang rather than a fault -- the user sees "Received 80 KB of
  * 300 KB" and waits for a transfer that has already been abandoned. show()
  * clears the banner, so it has to run before fail().
+ *
+ * @param {unknown} error
  */
 const failTransfer = error => {
   show('done')
@@ -75,6 +97,7 @@ const failTransfer = error => {
   fail(error)
 }
 
+/** @param {number} n */
 const bytes = n => {
   if (n < 1024) return `${n} B`
   const units = ['KB', 'MB', 'GB', 'TB']
@@ -86,6 +109,7 @@ const bytes = n => {
 
 // A live session's teardown, so cancelling never leaves a camera on, a relay
 // socket open, or a half-built peer connection lingering.
+/** @type {(() => void) | null} */
 let teardown = null
 
 function reset() {
@@ -94,8 +118,27 @@ function reset() {
   show('choose')
 }
 
-/** Everything both roles need once the room is up. */
-function attachReceiver({ room, onOffer, onProgress, onFileDone }) {
+/**
+ * Everything both roles need once the room is up.
+ *
+ * @param {object} args
+ * @param {PairedRoom} args.room
+ * @param {Parameters<typeof createReceiver>[0]['onOffer']} [args.onOffer]
+ * @param {(p: ReceiveProgress) => void} [args.onProgress]
+ * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
+ */
+function attachReceiver({
+  room,
+  onProgress,
+  onFileDone,
+  // A sending peer runs a receiver too, but only to read its own replies -- it
+  // has no screen for an inbound file. Throwing lands in processFrame's catch,
+  // which tells the peer and surfaces the fault locally; that is what happened
+  // before this argument was optional, and it stays the right answer. Silently
+  // dropping the manifest would leave the offering peer waiting on a reply
+  // that is never coming.
+  onOffer = () => { throw new Error('Peer offered a file while we were sending one') },
+}) {
   const control = createControlStream()
   let controlOut = 0
   const nextControlIndex = () => controlOut++
@@ -118,15 +161,31 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone }) {
   return { control, nextControlIndex }
 }
 
+/**
+ * One progress renderer for both directions, which is why it reads the union.
+ *
+ * @param {object} args
+ * @param {HTMLElement} args.statusEl
+ * @param {string} args.verb
+ * @returns {(p: TransferProgress) => void}
+ */
 function trackProgress({ statusEl, verb }) {
   return p => {
-    const moved = p.sent ?? p.received
+    const moved = 'sent' in p ? p.sent : p.received
     $('progress-fill').style.setProperty('--progress', `${(moved / (p.total || 1)) * 100}%`)
     statusEl.textContent = `${verb} ${bytes(moved)} of ${bytes(p.total)}`
   }
 }
 
-/** Opens the rendezvous and pairs. Shared by both roles. */
+/**
+ * Opens the rendezvous and pairs. Shared by both roles.
+ *
+ * @param {object} args
+ * @param {Bytes} args.secret
+ * @param {'host' | 'guest'} args.role
+ * @param {HTMLElement} args.statusEl
+ * @returns {Promise<PairedRoom>}
+ */
 async function establish({ secret, role, statusEl }) {
   const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
 
@@ -147,6 +206,7 @@ async function establish({ secret, role, statusEl }) {
   return room
 }
 
+/** @param {File} file */
 async function startSend(file) {
   const secret = generateSecret()
   const code = encodeSecret(secret)
@@ -207,6 +267,7 @@ async function startSend(file) {
   }, { once: true })
 }
 
+/** @param {Bytes} secret */
 async function startReceive(secret) {
   const room = await establish({ secret, role: 'guest', statusEl: $('receive-status') })
 
@@ -283,10 +344,12 @@ async function beginScan() {
   teardown = () => controller.abort()
 
   try {
-    const value = await scanQR({ video: $('scanner'), signal: controller.signal })
+    const video = /** @type {HTMLVideoElement} */ ($('scanner'))
+    const value = await scanQR({ video, signal: controller.signal })
     startReceive(decodeSecret(value)).catch(fail)
   } catch (error) {
-    if (error.name !== 'AbortError') fail(error)
+    // Cancelling is the ordinary way out of this screen, not a fault.
+    if (!(error instanceof Error) || error.name !== 'AbortError') fail(error)
   }
 }
 
@@ -300,7 +363,8 @@ $('done-again').addEventListener('click', reset)
 $('manual-form').addEventListener('submit', ev => {
   ev.preventDefault()
   try {
-    const secret = decodeSecret($('manual-input').value)
+    const input = /** @type {HTMLInputElement} */ ($('manual-input'))
+    const secret = decodeSecret(input.value)
     teardown?.()
     startReceive(secret).catch(fail)
   } catch (error) {

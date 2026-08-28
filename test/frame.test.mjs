@@ -6,8 +6,19 @@ import {
   TYPE_CHUNK, CHUNK_SIZE, HEADER_BYTES, MAX_FRAME_BYTES,
 } from '../static/js/transfer/frame.js'
 
-const key = async () => crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+const key = async () =>
+  /** @type {Promise<CryptoKey>} */ (
+    crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+  )
+
+/**
+ * @param {number} [n]
+ * @param {number} [fill]
+ * @returns {Bytes}
+ */
 const body = (n = 100, fill = 42) => new Uint8Array(n).fill(fill)
+
+/** @param {() => Promise<unknown>} fn */
 const rejects = async fn => { try { await fn(); return false } catch { return true } }
 
 test('a sealed chunk round-trips', async () => {
@@ -76,8 +87,12 @@ test('a different key cannot open a frame', async () => {
 
 test('control frames use a reserved fileSeq so they never share a nonce with data', async () => {
   const k = await key()
+  // Deliberately not a real ControlMessage. This is the framing layer, and
+  // what is under test is that an arbitrary JSON body survives the seal/open
+  // round trip under the reserved sequence -- the protocol's own shapes are
+  // exercised in transfer.test.mjs.
   const manifest = { name: 'x.bin', size: 10, totalChunks: 1 }
-  const frame = await sealControl(k, 0, manifest)
+  const frame = await sealControl(k, 0, /** @type {any} */ (manifest))
   assert.deepEqual(await openControl(k, frame, 0), manifest)
 
   // The reserved sequence is 0xffffffff, unreachable by a real file counter.

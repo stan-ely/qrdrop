@@ -11,7 +11,13 @@
 
 import { qrcode, loadJsQR } from '../deps.js'
 
-/** Returns an <svg> element, so callers never have to touch innerHTML. */
+/**
+ * Returns an <svg> element, so callers never have to touch innerHTML.
+ *
+ * @param {string} text
+ * @param {{ cellSize?: number, margin?: number }} [options]
+ * @returns {Element}
+ */
 export function renderQR(text, { cellSize = 6, margin = 3 } = {}) {
   // Type 0 auto-sizes to the data; 'M' correction tolerates ~15% damage, which
   // is ample for a screen and keeps the modules large enough to scan easily.
@@ -21,7 +27,9 @@ export function renderQR(text, { cellSize = 6, margin = 3 } = {}) {
 
   const template = document.createElement('template')
   template.innerHTML = qr.createSvgTag({ cellSize, margin, scalable: true })
-  return template.content.firstElementChild
+  // Non-null: createSvgTag always returns one <svg> root, and the only input
+  // to it is the code we generated ourselves.
+  return /** @type {Element} */ (template.content.firstElementChild)
 }
 
 /**
@@ -32,11 +40,16 @@ export function renderQR(text, { cellSize = 6, margin = 3 } = {}) {
  *  2. jsQR -- pure JS over canvas pixels. Slower, but it is the only option on
  *     Firefox, and a scanner that works everywhere matters more here than one
  *     that is fast in two browsers.
+ *
+ * @returns {Promise<(video: HTMLVideoElement) => Promise<string | null>>}
  */
 async function createDetector() {
   if ('BarcodeDetector' in globalThis) {
     try {
-      const detector = new globalThis.BarcodeDetector({ formats: ['qr_code'] })
+      // Not in lib.dom: BarcodeDetector is Chromium and Safari only, and is
+      // feature-detected on the line above precisely because of that.
+      const Detector = /** @type {any} */ (globalThis).BarcodeDetector
+      const detector = new Detector({ formats: ['qr_code'] })
       return async source => {
         const [hit] = await detector.detect(source)
         return hit?.rawValue ?? null
@@ -49,6 +62,7 @@ async function createDetector() {
   const jsQR = await loadJsQR()
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) throw new Error('Could not open a 2D canvas to decode the code')
 
   return async video => {
     const w = video.videoWidth
@@ -68,6 +82,11 @@ async function createDetector() {
  * Always stops the camera track on the way out, including on error and on
  * cancel. A page that quietly holds the camera open after the user has moved on
  * is both a privacy problem and, on a phone, a battery one.
+ *
+ * @param {object} args
+ * @param {HTMLVideoElement} args.video
+ * @param {AbortSignal} [args.signal]
+ * @returns {Promise<string>}
  */
 export async function scanQR({ video, signal }) {
   const stream = await navigator.mediaDevices.getUserMedia({

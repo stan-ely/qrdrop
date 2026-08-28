@@ -11,10 +11,17 @@
  * correctly-sealed chunks in the wrong order or dropping one.
  */
 
+/** @type {(bytes: Bytes) => Promise<Bytes>} */
 const sha256 = async bytes => new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
 
+/** @returns {Bytes} */
 export const EMPTY_CHAIN = () => new Uint8Array(32)
 
+/**
+ * @param {Bytes} previous
+ * @param {Bytes} chunk
+ * @returns {Promise<Bytes>}
+ */
 export async function chainHash(previous, chunk) {
   const joined = new Uint8Array(64)
   joined.set(previous, 0)
@@ -22,9 +29,20 @@ export async function chainHash(previous, chunk) {
   return sha256(joined)
 }
 
+/** @type {(bytes: Bytes) => string} */
 export const hex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
 
-/** Constant-time comparison, so digest checking cannot be turned into an oracle. */
+/**
+ * Constant-time comparison, so digest checking cannot be turned into an oracle.
+ *
+ * `b` is typed as unknown rather than string on purpose: it is whatever the
+ * peer put in the `digest` field, and the typeof guards below are load-bearing
+ * rather than defensive clutter.
+ *
+ * @param {string} a
+ * @param {unknown} b
+ * @returns {boolean}
+ */
 export function equalHex(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false
   let diff = 0

@@ -74,7 +74,30 @@ export const ICE_SERVERS = [
   { urls: 'stun:global.stun.twilio.com:3478' },
 ]
 
-const toBytes = data => (data instanceof Uint8Array ? data : new Uint8Array(data))
+/**
+ * Narrows an inbound Trystero payload to bytes.
+ *
+ * Anything that is not already binary is turned into an empty array rather
+ * than coerced. A peer that sends a string or a number where a frame belongs
+ * is misbehaving, and an empty array is refused one layer down as a runt frame
+ * -- which is a clean, reported failure instead of `new Uint8Array('...')`
+ * quietly producing garbage the receiver then tries to decrypt.
+ *
+ * @param {TrysteroPayload} data
+ * @returns {Bytes}
+ */
+const toBytes = data => {
+  if (data instanceof Uint8Array) return /** @type {Bytes} */ (data)
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) {
+    // Copied rather than wrapped: `buffer` here is ArrayBufferLike, which
+    // includes SharedArrayBuffer, and WebCrypto refuses those. Uint8Array.from
+    // gives a plainly-backed copy. Only reachable if a peer sends some other
+    // view type, so the copy is not on the hot path.
+    return Uint8Array.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
+  }
+  return new Uint8Array(0)
+}
 
 /**
  * Joins the rendezvous and resolves once a peer is connected and session keys
@@ -82,6 +105,15 @@ const toBytes = data => (data instanceof Uint8Array ? data : new Uint8Array(data
  *
  * `role` is 'host' for the peer that generated the QR, 'guest' for the scanner.
  * It only decides which direction gets which key; both sides derive both.
+ *
+ * @param {object} args
+ * @param {string} args.topic HKDF'd from the secret -- never the secret itself.
+ * @param {string} args.password A string, not a CryptoKey: Trystero stretches it internally.
+ * @param {Bytes} args.secret The QR secret, passed on as the ECDH HKDF salt.
+ * @param {'host' | 'guest'} args.role
+ * @param {number} [args.timeoutMs]
+ * @param {(text: string) => void} [args.onStatus]
+ * @returns {Promise<PairedRoom>}
  */
 export async function openRoom({
   topic,
@@ -112,12 +144,19 @@ export async function openRoom({
   const keyAction = room.makeAction('ecdh')
   const frameAction = room.makeAction('frame')
 
+  // Annotated rather than inferred: from the no-op initialiser alone the
+  // checker reads this as a zero-argument function, and every later call
+  // through it becomes an arity error at the call site instead of a type error
+  // here. The placeholder exists so frames arriving before onFrame() is
+  // registered are dropped rather than thrown on.
+  /** @type {(bytes: Bytes) => void} */
   let frameHandler = () => {}
   frameAction.onMessage = data => frameHandler(toBytes(data))
 
   onStatus?.('Waiting for the other device…')
 
-  const { session, peerId } = await new Promise((resolve, reject) => {
+  /** @type {Promise<{ session: SessionKeys, peerId: string }>} */
+  const paired = new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error('Timed out waiting for the other device')),
       timeoutMs,
@@ -138,6 +177,17 @@ export async function openRoom({
       settled = true
       clearTimeout(timer)
 
+      // Trystero delivers whatever the peer serialised, so this is a string
+      // only by convention. Checked rather than assumed: without it a peer
+      // sending null or a number reaches fromBase64url, which throws
+      // "replace is not a function" from inside an event handler -- an
+      // unhandled rejection that leaves this promise pending until the
+      // timeout, reported to the user as "timed out" rather than as the
+      // protocol violation it is.
+      if (typeof peerPublic !== 'string') {
+        return reject(new Error('Peer sent a malformed public key'))
+      }
+
       try {
         resolve({
           peerId: id,
@@ -154,6 +204,8 @@ export async function openRoom({
     }
   })
 
+  const { session, peerId } = await paired
+
   return {
     session,
     peerId,
@@ -166,6 +218,8 @@ export async function openRoom({
      * Trystero manages the data channel's buffer internally, so bufferedAmount
      * stays 0 and the manual high/low watermark logic in sender.js never fires
      * on this path.
+     *
+     * @type {Channel}
      */
     channel: {
       send: bytes => frameAction.send(bytes, { target: peerId }),
@@ -175,11 +229,15 @@ export async function openRoom({
       removeEventListener() {},
     },
 
-    /** Register the inbound frame handler. */
+    /**
+     * Register the inbound frame handler.
+     * @param {(bytes: Bytes) => void} callback
+     */
     onFrame(callback) {
       frameHandler = callback
     },
 
+    /** @param {() => void} callback */
     onPeerLeave(callback) {
       room.onPeerLeave = id => {
         if (id === peerId) callback()

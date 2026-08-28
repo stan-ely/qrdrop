@@ -37,6 +37,10 @@ export const TYPE_CHUNK = 1
 // and data frames can share a key without ever sharing a nonce.
 const CONTROL_SEQ = 0xffffffff
 
+/**
+ * @param {FrameHeader | (FrameExpectation & { last?: boolean })} fields
+ * @returns {Bytes}
+ */
 export function encodeHeader({ type, fileSeq, index, last = false }) {
   const h = new Uint8Array(HEADER_BYTES)
   const view = new DataView(h.buffer)
@@ -47,6 +51,10 @@ export function encodeHeader({ type, fileSeq, index, last = false }) {
   return h
 }
 
+/**
+ * @param {Bytes} bytes At least HEADER_BYTES long; callers check that first.
+ * @returns {FrameHeader}
+ */
 export function decodeHeader(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, HEADER_BYTES)
   return {
@@ -57,11 +65,22 @@ export function decodeHeader(bytes) {
   }
 }
 
+/**
+ * @param {Bytes} header
+ * @returns {Bytes}
+ */
 function nonceFor(header) {
   return header.slice(1, 13) // fileSeq || index, exactly 12 bytes
 }
 
-/** Returns a single Uint8Array ready to hand to DataChannel.send(). */
+/**
+ * Returns a single byte array ready to hand to Channel.send().
+ *
+ * @param {CryptoKey} key
+ * @param {FrameHeader | (FrameExpectation & { last?: boolean })} headerFields
+ * @param {Bytes} plaintext
+ * @returns {Promise<Bytes>}
+ */
 export async function seal(key, headerFields, plaintext) {
   const header = encodeHeader(headerFields)
   const ct = new Uint8Array(
@@ -85,6 +104,13 @@ export async function seal(key, headerFields, plaintext) {
  * contents are trusted. The DataChannel is ordered and reliable, so this should
  * never trip on the network path -- it is here to catch a misbehaving peer and
  * to make any framing bug fail loudly instead of producing a corrupt file.
+ *
+ * @param {CryptoKey} key
+ * @param {Bytes} frame Untrusted: this is exactly what the peer sent.
+ * @param {FrameExpectation | null} [expect] null opens without ordering
+ *   checks, leaving only the AEAD tag to catch tampering. Only the tests do
+ *   that; both real call sites always pass their tracked expectation.
+ * @returns {Promise<FrameHeader & { plaintext: Bytes }>}
  */
 export async function open(key, frame, expect) {
   if (frame.length < HEADER_BYTES + TAG_BYTES) throw new Error('Frame too short')
@@ -114,10 +140,30 @@ export async function open(key, frame, expect) {
 const enc = new TextEncoder()
 const dec = new TextDecoder()
 
+/**
+ * @param {CryptoKey} key
+ * @param {number} index Monotonic per direction. Part of the nonce, so it must never repeat.
+ * @param {ControlMessage} obj
+ * @returns {Promise<Bytes>}
+ */
 export async function sealControl(key, index, obj) {
   return seal(key, { type: TYPE_CONTROL, fileSeq: CONTROL_SEQ, index }, enc.encode(JSON.stringify(obj)))
 }
 
+/**
+ * Opens a control frame and parses its JSON body.
+ *
+ * The return type is a promise of ControlMessage, which is a claim about
+ * shape that JSON.parse cannot actually make good on -- the AEAD tag proves
+ * the bytes came from the peer holding the key, not that the peer sent
+ * something well-formed. receiver.js is what turns an unrecognised `t` into an
+ * error, and every field is still treated as hostile downstream.
+ *
+ * @param {CryptoKey} key
+ * @param {Bytes} frame
+ * @param {number} index The index we expect, tracked locally, never read off the wire.
+ * @returns {Promise<ControlMessage>}
+ */
 export async function openControl(key, frame, index) {
   const { plaintext } = await open(key, frame, {
     type: TYPE_CONTROL, fileSeq: CONTROL_SEQ, index,

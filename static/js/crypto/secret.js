@@ -24,6 +24,12 @@ export function generateSecret() {
   return crypto.getRandomValues(new Uint8Array(SECRET_BYTES))
 }
 
+/**
+ * @param {Bytes} secret
+ * @param {string} info Domain-separation label. Two purposes must never share one.
+ * @param {number} byteLength
+ * @returns {Promise<Bytes>}
+ */
 async function hkdf(secret, info, byteLength) {
   const ikm = await crypto.subtle.importKey('raw', secret, 'HKDF', false, ['deriveBits'])
   const bits = await crypto.subtle.deriveBits(
@@ -48,6 +54,10 @@ async function hkdf(secret, info, byteLength) {
  * link every transfer that pair ever makes. In the default flow the secret is
  * freshly generated per session, so the topic is already unlinkable and epoch
  * stays null.
+ *
+ * @param {Bytes} secret
+ * @param {number | null} epoch
+ * @returns {Promise<string>} base64url, 16 bytes' worth.
  */
 export async function deriveTopic(secret, epoch = null) {
   const info = epoch === null ? 'topic' : `topic/${epoch}`
@@ -65,26 +75,49 @@ export async function deriveTopic(secret, epoch = null) {
  * Trystero without a password derives its key from the app ID and room name,
  * both of which any relay observer already has. That would leave the DTLS
  * fingerprint substitutable in transit, so this is not optional.
+ *
+ * Note the return type: a STRING, not a CryptoKey. Trystero's config field
+ * takes the password and stretches it itself, so handing it key material
+ * straight from WebCrypto is a type error rather than a subtle failure.
+ *
+ * @param {Bytes} secret
+ * @returns {Promise<string>}
  */
 export async function derivePassword(secret) {
   return toBase64url(await hkdf(secret, 'signal', 32))
 }
 
+/**
+ * @param {Bytes} bytes
+ * @returns {string}
+ */
 export function toBase64url(bytes) {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
+/**
+ * @param {string} str
+ * @returns {Bytes}
+ */
 export function fromBase64url(str) {
   const b64 = str.replace(/-/g, '+').replace(/_/g, '/')
   const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '='))
   return Uint8Array.from(bin, c => c.charCodeAt(0))
 }
 
-/** What actually goes in the QR image. ~43 chars, trivially small for a QR. */
+/**
+ * What actually goes in the QR image. ~43 chars, trivially small for a QR.
+ * @param {Bytes} secret
+ * @returns {string}
+ */
 export function encodeSecret(secret) {
   return `qrbeam:${toBase64url(secret)}`
 }
 
+/**
+ * @param {string} text Untrusted: this is whatever the camera decoded.
+ * @returns {Bytes}
+ */
 export function decodeSecret(text) {
   const m = /^qrbeam:([A-Za-z0-9_-]{43})$/.exec(text.trim())
   if (!m) throw new Error('Not a qrbeam code')

@@ -30,6 +30,7 @@ const TIMEOUT = 90_000
 // one settled delivery at a time, which is the condition ordering bugs need.
 const PAYLOAD_BYTES = 1024 * 1024
 
+/** @type {Record<string, string>} */
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -37,12 +38,20 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
 }
 
+/** @param {Uint8Array | string} buf */
 const sha = buf => createHash('sha256').update(buf).digest('hex')
+
+/** @param {unknown[]} a */
 const log = (...a) => console.log('  ', ...a)
 
+/**
+ * @param {string} root
+ * @param {number} port
+ * @returns {Promise<import('node:http').Server>}
+ */
 function startServer(root, port) {
   const server = http.createServer((req, res) => {
-    let pathname = decodeURIComponent(new URL(req.url, ORIGIN).pathname)
+    let pathname = decodeURIComponent(new URL(req.url ?? '/', ORIGIN).pathname)
     if (pathname.endsWith('/')) pathname += 'index.html'
 
     // Confine to root: this serves a build directory, but a path-traversal hole
@@ -71,6 +80,21 @@ function startServer(root, port) {
   })
 }
 
+/**
+ * textContent() resolves to null when the selector misses, and every caller
+ * here immediately trims. Failing with the selector named beats a
+ * "Cannot read properties of null" with no clue which assertion broke.
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} selector
+ * @returns {Promise<string>}
+ */
+async function text(page, selector) {
+  const value = await page.textContent(selector)
+  if (value === null) throw new Error(`No element matched ${selector}`)
+  return value.trim()
+}
+
 async function main() {
   if (!fs.existsSync(path.join(ROOT, 'index.html'))) {
     throw new Error(`No build found in ${ROOT}/. Run \`hugo\` first.`)
@@ -81,8 +105,14 @@ async function main() {
   const payload = randomBytes(PAYLOAD_BYTES)
   fs.writeFileSync(sourcePath, payload)
 
+  /** @type {import('playwright').Browser | undefined} */
   let browser
+  /** @type {import('node:http').Server | undefined} */
   let server
+
+  // Tuples, annotated. Inferred from the push below this is (string | Page)[][],
+  // which loses the pairing entirely and makes every `page.` access an error.
+  /** @type {[name: string, page: import('playwright').Page][]} */
   const pages = []
 
   /** On failure, say what each page was actually showing rather than just timing out. */
@@ -97,7 +127,7 @@ async function main() {
             visible,
             error: err?.hidden ? null : err?.textContent?.trim(),
             status: [...document.querySelectorAll('.status')]
-              .map(s => s.textContent.trim()).filter(Boolean),
+              .map(s => s.textContent?.trim() ?? '').filter(Boolean),
           }
         })
         console.error(`  [${name}] screen=${state.visible.join(',') || 'none'}`)
@@ -137,14 +167,18 @@ async function main() {
     // event. Consequence worth stating: this run exercises the in-memory path,
     // and the File System Access streaming path is not covered here.
     await context.addInitScript(() => {
-      delete window.showSaveFilePicker
+      // Not in lib.dom -- File System Access is Chromium-only. See
+      // static/js/transfer/sink.js, which feature-detects the same property.
+      delete (/** @type {any} */ (window)).showSaveFilePicker
     })
 
     const a = await context.newPage()
     const b = await context.newPage()
     pages.push(['sender', a], ['receiver', b])
 
+    /** @type {string[]} */
     const errors = []
+    /** @type {string[]} */
     const relayFailures = []
     for (const [name, page] of pages) {
       page.on('pageerror', e => errors.push(`${name}: ${e.message}`))
@@ -171,7 +205,7 @@ async function main() {
     await (await chooser).setFiles(sourcePath)
 
     await a.waitForSelector('#screen-send:not([hidden])', { timeout: TIMEOUT })
-    const code = (await a.textContent('#manual-code')).trim()
+    const code = await text(a, '#manual-code')
     if (!/^qrbeam:[A-Za-z0-9_-]{43}$/.test(code)) throw new Error(`Bad code: ${code}`)
     log('code generated:', code.slice(0, 20) + '...')
 
@@ -191,8 +225,8 @@ async function main() {
     await a.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
     await b.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
 
-    const sasA = (await a.textContent('#sas')).trim()
-    const sasB = (await b.textContent('#sas')).trim()
+    const sasA = await text(a, '#sas')
+    const sasB = await text(b, '#sas')
     if (!sasA) throw new Error('Sender showed no SAS')
     if (sasA !== sasB) throw new Error(`SAS mismatch: ${sasA} vs ${sasB}`)
     log('SAS agreed on both devices:', sasA)
@@ -221,8 +255,8 @@ async function main() {
     await a.waitForSelector('#screen-done:not([hidden])', { timeout: TIMEOUT })
     await b.waitForSelector('#screen-done:not([hidden])', { timeout: TIMEOUT })
 
-    const digestA = (await a.textContent('#done-digest')).trim()
-    const digestB = (await b.textContent('#done-digest')).trim()
+    const digestA = await text(a, '#done-digest')
+    const digestB = await text(b, '#done-digest')
     if (!digestA || digestA !== digestB) {
       throw new Error(`Digest mismatch: ${digestA} vs ${digestB}`)
     }

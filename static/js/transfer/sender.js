@@ -26,6 +26,10 @@ import { EMPTY_CHAIN, chainHash, hex } from './digest.js'
 const HIGH_WATER = 4 * 1024 * 1024
 const LOW_WATER = 256 * 1024
 
+/**
+ * @param {Channel} channel
+ * @returns {Promise<void> | null} null when there is nothing to wait for.
+ */
 function drain(channel) {
   if (channel.bufferedAmount <= HIGH_WATER) return null
   return new Promise(resolve => {
@@ -40,6 +44,17 @@ function drain(channel) {
 /**
  * Sends one file. `control` is the paired inbound control stream, awaited for
  * the accept/done replies. Returns the digest so the UI can display it.
+ *
+ * @param {object} args
+ * @param {Channel} args.channel
+ * @param {CryptoKey} args.key The session's sendKey. Never recvKey.
+ * @param {File} args.file
+ * @param {number} args.fileSeq uint32, and the AEAD nonce prefix for every chunk.
+ * @param {ControlStream} args.control
+ * @param {() => number} args.nextControlIndex
+ * @param {(p: SendProgress) => void} [args.onProgress]
+ * @param {AbortSignal} [args.signal]
+ * @returns {Promise<{ declined: true } | { declined: false, digest: string }>}
  */
 export async function sendFile({ channel, key, file, fileSeq, control, nextControlIndex, onProgress, signal }) {
   channel.bufferedAmountLowThreshold = LOW_WATER

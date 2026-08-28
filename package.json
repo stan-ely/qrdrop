@@ -6,9 +6,15 @@
   "description": "Tests and tooling for qrbeam. The site itself is built by Hugo and needs none of this.",
   "scripts": {
     "test": "node --test",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test:e2e": "hugo --gc && node e2e/transfer.e2e.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.61.1"
+    "@trystero-p2p/nostr": "^0.25.3",
+    "@types/node": "^26.4.0",
+    "jsqr": "^1.4.0",
+    "playwright": "^1.61.1",
+    "qrcode-generator": "^2.0.4",
+    "typescript": "^7.0.2"
   }
 }

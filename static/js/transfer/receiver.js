@@ -21,15 +21,40 @@ import { createSink as defaultCreateSink } from './sink.js'
 // Replies to our sender, versus offers addressed to us.
 const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
 
+/**
+ * @param {object} args
+ * @param {Channel} args.channel
+ * @param {CryptoKey} args.sendKey Used only for the replies this side originates.
+ * @param {CryptoKey} args.recvKey Used to open everything the peer sends.
+ * @param {ControlStream} args.control
+ * @param {() => number} args.nextControlIndex
+ * @param {(offer: { manifest: Manifest, accept: () => Promise<Sink | null>, decline: () => Promise<void> }) => void} args.onOffer
+ * @param {(p: ReceiveProgress) => void} [args.onProgress]
+ * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
+ * @param {(error: unknown) => void} [args.onError]
+ * @param {(manifest: Manifest) => Promise<Sink>} [args.createSink]
+ *   Injectable so the transfer can be exercised without a browser.
+ * @returns {{ handleFrame: (bytes: Bytes) => Promise<void>, readonly busy: boolean }}
+ */
 export function createReceiver({
   channel, sendKey, recvKey, control, nextControlIndex,
   onOffer, onProgress, onFileDone, onError,
-  // Injectable so the transfer can be exercised without a browser.
   createSink = defaultCreateSink,
 }) {
   let controlIn = 0
+
+  /**
+   * @type {{
+   *   manifest: Manifest,
+   *   sink: Sink,
+   *   expected: number,
+   *   digest: Bytes,
+   *   received: number,
+   * } | null}
+   */
   let active = null
 
+  /** @type {(obj: ControlMessage) => Promise<void>} */
   const sendControl = async obj => channel.send(await sealControl(sendKey, nextControlIndex(), obj))
 
 
@@ -40,6 +65,8 @@ export function createReceiver({
    * finished transmitting and is blocked on 'done' while the receiver has
    * already torn its side down. A silent receiver is indistinguishable from a
    * slow one, so the failure has to be stated rather than implied.
+   *
+   * @param {unknown} reason
    */
   async function abortActive(reason) {
     const seq = active?.manifest?.seq
@@ -49,7 +76,9 @@ export function createReceiver({
       await sendControl({
         t: 'error',
         seq: seq ?? 0,
-        message: String(reason?.message ?? reason).slice(0, 200),
+        message: String(
+          reason instanceof Error ? reason.message : reason,
+        ).slice(0, 200),
       })
     } catch {
       // The channel itself may already be gone; the local error still reports.
@@ -57,6 +86,7 @@ export function createReceiver({
     onError?.(reason)
   }
 
+  /** @param {Manifest} manifest */
   async function handleManifest(manifest) {
     if (active) throw new Error('Peer offered a file while one was already in flight')
 
@@ -90,6 +120,7 @@ export function createReceiver({
     onOffer({ manifest, accept, decline })
   }
 
+  /** @param {Bytes} frame */
   async function handleChunk(frame) {
     if (!active) throw new Error('Chunk arrived with no accepted file')
 
@@ -119,6 +150,7 @@ export function createReceiver({
     })
   }
 
+  /** @param {Extract<ControlMessage, { t: 'complete' }>} msg */
   async function handleComplete(msg) {
     if (!active || msg.seq !== active.manifest.seq) throw new Error('Unexpected completion')
 
@@ -134,6 +166,7 @@ export function createReceiver({
     onFileDone?.(finished)
   }
 
+  /** @param {Bytes} bytes */
   async function processFrame(bytes) {
     try {
       if (bytes.length < HEADER_BYTES) throw new Error('Runt frame')
@@ -177,6 +210,7 @@ export function createReceiver({
    */
   let queue = Promise.resolve()
 
+  /** @param {Bytes} bytes */
   function handleFrame(bytes) {
     const next = queue.then(() => processFrame(bytes))
     // One frame failing must not break the chain for those behind it.

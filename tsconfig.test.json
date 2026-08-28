@@ -1,0 +1,18 @@
+{
+  // The Node project: the unit tests and the Playwright e2e driver.
+  //
+  // static/js/ is included as well, because the tests import it directly and
+  // the checker needs to follow those imports. It gets checked twice as a
+  // result -- once here with Node globals in scope, once in tsconfig.json
+  // without them. The browser project is the one that decides whether a file
+  // under static/js/ is allowed to touch something.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // DOM as well as Node: the tests exercise browser code, and the e2e driver
+    // passes functions to Playwright's page.evaluate, which run in a page.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["test/**/*.mjs", "e2e/**/*.mjs", "static/js/**/*.js", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "public", "dist", "resources"]
+}

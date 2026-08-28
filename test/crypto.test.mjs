@@ -8,7 +8,17 @@ import {
   createEphemeralKeypair, exportPublicKey, establishSession,
 } from '../static/js/crypto/session.js'
 
+/**
+ * @param {Bytes} a
+ * @param {Bytes} b
+ */
 const bytesEqual = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0
+
+/**
+ * @param {CryptoKey} key
+ * @param {Bytes} iv
+ * @param {BufferSource} ct
+ */
 const decrypts = async (key, iv, ct) => {
   try { await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct); return true } catch { return false }
 }
