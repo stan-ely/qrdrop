@@ -8,3 +8,29 @@
 # what this is developed against.
 [tools]
 node = "24"
+
+[tasks.test]
+description = "Run unit tests"
+run = "node --test"
+
+[tasks.typecheck]
+description = "Type-check web and node entry points"
+run = "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit"
+
+[tasks.build]
+description = "Build the static site"
+run = "node scripts/build-site.mjs"
+
+[tasks.start]
+description = "Build and serve the site"
+run = "node scripts/build-site.mjs --serve"
+
+[tasks."test:e2e"]
+description = "Run browser-to-browser e2e transfer test"
+depends = ["build"]
+run = "node e2e/transfer.e2e.mjs"
+
+[tasks."test:e2e:interop"]
+description = "Run web/node interop e2e test"
+depends = ["build"]
+run = "node e2e/interop.e2e.mjs"
