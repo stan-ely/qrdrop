@@ -21,7 +21,9 @@ import path from 'node:path'
 const PORT = 4173
 const ORIGIN = `http://127.0.0.1:${PORT}`
 const TIMEOUT = 90_000
-const PAYLOAD_BYTES = 300 * 1024   // spans ~19 chunks, so backpressure and ordering are exercised
+// 1 MB is 64 chunks: enough to guarantee frames arrive in bursts rather than
+// one settled delivery at a time, which is the condition ordering bugs need.
+const PAYLOAD_BYTES = 1024 * 1024
 
 const sha = buf => createHash('sha256').update(buf).digest('hex')
 
@@ -96,8 +98,11 @@ async function main() {
       ],
     })
 
-    const sender = await browser.newContext({ permissions: ['camera'] })
-    const receiver = await browser.newContext({
+    // Both peers share one context -- two tabs of one browser, which is how
+    // people actually try this first, and a materially harsher test than two
+    // separate contexts. Frames arrive in tighter bursts, which is what exposed
+    // the receiver reentrancy bug that separate contexts sailed straight past.
+    const context = await browser.newContext({
       permissions: ['camera'],
       acceptDownloads: true,
     })
@@ -107,12 +112,12 @@ async function main() {
     // Removing it forces the Blob fallback, which produces a real download
     // event. Consequence worth stating: this run exercises the in-memory path,
     // and the File System Access streaming path is not covered here.
-    await receiver.addInitScript(() => {
+    await context.addInitScript(() => {
       delete window.showSaveFilePicker
     })
 
-    const a = await sender.newPage()
-    const b = await receiver.newPage()
+    const a = await context.newPage()
+    const b = await context.newPage()
 
     pages.push(['sender', a], ['receiver', b])
 
