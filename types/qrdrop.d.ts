@@ -132,7 +132,35 @@ interface PairedRoom {
   onFrame(callback: (bytes: Bytes) => void): void
   /** Fires only for the paired peer, not for anyone else in the room. */
   onPeerLeave(callback: () => void): void
+  /**
+   * Whether the connection runs through a TURN relay rather than a direct
+   * path. Fails open (resolves false) when it cannot tell -- see
+   * RELAYED_MAX_BYTES, which callers gate on this.
+   */
+  isRelayed(): Promise<boolean>
   close(): void
+}
+
+/**
+ * One signalling network openRoom can pair over: a Trystero strategy's
+ * `joinRoom` paired with the exact URL list it may dial. Every strategy
+ * package (`@trystero-p2p/nostr`, `/torrent`, ...) exposes the identical
+ * `joinRoom` type, so one shape covers all of them.
+ */
+interface SignalingStrategy {
+  name: string
+  join: typeof import('@trystero-p2p/nostr').joinRoom
+  urls: readonly string[]
+}
+
+/** What joinVia resolves with; openRoom keeps the winner and drops the rest. */
+interface ResolvedAttempt {
+  strategy: string
+  room: import('@trystero-p2p/nostr').Room
+  frameAction: import('@trystero-p2p/nostr').MessageAction
+  setFrameHandler: (fn: (bytes: Bytes) => void) => void
+  session: SessionKeys
+  peerId: string
 }
 
 // ---------------------------------------------------------------------------

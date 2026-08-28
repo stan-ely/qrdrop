@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@trystero-p2p/nostr": "0.25.3",
+    "@trystero-p2p/torrent": "0.25.3",
     "jsqr": "^1.4.0",
     "qrcode-generator": "^2.0.4"
   },

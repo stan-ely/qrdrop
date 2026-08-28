@@ -39,5 +39,5 @@ jobs:
 
       # The site build is a real consumer of src/, so a build failure is a
       # source failure. It also proves the CSP generator can still import
-      # RELAYS, which is what keeps the allowlist honest.
+      # SIGNALING_URLS, which is what keeps the allowlist honest.
       - run: npm run build

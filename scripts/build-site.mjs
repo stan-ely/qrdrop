@@ -20,7 +20,7 @@ import { readFile, writeFile, copyFile, rm, mkdir, stat } from 'node:fs/promises
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { RELAYS } from '../src/transport/room.js'
+import { SIGNALING_URLS } from '../src/transport/room.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const SITE = path.join(ROOT, 'site')
@@ -29,13 +29,22 @@ const DIST = path.join(SITE, 'dist')
 /**
  * The Content-Security-Policy, as a single generated string.
  *
- * connect-src is built from RELAYS -- the same array src/transport/room.js
- * passes to Trystero as relayConfig.urls -- rather than typed out by hand a
- * second time here. The old Hugo template kept two lists (one in room.js, one
- * in this meta tag) and a README comment nagging whoever edited the first one
- * to remember the second. Two lists that must agree but are not the same list
- * is a footgun waiting for a distracted afternoon; deriving one from the
- * other removes the chance of them drifting apart, permanently.
+ * connect-src is built from SIGNALING_URLS -- every URL src/transport/room.js
+ * may dial across all of its Trystero strategies (Nostr relays and WebTorrent
+ * trackers) -- rather than typed out by hand a second time here. The old Hugo
+ * template kept two lists (one in room.js, one in this meta tag) and a README
+ * comment nagging whoever edited the first one to remember the second. Two
+ * lists that must agree but are not the same list is a footgun waiting for a
+ * distracted afternoon; deriving one from the other removes the chance of them
+ * drifting apart, permanently.
+ *
+ * Each URL is reduced to its origin with `new URL(u).origin` (`wss:` is a
+ * special scheme, so this yields `wss://host:port`) and deduped: a connect-src
+ * entry that includes a path would restrict matching to that path prefix, and
+ * a strategy whose URL carries one (a tracker announce path, say) would then
+ * silently fail to connect. The STUN and TURN entries in ICE_SERVERS are
+ * deliberately NOT here: `stun:` / `turn:` sockets are opened by the
+ * RTCPeerConnection, which CSP does not govern.
  *
  * script-src is 'self' only. The previous build allowed
  * https://cdn.jsdelivr.net because the third-party modules (Trystero, the QR
@@ -65,17 +74,18 @@ const DIST = path.join(SITE, 'dist')
  * -- see that file -- so the protection does not depend on the host's
  * cooperation.
  *
- * @param {readonly string[]} relays
+ * @param {readonly string[]} signalingUrls
  * @returns {string}
  */
-function buildCSP(relays) {
+export function buildCSP(signalingUrls) {
+  const origins = [...new Set(signalingUrls.map(u => new URL(u).origin))]
   const directives = [
     `default-src 'self'`,
     `script-src 'self'`,
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob:`,
     `media-src 'self' blob: mediastream:`,
-    `connect-src 'self' ${relays.join(' ')}`,
+    `connect-src 'self' ${origins.join(' ')}`,
     `base-uri 'none'`,
     `form-action 'none'`,
     `object-src 'none'`,
@@ -172,7 +182,7 @@ async function main() {
   await copyFile(path.join(SITE, '_headers'), path.join(DIST, '_headers'))
   await writeFile(path.join(DIST, 'CNAME'), 'share.stan-ely.com\n')
 
-  const csp = buildCSP(RELAYS)
+  const csp = buildCSP(SIGNALING_URLS)
   const template = await readFile(path.join(SITE, 'index.html'), 'utf8')
   const html = template
     .replace('__CSP__', csp)
@@ -226,4 +236,8 @@ async function serveDist() {
   console.log(`Serving site/dist/ at http://localhost:${PORT} (secure context: yes, via localhost)`)
 }
 
-await main()
+// Run the build only when invoked as a script (`node scripts/build-site.mjs`),
+// not when imported -- test/build-site.test.mjs pulls in buildCSP on its own.
+if (import.meta.filename === process.argv[1]) {
+  await main()
+}

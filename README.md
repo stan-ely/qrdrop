@@ -53,12 +53,13 @@ date — every framework already renders a custom element.
 ## How it works
 
 ```
-  Sender                          Nostr relays                    Receiver
+  Sender               Nostr relays + WebTorrent trackers        Receiver
     |                                   |                             |
     |-- QR: 32 random bytes ---------------------- scanned by ------->|
     |                                   |                             |
-    |        Trystero pairing, session descriptions AES-GCM           |
-    |        encrypted under a password derived from the QR           |
+    |     Trystero pairing on every network at once; first to        |
+    |     connect wins. Session descriptions AES-GCM encrypted        |
+    |     under a password derived from the QR.                       |
     |<--------------------------------->|<--------------------------->|
     |                                   |                             |
     |<======== WebRTC data channel, every chunk sealed by us ========>|
@@ -134,11 +135,12 @@ convenience's clothes.
   auditable surface, and shipped source maps — the deployed bundle is readable
   in devtools, so the claims here can be checked against what is actually
   running rather than against this repository. Mitigated, not eliminated.
-- **Both peers learn each other's IP.** Inherent to a direct connection. Add a
-  TURN server and `iceTransportPolicy: 'relay'` to hide it, at the cost of
-  requiring TURN to connect at all.
-- **Relays see metadata**: that two throwaway keys met on a room, when, and
-  roughly how much moved.
+- **Both peers learn each other's IP.** Inherent to a direct connection. A
+  connection that falls back to TURN hides each IP from the other but shows both
+  to the relay operator; forcing that path for everyone would need
+  `iceTransportPolicy: 'relay'`, left opt-in.
+- **Relays and trackers see metadata**: that two throwaway keys met on a room,
+  when, and roughly how much moved.
 
 The CLI avoids the browser-delivery problem entirely: it is a versioned tarball
 you can pin, audit, and check the provenance of. Releases are published with
@@ -224,17 +226,25 @@ transfer over a channel with exactly those five members and nothing else, so a
 new transport finds out what it is missing there rather than against a live
 relay.
 
-**Swapping the signalling network is one import.** Trystero ships a package per
-strategy behind a shared interface, so `@trystero-p2p/nostr` in
-`src/transport/room.js` can become `/mqtt`, `/torrent`, `/ws-relay`,
-`/supabase`, or `/firebase`. Update `RELAYS` to match — the CSP follows
-automatically, because `scripts/build-site.mjs` generates `connect-src` from
-that array rather than from a second list kept in step by hand.
+**More than one signalling network, raced.** Trystero ships a package per
+strategy behind an identical `joinRoom` interface, so `src/transport/room.js`
+lists them in `STRATEGIES` — Nostr relays and WebTorrent trackers today — and
+`openRoom` joins all of them at once, pairs on whichever completes the handshake
+first, and tears the rest down. Both peers are present on every network
+simultaneously, so no agreement on *which* network is needed; a sequential
+fallback could not promise that. The tracker strategy shares Trystero's core and
+costs ~2 kB gzipped; `/mqtt` was measured at ~112 kB and left out, `/ws-relay`
+would mean running a server. Adding a strategy is one entry in `STRATEGIES` and
+its URL list — the CSP follows automatically, because `scripts/build-site.mjs`
+generates `connect-src` from `SIGNALING_URLS` (every strategy's URLs, reduced to
+origins) rather than a second list kept in step by hand.
 
 **Relay choice was measured, not assumed.** The best-known Nostr relays —
 `relay.damus.io`, `relay.nostr.band`, `relay.snort.social` — were all
 unreachable when the list was built. The seven in `room.js` were picked by
 connecting to every relay in Trystero's pool and keeping the ones that answered.
+The tracker list is seeded from `@trystero-p2p/torrent`'s defaults and has not
+had the same publish-test scrutiny yet.
 
 **Measure by publishing, not by connecting.** `relay.nostr.place` was dropped
 after it began demanding proof-of-work (NIP-13) on writes. It still accepts
@@ -273,7 +283,12 @@ site answer the question out loud is what stopped it.
   fail for reasons unrelated to this code. Pointing them at
   `@trystero-p2p/ws-relay` against a local WebSocket server would make them
   deterministic and offline; worth keeping one Nostr run as a smoke test.
-- **STUN only by default.** Roughly 10–15% of NAT pairings need a TURN relay.
+- **TURN is free, shared, and metered.** Roughly 10–15% of NAT pairings can't
+  connect directly and fall back to the Open Relay Project's public TURN
+  (static credentials, no signup). Because that bandwidth isn't ours, a transfer
+  that ends up relayed is capped at 100 MB — the sender refuses and the receiver
+  auto-declines a larger file. A direct connection has no such limit. There is
+  no resume yet, so an interrupted transfer restarts from zero.
 - **One file at a time.** The framing supports a file sequence; neither the UI
   nor the CLI exposes it yet.
 

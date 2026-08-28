@@ -53,8 +53,18 @@ export { fromBytes } from './core/source.js'
 export { sendFile } from './core/sender.js'
 export { createReceiver } from './core/receiver.js'
 
-// Pairing. RELAYS and ICE_SERVERS are exported so a caller can pass a modified
-// list back in -- and so scripts/build-site.mjs can generate the CSP from the
-// same array the code dials, which is what keeps the two from drifting apart.
-export { openRoom, RELAYS, ICE_SERVERS } from './transport/room.js'
+// Pairing. STRATEGIES / SIGNALING_URLS / ICE_SERVERS are exported so a caller
+// can pass a modified list back in -- and so scripts/build-site.mjs can
+// generate the CSP from the same URLs the code dials, which is what keeps the
+// two from drifting apart. RELAYS stays exported as the Nostr entry of
+// STRATEGIES for callers that still reference it. RELAYED_MAX_BYTES is the cap
+// enforced when openRoom's isRelayed() reports the path is a TURN relay.
+export {
+  openRoom,
+  RELAYS,
+  STRATEGIES,
+  SIGNALING_URLS,
+  ICE_SERVERS,
+  RELAYED_MAX_BYTES,
+} from './transport/room.js'
 export { createChannel } from './transport/channel.js'

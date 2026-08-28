@@ -1,10 +1,27 @@
 /**
- * Pairing, via Trystero.
+ * Pairing, via Trystero -- now over more than one signalling network.
  *
- * Replaces the hand-written Nostr transport and WebRTC negotiation. Trystero
- * handles relay connections, peer discovery, offer/answer, ICE, and the data
- * channel; what stays ours is everything above it -- the ECDH session, the SAS,
- * and the per-chunk AEAD in transfer/.
+ * Trystero handles relay connections, peer discovery, offer/answer, ICE, and
+ * the data channel; what stays ours is everything above it -- the ECDH session,
+ * the SAS, and the per-chunk AEAD in transfer/.
+ *
+ * WHY MORE THAN ONE NETWORK:
+ *
+ * A single strategy (this was Nostr alone) is a single point of failure. Public
+ * Nostr relays go down, start rejecting writes, or demand proof-of-work, and
+ * when enough of them are unreachable for one peer, pairing just times out.
+ * `openRoom` now joins every entry in STRATEGIES at once and pairs on whichever
+ * completes the handshake first, then tears the losers down. Both peers are
+ * present on every network simultaneously, so they meet on the fastest path
+ * they share -- no cross-peer agreement on which network to use is needed,
+ * which a sequential fallback could not guarantee.
+ *
+ * WHY NOSTR + TORRENT AND NOT MORE: the BitTorrent-tracker strategy shares
+ * Trystero's core and adds ~2 kB gzipped, so a second independent network is
+ * nearly free. The MQTT strategy pulls in a full MQTT client (~112 kB gzipped,
+ * quadrupling the page) for a third network whose marginal value over two is
+ * small; it was measured and left out. Adding it back is a one-line change if
+ * the two chosen networks ever show correlated outages.
  *
  * WHY `password` IS NOT OPTIONAL HERE:
  *
@@ -27,10 +44,12 @@
  * an object with `send()` and an assignable `onMessage`, and onPeerJoin /
  * onPeerLeave are assigned rather than called. The older
  * `const [send, receive] = room.makeAction(...)` form throws "object is not
- * iterable" against this version.
+ * iterable" against this version. Every strategy package exposes the identical
+ * `joinRoom` signature, so joinVia treats them uniformly.
  */
 
-import { joinRoom } from '@trystero-p2p/nostr'
+import { joinRoom as joinNostr } from '@trystero-p2p/nostr'
+import { joinRoom as joinTorrent } from '@trystero-p2p/torrent'
 import { createChannel } from './channel.js'
 import { createEphemeralKeypair, exportPublicKey, establishSession } from '../core/session.js'
 import { fromBase64url, toBase64url } from '../core/secret.js'
@@ -39,9 +58,10 @@ const APP_ID = 'qrdrop'
 const DEFAULT_TIMEOUT_MS = 60_000
 
 /**
- * Pinned rather than using Trystero's built-in pool of ~44 relays, so the
- * connect-src allowlist on the page can name every host it will ever contact.
- * Passing `urls` makes Trystero use exactly this list and ignore its own.
+ * The Nostr relay list. Pinned rather than using Trystero's built-in pool of
+ * ~44 relays, so the connect-src allowlist on the page can name every host it
+ * will ever contact. Passing `urls` makes Trystero use exactly this list and
+ * ignore its own.
  *
  * Chosen from Trystero's pool by actually connecting to each one. The obvious
  * picks -- relay.damus.io, relay.nostr.band, relay.snort.social -- are the
@@ -53,9 +73,8 @@ const DEFAULT_TIMEOUT_MS = 60_000
  * connectivity probe calls it healthy; Trystero cannot announce a peer on it,
  * which is the only thing we need a relay to do.
  *
- * This array is the single source of truth for the CSP: scripts/build-site.mjs
- * imports it and generates connect-src from it, so the allowlist cannot drift
- * out of step with the list the code actually dials. Editing it here is enough.
+ * Still exported under this name because src/index.js and external callers
+ * import it; it is now one entry of STRATEGIES rather than the whole story.
  */
 export const RELAYS = [
   'wss://nos.lol',
@@ -68,16 +87,76 @@ export const RELAYS = [
 ]
 
 /**
- * STUN only. TURN entries can be added here: a relay costs no confidentiality,
- * since it carries DTLS-wrapped frames that are themselves sealed under the
- * session key, but it does show the operator both IPs and the transfer volume.
- * Adding `iceTransportPolicy: 'relay'` to rtcConfig would additionally hide
- * each peer's IP from the other, at the cost of requiring TURN to connect.
+ * Public WebTorrent tracker sockets, no account. Seeded from
+ * `@trystero-p2p/torrent`'s defaultRelayUrls -- same "verify by PUBLISHING, not
+ * by connecting" caveat as RELAYS.
+ */
+const TORRENT_TRACKERS = [
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.webtorrent.dev',
+]
+
+/**
+ * The signalling networks openRoom races. Each entry pairs a Trystero strategy
+ * with the exact URL list it may dial. Order is cosmetic -- every entry is
+ * joined at once -- but nostr stays first as the historical default and the
+ * one proven under node-datachannel.
+ *
+ * @type {readonly SignalingStrategy[]}
+ */
+export const STRATEGIES = [
+  { name: 'nostr', join: joinNostr, urls: RELAYS },
+  { name: 'torrent', join: joinTorrent, urls: TORRENT_TRACKERS },
+]
+
+/**
+ * Every signalling URL any strategy may dial, flattened. scripts/build-site.mjs
+ * imports this and generates connect-src from it (reduced to origins), so the
+ * allowlist cannot drift out of step with the list the code actually dials.
+ * Editing a strategy's `urls` above is enough.
+ */
+export const SIGNALING_URLS = STRATEGIES.flatMap(s => s.urls)
+
+/**
+ * STUN spread across operators, plus free no-auth TURN.
+ *
+ * STUN only tells a peer its own public address and costs nothing; a single
+ * provider (this was Google alone) is a single point of failure and is blocked
+ * on some networks, hence the spread.
+ *
+ * TURN actually relays the media when NAT traversal fails outright -- roughly
+ * 10-15% of pairings. The Open Relay Project publishes these static credentials
+ * with no signup; they are best-effort and rate-limited, which is why
+ * transfers that end up relayed are size-capped (see RELAYED_MAX_BYTES). A
+ * relay costs no confidentiality: it carries DTLS-wrapped frames that are
+ * themselves sealed under the session key, so the operator sees ciphertext and
+ * byte counts, never contents. It does see both peers' IPs. Adding
+ * `iceTransportPolicy: 'relay'` to rtcConfig would hide each peer's IP from the
+ * other, at the cost of requiring TURN to connect at all -- deliberately left
+ * opt-in.
+ *
+ * @type {readonly RTCIceServer[]}
  */
 export const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ]
+
+/**
+ * The ceiling on a transfer whose path runs through a free TURN relay. Free
+ * TURN relays real bytes and is metered, so a multi-gigabyte transfer over it
+ * is abusive and would be throttled or cut mid-stream anyway. Only enforced
+ * when isRelayed() reports true; a direct connection has no such limit.
+ *
+ * 100 MiB. Deliberately conservative while there is no resume: an interrupted
+ * transfer starts over from zero.
+ */
+export const RELAYED_MAX_BYTES = 100 * 1024 * 1024
 
 /**
  * Narrows an inbound Trystero payload to bytes.
@@ -104,52 +183,93 @@ const toBytes = data => {
   return new Uint8Array(0)
 }
 
+/** @param {{ leave: () => unknown }} room */
+const tryLeave = room => {
+  try {
+    room.leave()
+  } catch {
+    // Already gone.
+  }
+}
+
 /**
- * Joins the rendezvous and resolves once a peer is connected and session keys
- * are agreed.
+ * True when the live connection runs through a TURN relay rather than a direct
+ * path. Drives the RELAYED_MAX_BYTES cap.
  *
- * `role` is 'host' for the peer that generated the QR, 'guest' for the scanner.
- * It only decides which direction gets which key; both sides derive both.
+ * Polls briefly: the nominated candidate pair is not always in getStats() the
+ * instant the connection opens. If it never resolves -- including
+ * node-datachannel builds where getStats() reports nothing useful -- this
+ * returns false. The cap is a courtesy to free infrastructure, not a security
+ * boundary, so "cannot tell" fails open.
  *
- * @param {object} args
- * @param {string} args.topic HKDF'd from the secret -- never the secret itself.
- * @param {string} args.password A string, not a CryptoKey: Trystero stretches it internally.
- * @param {Bytes} args.secret The QR secret, passed on as the ECDH HKDF salt.
- * @param {'host' | 'guest'} args.role
- * @param {number} [args.timeoutMs]
- * @param {(text: string) => void} [args.onStatus]
- * @param {readonly string[]} [args.relays] Defaults to RELAYS. A caller passing
- *   its own list is on the hook for the CSP on any page that uses it.
- * @param {readonly RTCIceServer[]} [args.iceServers] Defaults to ICE_SERVERS.
- * @param {typeof RTCPeerConnection} [args.rtcPolyfill] Node has no WebRTC.
- *   The CLI passes node-datachannel's implementation here; browsers leave it
- *   undefined and Trystero falls back to the global.
- * @returns {Promise<PairedRoom>}
+ * @param {RTCPeerConnection} pc
+ * @returns {Promise<boolean>}
  */
-export async function openRoom({
-  topic,
-  password,
-  secret,
-  role,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-  onStatus,
-  relays = RELAYS,
-  iceServers = ICE_SERVERS,
-  rtcPolyfill,
-}) {
+async function connectionIsRelayed(pc) {
+  const deadline = Date.now() + 3000
+
+  while (Date.now() < deadline) {
+    /** @type {RTCStatsReport | undefined} */
+    let stats
+    try {
+      stats = await pc.getStats()
+    } catch {
+      return false
+    }
+
+    /** @type {Map<string, any>} */
+    const byId = new Map()
+    stats.forEach((report, id) => byId.set(id, report))
+
+    for (const report of byId.values()) {
+      if (report.type !== 'candidate-pair') continue
+      if (report.state !== 'succeeded') continue
+      if (report.nominated === false) continue
+
+      const local = byId.get(report.localCandidateId)
+      const remote = byId.get(report.remoteCandidateId)
+      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return true
+      if (local || remote) return false
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300))
+  }
+
+  return false
+}
+
+/**
+ * Brings up one signalling strategy and resolves once a peer is connected over
+ * it and session keys are agreed. Rejects if this strategy errors, if the peer
+ * sends a malformed key, or if `signal` aborts (another strategy won, or the
+ * overall timeout fired) -- in which case it leaves the room it opened.
+ *
+ * @param {SignalingStrategy} strategy
+ * @param {object} ctx
+ * @param {string} ctx.topic HKDF'd from the secret -- never the secret itself.
+ * @param {string} ctx.password A string, not a CryptoKey: Trystero stretches it internally.
+ * @param {Bytes} ctx.secret The QR secret, passed on as the ECDH HKDF salt.
+ * @param {'host' | 'guest'} ctx.role
+ * @param {readonly RTCIceServer[]} ctx.iceServers
+ * @param {typeof RTCPeerConnection} [ctx.rtcPolyfill] Node has no WebRTC.
+ * @param {AbortSignal} ctx.signal
+ * @param {(text: string) => void} [ctx.onStatus]
+ * @returns {Promise<ResolvedAttempt>}
+ */
+async function joinVia(strategy, { topic, password, secret, role, iceServers, rtcPolyfill, signal, onStatus }) {
   // Generated BEFORE joining, deliberately. Awaiting anything between
-  // joinRoom() and assigning onPeerJoin leaves a window in which the other peer
-  // can join unobserved -- and that is the normal case here, not a rare one:
-  // the host is already sitting in the room when the guest scans, so the
+  // strategy.join() and assigning onPeerJoin leaves a window in which the other
+  // peer can join unobserved -- and that is the normal case here, not a rare
+  // one: the host is already sitting in the room when the guest scans, so the
   // guest's very first discovery can land inside that gap and be lost.
   const keypair = await createEphemeralKeypair()
   const myPublic = toBase64url(await exportPublicKey(keypair))
 
-  const room = joinRoom(
+  const room = strategy.join(
     {
       appId: APP_ID,
       password,
-      relayConfig: { urls: [...relays] },
+      relayConfig: { urls: [...strategy.urls] },
       rtcConfig: { iceServers: [...iceServers] },
       ...(rtcPolyfill ? { rtcPolyfill } : {}),
     },
@@ -168,18 +288,21 @@ export async function openRoom({
   let frameHandler = () => {}
   frameAction.onMessage = data => frameHandler(toBytes(data))
 
-  onStatus?.('Waiting for the other device…')
+  return new Promise((resolve, reject) => {
+    /** @param {Error} reason */
+    const abandon = reason => {
+      tryLeave(room)
+      reject(reason)
+    }
+    const onAbort = () => abandon(new Error(`${strategy.name}: superseded`))
 
-  /** @type {Promise<{ session: SessionKeys, peerId: string }>} */
-  const paired = new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error('Timed out waiting for the other device')),
-      timeoutMs,
-    )
+    if (signal.aborted) return onAbort()
+    signal.addEventListener('abort', onAbort, { once: true })
+
     let settled = false
 
     room.onPeerJoin = id => {
-      onStatus?.('Found the other device, agreeing keys…')
+      onStatus?.(`Found the other device via ${strategy.name}, agreeing keys…`)
       // Both sides fire this on connection, so both announce and both receive.
       keyAction.send(myPublic, { target: id })
     }
@@ -190,43 +313,131 @@ export async function openRoom({
       // partner to the user.
       if (settled) return
       settled = true
-      clearTimeout(timer)
 
       // Trystero delivers whatever the peer serialised, so this is a string
       // only by convention. Checked rather than assumed: without it a peer
       // sending null or a number reaches fromBase64url, which throws
-      // "replace is not a function" from inside an event handler -- an
-      // unhandled rejection that leaves this promise pending until the
-      // timeout, reported to the user as "timed out" rather than as the
-      // protocol violation it is.
+      // "replace is not a function" from inside an event handler.
       if (typeof peerPublic !== 'string') {
-        return reject(new Error('Peer sent a malformed public key'))
+        signal.removeEventListener('abort', onAbort)
+        return abandon(new Error(`${strategy.name}: peer sent a malformed public key`))
       }
 
       try {
+        const session = await establishSession({
+          keypair,
+          peerPublicRaw: fromBase64url(peerPublic),
+          secret,
+          role,
+        })
+        signal.removeEventListener('abort', onAbort)
         resolve({
+          strategy: strategy.name,
+          room,
+          frameAction,
+          setFrameHandler: fn => { frameHandler = fn },
+          session,
           peerId: id,
-          session: await establishSession({
-            keypair,
-            peerPublicRaw: fromBase64url(peerPublic),
-            secret,
-            role,
-          }),
         })
       } catch (error) {
-        reject(error)
+        signal.removeEventListener('abort', onAbort)
+        abandon(error instanceof Error ? error : new Error(String(error)))
       }
     }
   })
+}
 
-  const { session, peerId } = await paired
+/**
+ * Joins every strategy at once and resolves once ONE of them has a peer
+ * connected and session keys agreed. The losers are torn down.
+ *
+ * `role` is 'host' for the peer that generated the QR, 'guest' for the scanner.
+ * It only decides which direction gets which key; both sides derive both.
+ *
+ * @param {object} args
+ * @param {string} args.topic
+ * @param {string} args.password
+ * @param {Bytes} args.secret
+ * @param {'host' | 'guest'} args.role
+ * @param {number} [args.timeoutMs]
+ * @param {(text: string) => void} [args.onStatus]
+ * @param {readonly SignalingStrategy[]} [args.strategies] Defaults to STRATEGIES.
+ *   A caller passing its own list is on the hook for the CSP on any page that
+ *   uses it.
+ * @param {readonly RTCIceServer[]} [args.iceServers] Defaults to ICE_SERVERS.
+ * @param {typeof RTCPeerConnection} [args.rtcPolyfill] The CLI passes
+ *   node-datachannel's implementation here; browsers leave it undefined.
+ * @returns {Promise<PairedRoom>}
+ */
+export async function openRoom({
+  topic,
+  password,
+  secret,
+  role,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  onStatus,
+  strategies = STRATEGIES,
+  iceServers = ICE_SERVERS,
+  rtcPolyfill,
+}) {
+  const ac = new AbortController()
+
+  const attempts = strategies.map(strategy =>
+    joinVia(strategy, { topic, password, secret, role, iceServers, rtcPolyfill, signal: ac.signal, onStatus }),
+  )
+  // Every attempt needs a rejection handler from the outset: once the race
+  // settles, a losing strategy's rejection would otherwise surface as an
+  // unhandledRejection.
+  attempts.forEach(p => p.catch(() => {}))
+
+  onStatus?.(`Waiting for the other device (${strategies.map(s => s.name).join(', ')})…`)
+
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer
+  /** @type {Promise<never>} */
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Timed out waiting for the other device')),
+      timeoutMs,
+    )
+  })
+
+  /** @type {ResolvedAttempt} */
+  let winner
+  try {
+    winner = await Promise.race([Promise.any(attempts), timeout])
+  } catch (error) {
+    ac.abort()
+    clearTimeout(timer)
+    // Promise.any rejects with an AggregateError only when every strategy
+    // failed; collapse it to one readable line but keep .errors for --debug.
+    if (error instanceof AggregateError) {
+      throw new Error('Could not pair on any signalling network', { cause: error })
+    }
+    throw error
+  }
+  clearTimeout(timer)
+
+  // Winner found. Aborting tears down every strategy still trying; the .then()
+  // mops up the rare loser that resolved in the same tick as the winner.
+  ac.abort()
+  attempts.forEach(p =>
+    p.then(
+      resolved => { if (resolved !== winner) tryLeave(resolved.room) },
+      () => {},
+    ),
+  )
+
+  onStatus?.(`Paired over ${winner.strategy}`)
+
+  const { session, peerId, room, frameAction, setFrameHandler } = winner
 
   return {
     session,
     peerId,
 
     /**
-     * The seam. See signal/channel.js, and the Channel contract it implements.
+     * The seam. See transport/channel.js, and the Channel contract it implements.
      *
      * send() returns Trystero's promise, which settles when local sending is
      * complete, and sender.js awaits it -- that await IS the backpressure now.
@@ -241,7 +452,7 @@ export async function openRoom({
      * @param {(bytes: Bytes) => void} callback
      */
     onFrame(callback) {
-      frameHandler = callback
+      setFrameHandler(callback)
     },
 
     /** @param {() => void} callback */
@@ -251,12 +462,19 @@ export async function openRoom({
       }
     },
 
+    /**
+     * Whether the paired connection is going through a TURN relay. Callers use
+     * this to enforce RELAYED_MAX_BYTES before a large file starts moving.
+     * @returns {Promise<boolean>}
+     */
+    async isRelayed() {
+      const pc = room.getPeers()[peerId]
+      if (!pc) return false
+      return connectionIsRelayed(pc)
+    },
+
     close() {
-      try {
-        room.leave()
-      } catch {
-        // Already gone.
-      }
+      tryLeave(room)
     },
   }
 }

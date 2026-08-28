@@ -24,27 +24,33 @@ import process from 'node:process'
 
 import {
   generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword,
-  openRoom, createControlStream, createReceiver, sendFile,
+  openRoom, STRATEGIES, RELAYED_MAX_BYTES, createControlStream, createReceiver, sendFile,
 } from './index.js'
 import { createFileSink, fromPath, renderQRToTerminal, loadRTCPolyfill } from './node/index.js'
 
 const USAGE = `qrdrop -- send a file peer-to-peer, keyed by a QR code
 
 Usage:
-  qrdrop send <file> [--no-qr] [--yes] [--relay <url>]... [--debug]
-  qrdrop receive [code] [--out <dir>] [--yes] [--relay <url>]... [--debug]
+  qrdrop send <file> [--no-qr] [--yes] [--strategy <name>] [--relay <url>]... [--debug]
+  qrdrop receive [code] [--out <dir>] [--yes] [--strategy <name>] [--relay <url>]... [--debug]
   qrdrop --help
   qrdrop --version
 
 Options:
   --no-qr          Don't draw the QR code (the qrdrop:... code is always printed too)
   --out <dir>      Directory to save into (receive only; default: current directory)
-  --relay <url>    Use this relay instead of the built-in list (repeatable)
+  --strategy <name> Pair over one signalling network only: nostr or torrent.
+                    Default races both and uses whichever connects first.
+  --relay <url>    Pair over Nostr only, using these relays instead of the
+                    built-in list (repeatable; implies --strategy nostr)
   --yes            Skip the "accept this file?" prompt on receive.
                     Never skips the code-match confirmation -- see below.
   --debug          Print stack traces instead of one-line error messages
   --help           Show this message
   --version        Show the installed version
+
+A transfer that ends up going through a public TURN relay (rare -- only when a
+direct connection cannot be made) is capped at ${Math.round(RELAYED_MAX_BYTES / (1024 * 1024))} MB.
 
 Every transfer -- send or receive -- stops to show four emoji and asks you to
 confirm they match on both devices before anything about the file moves. That
@@ -166,6 +172,35 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone, createSink }) {
 }
 
 /**
+ * Resolves the --strategy / --relay flags to the strategy list openRoom should
+ * race. --relay pins to Nostr on the given URLs (chain off); --strategy narrows
+ * to one named network on its built-in URLs; neither returns undefined, which
+ * lets openRoom race its full default set.
+ *
+ * @param {object} args
+ * @param {readonly string[] | undefined} args.relays
+ * @param {string | undefined} args.strategy
+ * @returns {readonly SignalingStrategy[] | undefined}
+ */
+function resolveStrategies({ relays, strategy }) {
+  if (relays && relays.length) {
+    const nostr = STRATEGIES.find(s => s.name === 'nostr')
+    if (!nostr) throw new Error('internal: no nostr strategy to apply --relay to')
+    return [{ ...nostr, urls: relays }]
+  }
+  if (strategy) {
+    const picked = STRATEGIES.filter(s => s.name === strategy)
+    if (!picked.length) {
+      throw new UsageError(
+        `Unknown --strategy: ${strategy}. Options: ${STRATEGIES.map(s => s.name).join(', ')}`,
+      )
+    }
+    return picked
+  }
+  return undefined
+}
+
+/**
  * Opens the rendezvous and pairs, then makes the peer confirm the SAS before
  * returning. This is the ONE gate that is never conditional on --yes: it is
  * the entire defence against a third party joining the room instead of the
@@ -178,10 +213,11 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone, createSink }) {
  * @param {Bytes} args.secret
  * @param {'host' | 'guest'} args.role
  * @param {readonly string[] | undefined} args.relays
+ * @param {string | undefined} args.strategy
  * @param {ReturnType<typeof makePrompter>} args.prompter
  * @returns {Promise<PairedRoom>}
  */
-async function establish({ secret, role, relays, prompter }) {
+async function establish({ secret, role, relays, strategy, prompter }) {
   const rtcPolyfill = await loadRTCPolyfill()
   const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
 
@@ -192,7 +228,7 @@ async function establish({ secret, role, relays, prompter }) {
     secret,
     role,
     rtcPolyfill,
-    relays,
+    strategies: resolveStrategies({ relays, strategy }),
     onStatus: text => process.stderr.write(`${text}\n`),
   })
 
@@ -212,9 +248,10 @@ async function establish({ secret, role, relays, prompter }) {
  * @param {string} args.filePath
  * @param {boolean} args.showQR
  * @param {readonly string[] | undefined} args.relays
+ * @param {string | undefined} args.strategy
  * @param {ReturnType<typeof makePrompter>} args.prompter
  */
-async function runSend({ filePath, showQR, relays, prompter }) {
+async function runSend({ filePath, showQR, relays, strategy, prompter }) {
   const source = await fromPath(filePath)
   let room
 
@@ -228,7 +265,17 @@ async function runSend({ filePath, showQR, relays, prompter }) {
     process.stdout.write(`Code: ${code}\n`)
 
     const sessionEnded = { done: false }
-    room = await establish({ secret, role: 'host', relays, prompter })
+    room = await establish({ secret, role: 'host', relays, strategy, prompter })
+
+    // Free TURN is metered; a large file over it will be throttled or cut.
+    // Refuse before the manifest goes out rather than fail partway through.
+    if (source.size > RELAYED_MAX_BYTES && await room.isRelayed()) {
+      throw new Error(
+        `This connection is going through a public relay, capped at `
+        + `${formatBytes(RELAYED_MAX_BYTES)}. ${source.name} is ${formatBytes(source.size)}. `
+        + `Try again on a network where a direct connection is possible.`,
+      )
+    }
     const { control, nextControlIndex } = attachReceiver({ room, createSink: async () => {
       throw new Error('Peer tried to send us a file mid-send')
     } })
@@ -285,9 +332,10 @@ async function runSend({ filePath, showQR, relays, prompter }) {
  * @param {string} args.outDir
  * @param {boolean} args.assumeYes
  * @param {readonly string[] | undefined} args.relays
+ * @param {string | undefined} args.strategy
  * @param {ReturnType<typeof makePrompter>} args.prompter
  */
-async function runReceive({ code, outDir, assumeYes, relays, prompter }) {
+async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter }) {
   const raw = code ?? await prompter.ask('Code: ')
   const secret = decodeSecret(raw)
   const createSink = createFileSink({ outDir })
@@ -300,7 +348,7 @@ async function runReceive({ code, outDir, assumeYes, relays, prompter }) {
     // reassignable `room` into the callbacks below -- while `finally` still
     // needs the outer binding, to close a room we may have failed after.
     const sessionEnded = { done: false }
-    const paired = await establish({ secret, role: 'guest', relays, prompter })
+    const paired = await establish({ secret, role: 'guest', relays, strategy, prompter })
     room = paired
 
     process.stdout.write('\nWaiting for the sender to offer a file…\n')
@@ -340,6 +388,15 @@ async function runReceive({ code, outDir, assumeYes, relays, prompter }) {
           // to run after it returns rather than inside it.
           ;(async () => {
             try {
+              if (manifest.size > RELAYED_MAX_BYTES && await paired.isRelayed()) {
+                process.stdout.write(
+                  `\nRefused: ${describe} is over the ${formatBytes(RELAYED_MAX_BYTES)} limit `
+                  + `for a transfer going through a public relay.\n`,
+                )
+                await decline()
+                resolve({ kind: 'declined' })
+                return
+              }
               const ok = assumeYes || await prompter.confirm(`\nIncoming: ${describe}. Accept?`)
               if (!ok) {
                 await decline()
@@ -381,8 +438,8 @@ async function runReceive({ code, outDir, assumeYes, relays, prompter }) {
  * @typedef {
  *   | { command: 'help' }
  *   | { command: 'version' }
- *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, debug: boolean }
- *   | { command: 'receive', code: string | undefined, outDir: string, assumeYes: boolean, relays: readonly string[] | undefined, debug: boolean }
+ *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, debug: boolean }
+ *   | { command: 'receive', code: string | undefined, outDir: string, assumeYes: boolean, relays: readonly string[] | undefined, strategy: string | undefined, debug: boolean }
  * } ParsedArgs
  */
 
@@ -416,6 +473,7 @@ function parseCliArgs(argv) {
       yes: { type: 'boolean', default: false },
       out: { type: 'string', default: '.' },
       relay: { type: 'string', multiple: true },
+      strategy: { type: 'string' },
       debug: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -429,7 +487,14 @@ function parseCliArgs(argv) {
   if (command === 'send') {
     const [filePath] = positionals
     if (!filePath) throw new UsageError(`send requires a file path\n\n${USAGE}`)
-    return { command, filePath, showQR: !values['no-qr'] && Boolean(process.stdout.isTTY), relays: values.relay, debug: values.debug }
+    return {
+      command,
+      filePath,
+      showQR: !values['no-qr'] && Boolean(process.stdout.isTTY),
+      relays: values.relay,
+      strategy: values.strategy,
+      debug: values.debug,
+    }
   }
 
   return {
@@ -438,6 +503,7 @@ function parseCliArgs(argv) {
     outDir: /** @type {string} */ (values.out),
     assumeYes: values.yes,
     relays: values.relay,
+    strategy: values.strategy,
     debug: values.debug,
   }
 }
@@ -478,10 +544,14 @@ async function main() {
 
   try {
     if (parsed.command === 'send') {
-      return await runSend({ filePath: parsed.filePath, showQR: parsed.showQR, relays: parsed.relays, prompter })
+      return await runSend({
+        filePath: parsed.filePath, showQR: parsed.showQR,
+        relays: parsed.relays, strategy: parsed.strategy, prompter,
+      })
     }
     return await runReceive({
-      code: parsed.code, outDir: parsed.outDir, assumeYes: parsed.assumeYes, relays: parsed.relays, prompter,
+      code: parsed.code, outDir: parsed.outDir, assumeYes: parsed.assumeYes,
+      relays: parsed.relays, strategy: parsed.strategy, prompter,
     })
   } catch (error) {
     if (parsed.debug) {

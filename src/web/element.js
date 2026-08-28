@@ -29,7 +29,7 @@
  */
 
 import { generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword } from '../core/secret.js'
-import { openRoom } from '../transport/room.js'
+import { openRoom, RELAYED_MAX_BYTES } from '../transport/room.js'
 import { createControlStream } from '../core/control.js'
 import { createReceiver } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
@@ -550,6 +550,19 @@ export class QRDropElement extends HTMLElement {
     this._show('send')
 
     const room = await this._establish({ secret, role: 'host', statusEl: $('send-status') })
+
+    // Free TURN is metered; refuse a large file before the manifest goes out
+    // rather than have it throttled or cut partway. Only bites on a relayed
+    // path -- a direct connection has no such limit.
+    if (file.size > RELAYED_MAX_BYTES && await room.isRelayed()) {
+      room.close()
+      throw new Error(
+        `This connection is going through a public relay, capped at ${bytes(RELAYED_MAX_BYTES)}. `
+        + `${file.name} is ${bytes(file.size)}. Try again on a network where a direct `
+        + `connection is possible.`,
+      )
+    }
+
     const { control, nextControlIndex } = this._attachReceiver({ room })
 
     // Verify before anything about the file leaves this device -- the
@@ -614,33 +627,48 @@ export class QRDropElement extends HTMLElement {
       room,
 
       onOffer: ({ manifest, accept, decline }) => {
-        const name = document.createTextNode(`${manifest.name} (${bytes(manifest.size)}) `)
-        const yes = Object.assign(document.createElement('button'), {
-          className: 'primary', textContent: 'Accept',
-        })
-        const no = Object.assign(document.createElement('button'), {
-          className: 'ghost', textContent: 'Decline',
-        })
-        // Names come from the peer, so they are inserted as text nodes only.
-        $('verify-status').replaceChildren(name, yes, no)
-
-        no.addEventListener('click', () => { decline().catch(e => this._fail(e)); this._reset() }, { once: true })
-
-        // This click is what permits showSaveFilePicker to open.
-        yes.addEventListener('click', async () => {
-          yes.disabled = true
-          no.disabled = true
-          const sink = await accept()
-          if (!sink) return this._reset()   // the save dialog was dismissed
-
-          this._show('transfer')
-          $('transfer-title').textContent = 'Receiving'
-          $('transfer-file').textContent = `${manifest.name} (${bytes(manifest.size)})`
-          if (!sink.streaming) {
-            $('transfer-status').textContent =
-              'This browser buffers the file in memory before saving it.'
+        // onOffer itself is synchronous (see receiver.js); the relay check is
+        // not, so it runs in a detached async step before the prompt is drawn.
+        void (async () => {
+          if (manifest.size > RELAYED_MAX_BYTES && await room.isRelayed()) {
+            await decline()
+            this._show('done')
+            $('done-title').textContent = 'Too large for this connection'
+            $('done-file').textContent =
+              `${manifest.name} (${bytes(manifest.size)}) is over the ${bytes(RELAYED_MAX_BYTES)} `
+              + `limit for a transfer going through a public relay.`
+            $('done-digest').textContent = ''
+            return
           }
-        }, { once: true })
+
+          const name = document.createTextNode(`${manifest.name} (${bytes(manifest.size)}) `)
+          const yes = Object.assign(document.createElement('button'), {
+            className: 'primary', textContent: 'Accept',
+          })
+          const no = Object.assign(document.createElement('button'), {
+            className: 'ghost', textContent: 'Decline',
+          })
+          // Names come from the peer, so they are inserted as text nodes only.
+          $('verify-status').replaceChildren(name, yes, no)
+
+          no.addEventListener('click', () => { decline().catch(e => this._fail(e)); this._reset() }, { once: true })
+
+          // This click is what permits showSaveFilePicker to open.
+          yes.addEventListener('click', async () => {
+            yes.disabled = true
+            no.disabled = true
+            const sink = await accept()
+            if (!sink) return this._reset()   // the save dialog was dismissed
+
+            this._show('transfer')
+            $('transfer-title').textContent = 'Receiving'
+            $('transfer-file').textContent = `${manifest.name} (${bytes(manifest.size)})`
+            if (!sink.streaming) {
+              $('transfer-status').textContent =
+                'This browser buffers the file in memory before saving it.'
+            }
+          }, { once: true })
+        })().catch(e => this._fail(e))
       },
 
       onProgress: this._trackProgress({ statusEl: $('transfer-status'), verb: 'Received' }),

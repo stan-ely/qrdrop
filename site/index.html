@@ -10,10 +10,10 @@
   The content attribute just below is replaced by scripts/build-site.mjs with
   a generated Content-Security-Policy, never hand-edited here. See that
   script for the reasoning behind every directive -- in short: connect-src is
-  built from RELAYS in src/transport/room.js so the allowlist cannot drift
-  out of step with the hosts the code actually dials, and script-src is
-  'self' only, because the bundle below is self-hosted rather than loaded
-  from a CDN.
+  built from SIGNALING_URLS in src/transport/room.js (every strategy's hosts,
+  reduced to origins) so the allowlist cannot drift out of step with the hosts
+  the code actually dials, and script-src is 'self' only, because the bundle
+  below is self-hosted rather than loaded from a CDN.
 -->
 <meta http-equiv="Content-Security-Policy" content="__CSP__">
 
