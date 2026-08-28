@@ -2,16 +2,16 @@
  * Two real browsers, one real file, over real public relays.
  *
  * The unit suite covers the crypto and the framing with fakes. This covers what
- * fakes cannot: that Trystero pairs over live Nostr relays, that the modules
- * load from the CDN under the page's CSP, that both peers land on the same SAS,
- * and that the bytes arriving at a download are the bytes that went in.
+ * fakes cannot: that Trystero pairs over live Nostr relays, that the bundle
+ * loads under the page's CSP, that both peers land on the same SAS, and that
+ * the bytes arriving at a download are the bytes that went in.
  *
  * Kept out of `npm test` deliberately -- it needs a network and the goodwill of
  * public infrastructure, so it must never be the thing that fails a unit run.
- * Run it with `npm run test:e2e`, which builds the site with Hugo first.
+ * Run it with `npm run test:e2e`, which runs the build first.
  *
  * Serves the built site from a small static server rather than a dev server, so
- * the only tools involved are hugo and node.
+ * node is the only tool involved.
  */
 
 import { chromium } from 'playwright'
@@ -23,7 +23,11 @@ import path from 'node:path'
 
 const PORT = 4173
 const ORIGIN = `http://127.0.0.1:${PORT}`
-const ROOT = 'public'
+// site/dist/, matching scripts/build-site.mjs's output. This said 'public'
+// until now -- the directory Hugo used to write -- so every run of this suite
+// died on the "no build found" check below rather than testing anything. Hugo
+// went away in f913bc8; this reference did not go with it.
+const ROOT = path.join('site', 'dist')
 const TIMEOUT = 90_000
 
 // 1 MB is 64 chunks: enough to guarantee frames arrive in bursts rather than
@@ -97,7 +101,7 @@ async function text(page, selector) {
 
 async function main() {
   if (!fs.existsSync(path.join(ROOT, 'index.html'))) {
-    throw new Error(`No build found in ${ROOT}/. Run \`hugo\` first.`)
+    throw new Error(`No build found in ${ROOT}/. Run \`npm run build\` first.`)
   }
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qrdrop-e2e-'))
