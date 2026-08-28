@@ -102,6 +102,16 @@ function buildCSP(relays) {
  * The output filename is content-hashed (`entryNames`/`chunkNames`) so a
  * redeploy is never served stale out of a browser or CDN cache under the old
  * name; site/index.html's script tag is rewritten to match after the build.
+ *
+ * SOURCE MAPS ARE SHIPPED ON PURPOSE, and this is the one place where that is
+ * a security decision rather than a convenience one. This page asks people to
+ * trust it with files on the strength of a threat model they cannot check by
+ * reading 106 kB of minified output. A source map makes the deployed bundle
+ * legible in devtools, so the claim "the confidentiality path is WebCrypto
+ * only" is something a visitor can go and verify against the code actually
+ * running in their browser rather than against the code in this repository.
+ * They cost bandwidth on a page that is otherwise tiny, and they reveal
+ * nothing: every line of this is public already.
  */
 async function bundle() {
   const result = await esbuild.build({
@@ -114,7 +124,9 @@ async function bundle() {
     target: ['es2022'],
     splitting: true,
     entryNames: '[name].[hash]',
-    chunkNames: 'chunk-[name].[hash]',
+    // Not 'chunk-[name]': esbuild already names shared split chunks "chunk",
+    // so that prefix produces chunk-chunk.HASH.js.
+    chunkNames: '[name].[hash]',
     metafile: true,
     absWorkingDir: ROOT,
   })

@@ -1,47 +1,54 @@
-# qrbeam
+# qrdrop
 
 Send a file straight from one device to another. A QR code carries the key; the
 file goes over WebRTC; nothing in between ever holds a readable copy.
 
-A Hugo static site. No bundler, no `node_modules` to build it — third-party
-modules load from a CDN as ES modules at runtime.
+**[share.stan-ely.com](https://share.stan-ely.com)** — no install, no account,
+no upload.
 
 ```bash
-hugo server        # http://localhost:1313
-hugo               # -> public/
+npx qrdrop send report.pdf     # prints a QR code in your terminal
+npx qrdrop receive             # on the other machine
 ```
 
-Node is only needed for the tests and the type checker, never to build or serve
-the site:
+A file sent from the CLI can be received in a browser, and the other way round.
+That interoperability is the reason this is one package rather than three.
 
-```bash
-npm install        # playwright, tsc, and .d.ts files -- none of it ships
-npm test           # unit suite, offline
-npm run typecheck  # tsc over the JSDoc; nothing is compiled
-npm run test:e2e   # builds with hugo, then drives two real browsers
+---
+
+## Three faces, one protocol
+
+```js
+import { openRoom, sendFile, createReceiver } from 'qrdrop'        // isomorphic
+import { defineQRDrop, fromFile } from 'qrdrop/web'                // browser
+import { fromPath, createFileSink } from 'qrdrop/node'             // Node
 ```
 
-### Type checking without a build step
+The `qrdrop` entry is the protocol and the transport, and it touches neither a
+DOM nor an `fs`. That is enforced rather than asserted: `src/core/` and
+`src/transport/` are typechecked twice, once with `types: []` and no Node lib
+and once with Node's globals, so a stray `Buffer` in code destined for a browser
+fails the build instead of throwing at runtime.
 
-`npm run typecheck` runs `tsc --noEmit` with `checkJs` over the JSDoc
-annotations in `static/js/`. The files are still plain ES modules, still served
-verbatim by Hugo, and still loaded unmodified by the browser — nothing is
-compiled, transpiled, or bundled, and the site build does not involve Node at
-all.
+What is deliberately *not* in that entry is anything that knows where bytes come
+from or go to. `sendFile` takes a `FileSource`, `createReceiver` takes a
+`createSink`, and each runtime supplies its own. That is the whole trick behind
+having a CLI at all.
 
-The third-party types come from the same packages the CDN serves: `tsconfig`
-maps each pinned jsDelivr URL in `deps.js` onto the matching version installed
-as a devDependency, so the checker reads the real `.d.ts`. **If you change a
-version, change it in all three places** — the URL in `deps.js`, the `paths`
-entry in `tsconfig.base.json`, and the devDependency — or the checker will be
-describing a different version than the one the page loads.
+### Drop the UI into a page
 
-There are two projects because there are two runtimes. `tsconfig.json` covers
-`static/js/` with `types: []`, so browser code cannot quietly reach `Buffer` or
-`process`; `tsconfig.test.json` covers `test/` and `e2e/` with Node's globals.
+```html
+<script type="module">
+  import { defineQRDrop } from 'qrdrop/web'
+  defineQRDrop()
+</script>
 
-`types/qrbeam.d.ts` holds the shared vocabulary. The important one is
-`Channel` — the contract in the [transport seam](#the-transport-seam) below.
+<qr-drop></qr-drop>
+```
+
+A custom element with its own shadow root, so it brings its styles with it and
+collides with nothing. No framework, and no framework adapter to keep up to
+date — every framework already renders a custom element.
 
 ## How it works
 
@@ -97,20 +104,17 @@ with a separate key per direction — because AES-GCM does not degrade gracefull
 under nonce reuse. The end-of-file flag is authenticated, so an attacker who
 stops forwarding frames cannot pass a truncated file off as complete.
 
-## Deploying
+### Two gestures, and why neither is decorative
 
-Serve `public/` over HTTPS. WebCrypto and the camera both require a secure
-context, so plain HTTP will not work anywhere except `localhost`.
+The sender confirms the four-emoji SAS before a manifest goes out — the manifest
+alone would disclose the filename and size. The receiver accepts, which is also
+the click that permits `showSaveFilePicker` to open, and that is what lets large
+files stream to disk instead of accumulating in memory.
 
-`static/_headers` sets the security headers a page cannot set for itself, and is
-read automatically by Cloudflare Pages and Netlify. On other hosts, apply the
-equivalent — particularly `frame-ancestors`, which browsers ignore when it
-arrives in a `<meta>` tag. The page also refuses to run inside a frame on its
-own, so framing is blocked even where the host ignores the file.
-
-**Two lists must stay in step.** `RELAYS` in `static/js/signal/room.js` and the
-`connect-src` allowlist in `layouts/index.html` name the same hosts. Change one
-without the other and the CSP blocks the relays.
+Both survive into the CLI as stdin prompts. `--yes` skips the accept prompt and
+**cannot** skip the SAS confirmation: the SAS is the entire man-in-the-middle
+defence, so a flag that skipped it would be a vulnerability wearing a
+convenience's clothes.
 
 ## Threat model
 
@@ -125,35 +129,83 @@ without the other and the CSP blocks the relays.
 
 - **Anyone with the code can join.** It is the entire credential. Show the QR to
   a person, not to a room.
-- **jsDelivr can serve arbitrary JavaScript into the page**, and sees the IP of
-  every visitor. Versions are pinned in `static/js/deps.js`, so an update is at
-  least a visible commit, but Subresource Integrity is not usable for ESM
-  imports. This is a deliberate trade for not needing a build step; copying
-  those files into `static/vendor/` and pointing `deps.js` at them closes it,
-  at the cost of updating by hand.
-- **The host serving this page could do the same.** No in-browser design
-  prevents that. Mitigated by a pinned CSP, no inline scripts, and a small
-  auditable surface — not eliminated. For genuinely sensitive material, use a
-  tool you can verify before running.
+- **The host serving the page could serve modified code.** No in-browser design
+  prevents that. It is mitigated by a strict CSP, no inline scripts, a small
+  auditable surface, and shipped source maps — the deployed bundle is readable
+  in devtools, so the claims here can be checked against what is actually
+  running rather than against this repository. Mitigated, not eliminated.
 - **Both peers learn each other's IP.** Inherent to a direct connection. Add a
-  TURN server and `iceTransportPolicy: 'relay'` in `room.js` to hide it, at the
-  cost of requiring TURN to connect at all.
+  TURN server and `iceTransportPolicy: 'relay'` to hide it, at the cost of
+  requiring TURN to connect at all.
 - **Relays see metadata**: that two throwaway keys met on a room, when, and
   roughly how much moved.
+
+The CLI avoids the browser-delivery problem entirely: it is a versioned tarball
+you can pin, audit, and check the provenance of. Releases are published with
+`npm publish --provenance`, so the tarball is tied to the workflow run and
+commit that built it.
+
+## Development
+
+```bash
+npm install
+npm test            # unit suite, offline
+npm run typecheck   # three projects; nothing is compiled
+npm run build       # esbuild -> site/dist/
+npm start           # build, then serve site/dist/ on :4173
+```
+
+`localhost` counts as a secure context, so WebCrypto and the camera both work
+against `npm start` without a certificate.
+
+The end-to-end suites need a network and the goodwill of public Nostr relays,
+so they are kept out of `npm test` and out of CI — a red tick for reasons that
+have nothing to do with this code teaches everyone to ignore red ticks.
+
+```bash
+npm run test:e2e          # two real browsers, over real relays
+npm run test:e2e:interop  # Node <-> browser, both directions
+```
+
+### Type checking without a build step
+
+`tsc --noEmit` with `checkJs` over the JSDoc. The published sources are plain ES
+modules, unbundled and untranspiled; only the site's browser bundle is built.
+
+There are three projects because there are three runtimes, and `src/core/` and
+`src/transport/` deliberately appear in two of them. Being checked once without
+Node globals and once with them is what makes "isomorphic" a property the build
+enforces rather than a claim in a comment.
+
+### Deploying
+
+`npm run build` produces a self-contained `site/dist/`. Serve it over HTTPS —
+WebCrypto and the camera are unavailable otherwise.
+
+**GitHub Pages serves no custom headers**, so `site/_headers` is inert there:
+`frame-ancestors`, `X-Frame-Options`, `Referrer-Policy`, and
+`Permissions-Policy` are simply not set on share.stan-ely.com. Framing is still
+blocked, because `site/main.js` refuses to run inside a frame — that check
+exists precisely for hosts that cannot set the header. The rest are
+defence-in-depth rather than load-bearing, and `_headers` is kept for anyone
+deploying the same build to Cloudflare Pages or Netlify, which do read it.
+
+The CSP is unaffected either way: it is delivered in a `<meta>` tag generated at
+build time, so it survives a host that sets no headers at all.
 
 ## Design notes
 
 ### The transport seam
 
-Everything in `transfer/` is written against one interface and nothing else:
-`Channel` in `types/qrbeam.d.ts`. Five members — `send`, `bufferedAmount`,
+Everything in `src/core/` is written against one interface and nothing else:
+`Channel` in `types/qrdrop.d.ts`. Five members — `send`, `bufferedAmount`,
 `bufferedAmountLowThreshold`, and the `addEventListener` / `removeEventListener`
 pair.
 
 That seam is why replacing the entire signalling layer — hand-rolled Nostr plus
-WebRTC negotiation, for Trystero — cost 11 lines across all of `transfer/` and
-nothing at all in `frame.js`, `session.js`, `control.js`, `digest.js`, or
-`sink.js`. The security core was untouched by a total rewrite beneath it.
+WebRTC negotiation, for Trystero — cost 11 lines across all of the transfer code
+and nothing at all in the framing, session, control, digest, or sink modules.
+The security core was untouched by a total rewrite beneath it.
 
 The one subtlety worth knowing before writing another transport: **backpressure
 may be signalled either way, but it must be signalled.** A transport can defer
@@ -165,10 +217,12 @@ transfer over a channel with exactly those five members and nothing else, so a
 new transport finds out what it is missing there rather than against a live
 relay.
 
-**Swapping the signalling network is one line.** Trystero ships a package per
-strategy behind a shared interface, so the import in `static/js/deps.js` can
-become `@trystero-p2p/mqtt`, `/torrent`, `/ws-relay`, `/supabase`, or
-`/firebase`. Update `RELAYS` and `connect-src` to match the new network.
+**Swapping the signalling network is one import.** Trystero ships a package per
+strategy behind a shared interface, so `@trystero-p2p/nostr` in
+`src/transport/room.js` can become `/mqtt`, `/torrent`, `/ws-relay`,
+`/supabase`, or `/firebase`. Update `RELAYS` to match — the CSP follows
+automatically, because `scripts/build-site.mjs` generates `connect-src` from
+that array rather than from a second list kept in step by hand.
 
 **Relay choice was measured, not assumed.** The best-known Nostr relays —
 `relay.damus.io`, `relay.nostr.band`, `relay.snort.social` — were all
@@ -179,53 +233,59 @@ connecting to every relay in Trystero's pool and keeping the ones that answered.
 third-party code. Trystero sits below that boundary: it protects signalling, but
 a compromise there could not read a file byte.
 
-**Two gestures gate every transfer.** The sender confirms the SAS before a
-manifest goes out (the manifest alone leaks the filename and size). The receiver
-accepts — which is also the click that lets the browser open a save destination,
-since `showSaveFilePicker` requires a user gesture.
+### Sources and sinks
+
+The mirror-image pair that make one protocol serve three runtimes.
+
+`FileSource` is three fields and a range read; `Sink` is a name, a `write`, a
+`close`, and an `abort`. `sendFile` and `createReceiver` know nothing else about
+where bytes live. The browser supplies File System Access with a Blob fallback;
+Node supplies `fs`; the tests supply arrays.
+
+`createSink` is a *required* argument to `createReceiver` rather than a
+defaulted one. Defaulting it to the browser implementation is what quietly made
+the protocol layer depend on the DOM in the first place, and making every call
+site answer the question out loud is what stopped it.
 
 ## Known limitations
 
 - **Firefox and Safari buffer received files in memory** before saving, capping
   practical transfers around a gigabyte. Chromium streams to disk via the File
   System Access API. Closing this needs a Service Worker that fabricates a
-  streaming download response.
+  streaming download response. The CLI has no such limit.
 - **The streaming save path has no automated test.** Headless Chromium exposes
   `showSaveFilePicker` but has no UI to answer it, so the e2e forces the
   in-memory fallback.
-- **The e2e depends on public Nostr relays**, so it needs a network, cannot run
-  in CI, and fails for reasons that have nothing to do with this code. Pointing
-  it at `@trystero-p2p/ws-relay` against a local WebSocket server would make it
-  deterministic and offline — a one-line change in `deps.js`, which is the
-  property the CDN-URL-in-one-file layout exists to give. Worth keeping one
-  Nostr run as a network smoke test.
+- **The e2e suites depend on public Nostr relays**, so they need a network and
+  fail for reasons unrelated to this code. Pointing them at
+  `@trystero-p2p/ws-relay` against a local WebSocket server would make them
+  deterministic and offline; worth keeping one Nostr run as a smoke test.
 - **STUN only by default.** Roughly 10–15% of NAT pairings need a TURN relay.
-- **One file at a time.** The framing supports a file sequence; the UI does not
-  expose it yet.
+- **One file at a time.** The framing supports a file sequence; neither the UI
+  nor the CLI exposes it yet.
 
 ## Layout
 
 ```
-hugo.toml                          site config
-layouts/index.html                 the page, and the CSP
-static/js/deps.js                  every CDN URL, pinned, in one place
-static/js/crypto/secret.js         QR secret, HKDF derivations
-static/js/crypto/session.js        ephemeral ECDH, directional keys, SAS
-static/js/signal/room.js           Trystero pairing, relay list, ICE
-static/js/signal/channel.js        the transport seam, on its own
-static/js/transfer/frame.js        per-chunk AEAD, nonce construction
-static/js/transfer/sender.js       chunking, backpressure, accept handshake
-static/js/transfer/receiver.js     demux, verification, sink management
-static/js/transfer/sink.js         File System Access, with a Blob fallback
-static/_headers                    headers a static page cannot set itself
+src/index.js                 the isomorphic entry -- no DOM, no fs
+src/core/secret.js           QR secret, HKDF derivations
+src/core/session.js          ephemeral ECDH, directional keys, SAS
+src/core/frame.js            per-chunk AEAD, nonce construction
+src/core/sender.js           chunking, backpressure, accept handshake
+src/core/receiver.js         demux, verification, sink management
+src/core/source.js           the FileSource contract
+src/transport/room.js        Trystero pairing, relay list, ICE
+src/transport/channel.js     the transport seam, on its own
+src/web/element.js           <qr-drop>, shadow DOM, the screen flow
+src/web/sink.js              File System Access, with a Blob fallback
+src/node/                    fs sink, fs source, terminal QR, WebRTC polyfill
+src/cli.js                   the qrdrop command
 
-types/qrbeam.d.ts                  the Channel contract, and shared types
-types/shims.d.ts                   the one CDN import paths cannot map
-tsconfig.base.json                 shared settings, and the URL -> package map
-tsconfig.json                      the browser project (no Node globals)
-tsconfig.test.json                 the Node project (tests and e2e)
-test/channel.test.mjs              transport conformance
+site/index.html              the page; CSP placeholder filled in at build
+scripts/build-site.mjs       esbuild, and the generated CSP
+types/qrdrop.d.ts            the Channel contract, and shared types
 ```
 
-Nothing under `types/` or `tsconfig*` reaches the site — they live outside
-`static/`, so Hugo never copies them.
+## Licence
+
+MIT.
