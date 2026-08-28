@@ -25,6 +25,22 @@ run = "node scripts/build-site.mjs"
 description = "Build and serve the site"
 run = "node scripts/build-site.mjs --serve"
 
+# `web` is the same thing under the name people reach for when they want to
+# look at the UI rather than to deploy it. Two names, one task, because
+# "start" says nothing about which of the three faces it starts.
+[tasks.web]
+description = "Build and serve the web UI on :4173 (alias of start)"
+alias = "ui"
+run = "node scripts/build-site.mjs --serve"
+
+# Arguments after `--` are appended, so this drives the real CLI rather than a
+# copy of its argument list that would drift:
+#   mise run cli -- send report.pdf
+#   mise run cli -- receive --out ~/Downloads
+[tasks.cli]
+description = "Run the qrdrop CLI (mise run cli -- send report.pdf)"
+run = "node src/cli.js"
+
 [tasks."test:e2e"]
 description = "Run browser-to-browser e2e transfer test"
 depends = ["build"]
