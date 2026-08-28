@@ -133,8 +133,7 @@ export function createReceiver({
     onFileDone?.(finished)
   }
 
-  /** Feed every inbound DataChannel message here. */
-  async function handleFrame(bytes) {
+  async function processFrame(bytes) {
     try {
       if (bytes.length < HEADER_BYTES) throw new Error('Runt frame')
 
@@ -153,6 +152,35 @@ export function createReceiver({
       control.fail(error)
       await abortActive(error)
     }
+  }
+
+  /**
+   * Feed every inbound DataChannel message here.
+   *
+   * Frames are processed strictly one at a time, and that serialisation is the
+   * whole reason this wrapper exists.
+   *
+   * A real RTCDataChannel fires 'message' again without waiting for the
+   * previous handler to settle, and processFrame awaits both AES-GCM
+   * decryption and a disk write. Unserialised, a burst of frames runs
+   * concurrently, every one of them reads the same `active.expected` before any
+   * has incremented it, and the receiver rejects its own peer with something
+   * like "expected 12, got 15" partway through a working transfer.
+   *
+   * This bit is easy to miss in testing, because a hand-written fake channel
+   * naturally awaits each delivery and so hides the race. Two tabs of the same
+   * browser deliver in a tight enough burst to expose it immediately.
+   *
+   * Serialised here rather than at the call site so that no caller can get it
+   * wrong by attaching the listener in the obvious way.
+   */
+  let queue = Promise.resolve()
+
+  function handleFrame(bytes) {
+    const next = queue.then(() => processFrame(bytes))
+    // One frame failing must not break the chain for those behind it.
+    queue = next.catch(() => {})
+    return next
   }
 
   return { handleFrame, get busy() { return active !== null } }

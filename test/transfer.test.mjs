@@ -9,8 +9,16 @@ import { sendFile } from '../src/transfer/sender.js'
 import { CHUNK_SIZE } from '../src/transfer/frame.js'
 import { safeFilename } from '../src/transfer/sink.js'
 
-/** A DataChannel stand-in that delivers to its twin, preserving order. */
-function channelPair() {
+/**
+ * A DataChannel stand-in.
+ *
+ * `serialize` decides whether delivery waits for the previous handler to
+ * finish. A real RTCDataChannel does NOT: addEventListener fires the next
+ * 'message' regardless of whether the last async handler has settled. The
+ * serialized mode is the polite fiction; `serialize: false` is what browsers
+ * actually do, and is the mode that caught the reentrancy bug.
+ */
+function channelPair({ serialize = true } = {}) {
   const mk = () => {
     const ch = {
       bufferedAmount: 0,
@@ -20,7 +28,12 @@ function channelPair() {
       removeEventListener() {},
       send(bytes) {
         ch.sent += bytes.length
-        ch.tail = ch.tail.then(() => ch.twin.onFrame(bytes))
+        if (serialize) {
+          ch.tail = ch.tail.then(() => ch.twin.onFrame(bytes))
+        } else {
+          // Fire and forget, exactly like an event listener.
+          ch.tail = Promise.all([ch.tail, ch.twin.onFrame(bytes)])
+        }
       },
       tail: Promise.resolve(),
       onFrame: async () => {},
@@ -63,9 +76,9 @@ async function pairedSessions() {
  * Wires a full sender to a receiver over the fake channel.
  * `decide` chooses whether the receiver accepts the incoming offer.
  */
-async function transfer(file, { decide = 'accept', sink = memorySink(), onProgress } = {}) {
+async function transfer(file, { decide = 'accept', sink = memorySink(), onProgress, serialize = true } = {}) {
   const { host, guest } = await pairedSessions()
-  const [hostCh, guestCh] = channelPair()
+  const [hostCh, guestCh] = channelPair({ serialize })
 
   const events = { offers: [], done: [], errors: [] }
 
@@ -144,6 +157,22 @@ test('files spanning exact and partial chunk boundaries arrive intact', async ()
     assert.deepEqual(events.errors, [], `size ${size} produced errors`)
     assert.deepEqual([...sink.bytes()], [...data], `size ${size} round-trips`)
   }
+})
+
+test('frames delivered concurrently are still reassembled in order', async () => {
+  // Regression: a real RTCDataChannel fires 'message' again without waiting for
+  // the previous async handler to settle. Several handleFrame calls then run at
+  // once, all reading the same stale expected-index before any increments it,
+  // and the receiver rejects its own peer with "expected 12, got 15".
+  //
+  // Big enough to guarantee a burst rather than a lucky interleaving.
+  const data = randomBytes(CHUNK_SIZE * 20 + 513)
+  const { events, sink, result } = await transfer(fileOf(data), { serialize: false })
+
+  assert.deepEqual(events.errors, [])
+  assert.equal(result.declined, false)
+  assert.deepEqual([...sink.bytes()], [...data])
+  assert.ok(sink.closed)
 })
 
 test('an empty file still transfers and terminates', async () => {
