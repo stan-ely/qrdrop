@@ -8,9 +8,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test"
+    "test": "node --test",
+    "test:e2e": "node e2e/transfer.e2e.mjs"
   },
   "devDependencies": {
+    "playwright": "^1.61.1",
     "vite": "^7.1.5"
   },
   "dependencies": {
