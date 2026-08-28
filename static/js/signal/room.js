@@ -31,6 +31,7 @@
  */
 
 import { joinRoom } from '../deps.js'
+import { createChannel } from './channel.js'
 import { createEphemeralKeypair, exportPublicKey, establishSession } from '../crypto/session.js'
 import { fromBase64url, toBase64url } from '../crypto/secret.js'
 
@@ -211,23 +212,15 @@ export async function openRoom({
     peerId,
 
     /**
-     * Adapter matching what transfer/sender.js and receiver.js expect.
+     * The seam. See signal/channel.js, and the Channel contract it implements.
      *
      * send() returns Trystero's promise, which settles when local sending is
      * complete, and sender.js awaits it -- that await IS the backpressure now.
      * Trystero manages the data channel's buffer internally, so bufferedAmount
      * stays 0 and the manual high/low watermark logic in sender.js never fires
      * on this path.
-     *
-     * @type {Channel}
      */
-    channel: {
-      send: bytes => frameAction.send(bytes, { target: peerId }),
-      bufferedAmount: 0,
-      bufferedAmountLowThreshold: 0,
-      addEventListener() {},
-      removeEventListener() {},
-    },
+    channel: createChannel(frameAction, peerId),
 
     /**
      * Register the inbound frame handler.
