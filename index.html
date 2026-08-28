@@ -1,0 +1,130 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qrbeam</title>
+
+<!--
+  The connect-src list is an allowlist of every host this page may talk to, and
+  it is deliberately enumerated rather than left as a blanket `wss:`. If the
+  relay list in src/signal/nostr.js changes, this must change with it -- that
+  coupling is the point. A compromised bundle cannot quietly exfiltrate to a
+  host that is not named here.
+
+  style-src allows inline styles because progress bars are driven by a CSS
+  custom property on the element. Inline *scripts* remain forbidden, which is
+  the allowance that actually matters.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob:;
+  media-src 'self' blob: mediastream:;
+  connect-src 'self'
+    wss://relay.damus.io wss://nos.lol wss://relay.primal.net wss://relay.nostr.band
+    ws://127.0.0.1:* ws://localhost:*;
+  base-uri 'none';
+  form-action 'none';
+  frame-ancestors 'none';
+  object-src 'none';
+">
+
+<link rel="stylesheet" href="/src/styles.css">
+
+<main>
+  <header>
+    <h1>qrbeam</h1>
+    <p class="tagline">Files, straight between two devices. Nothing in the middle holds them.</p>
+  </header>
+
+  <section id="screen-choose">
+    <div class="choices">
+      <button id="btn-send" class="primary">Send a file</button>
+      <button id="btn-receive">Receive a file</button>
+    </div>
+    <p class="note" id="capability-note" hidden></p>
+  </section>
+
+  <section id="screen-send" hidden>
+    <h2>Scan this on the other device</h2>
+    <div id="qr" class="qr"></div>
+
+    <details class="manual">
+      <summary>Can't scan? Use the code instead</summary>
+      <p class="note">Read this out or paste it into the other device. Anyone who
+        learns it can join this transfer, so treat it like a password.</p>
+      <code id="manual-code" class="code"></code>
+    </details>
+
+    <p class="status" id="send-status">Starting…</p>
+    <button id="send-cancel" class="ghost">Cancel</button>
+  </section>
+
+  <section id="screen-receive" hidden>
+    <h2>Scan the sender's code</h2>
+    <video id="scanner" class="scanner" muted playsinline></video>
+
+    <details class="manual">
+      <summary>Enter the code by hand</summary>
+      <form id="manual-form">
+        <input id="manual-input" type="text" placeholder="qrbeam:…" autocomplete="off"
+               spellcheck="false" aria-label="Transfer code">
+        <button type="submit">Join</button>
+      </form>
+    </details>
+
+    <p class="status" id="receive-status"></p>
+    <button id="receive-cancel" class="ghost">Cancel</button>
+  </section>
+
+  <section id="screen-verify" hidden>
+    <h2>Check both devices show the same symbols</h2>
+    <p class="sas" id="sas"></p>
+    <p class="note">
+      If these differ, someone is between you. Stop, and start over with a fresh code.
+    </p>
+    <p class="status" id="verify-status"></p>
+  </section>
+
+  <section id="screen-transfer" hidden>
+    <h2 id="transfer-title">Transferring</h2>
+    <p class="filename" id="transfer-file"></p>
+    <div class="bar"><div class="bar-fill" id="progress-fill"></div></div>
+    <p class="status" id="transfer-status"></p>
+    <button id="transfer-cancel" class="ghost">Cancel</button>
+  </section>
+
+  <section id="screen-done" hidden>
+    <h2 id="done-title">Done</h2>
+    <p class="filename" id="done-file"></p>
+    <details>
+      <summary>Verification digest</summary>
+      <code id="done-digest" class="code"></code>
+      <p class="note">Both devices computed this independently from the file contents.</p>
+    </details>
+    <button id="done-again" class="primary">Send another</button>
+  </section>
+
+  <p class="error" id="error" hidden></p>
+
+  <footer>
+    <details>
+      <summary>What this does and does not protect</summary>
+      <ul>
+        <li><strong>Files are encrypted end to end</strong> under a key derived from the
+          QR code, on top of WebRTC's own encryption. Relays and TURN servers see
+          ciphertext and byte counts, never contents.</li>
+        <li><strong>Each transfer uses fresh keys.</strong> A code captured later cannot
+          decrypt a transfer that already happened.</li>
+        <li><strong>Anyone with the code can join.</strong> It is the entire credential.
+          Show the QR to the person you mean to send to, and not to a room.</li>
+        <li><strong>Both devices learn each other's IP address.</strong> That is inherent
+          to a direct connection.</li>
+        <li><strong>The server hosting this page could serve modified code.</strong> No
+          in-browser design can prevent that, this one included. For genuinely
+          sensitive material, use a tool you can verify before running.</li>
+      </ul>
+    </details>
+  </footer>
+</main>
+
+<script type="module" src="/src/main.js"></script>

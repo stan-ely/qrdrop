@@ -1,0 +1,114 @@
+/**
+ * QR generation and scanning.
+ *
+ * Rendered as SVG rather than a canvas bitmap so it stays sharp on any display
+ * and at any size -- a blurry QR is a QR that takes three attempts to scan.
+ *
+ * The code is always drawn dark-on-light regardless of page theme. Scanners
+ * cope poorly with inverted codes, and this is the one element on the page
+ * whose job is to be read by a camera rather than a person.
+ */
+
+import qrcode from 'qrcode-generator'
+
+export function renderQR(text, { cellSize = 6, margin = 3 } = {}) {
+  // Type 0 auto-sizes to the data; 'M' correction tolerates ~15% damage, which
+  // is ample for a screen and keeps the modules large enough to scan easily.
+  const qr = qrcode(0, 'M')
+  qr.addData(text)
+  qr.make()
+  return qr.createSvgTag({ cellSize, margin, scalable: true })
+}
+
+/**
+ * Detection strategy, best first:
+ *
+ *  1. BarcodeDetector -- native, hardware-accelerated, no bundle cost. Chromium
+ *     and Safari have it.
+ *  2. jsQR -- pure JS over canvas pixels. Slower, but it is the only option on
+ *     Firefox, and a scanner that works everywhere matters more here than one
+ *     that is fast in two browsers.
+ */
+async function createDetector() {
+  if ('BarcodeDetector' in globalThis) {
+    try {
+      const detector = new globalThis.BarcodeDetector({ formats: ['qr_code'] })
+      return async source => {
+        const [hit] = await detector.detect(source)
+        return hit?.rawValue ?? null
+      }
+    } catch {
+      // Present but refusing qr_code; fall through to the JS decoder.
+    }
+  }
+
+  const { default: jsQR } = await import('jsqr')
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+
+  return async video => {
+    const w = video.videoWidth
+    const h = video.videoHeight
+    if (!w || !h) return null
+    canvas.width = w
+    canvas.height = h
+    ctx.drawImage(video, 0, 0, w, h)
+    const hit = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' })
+    return hit?.data ?? null
+  }
+}
+
+/**
+ * Starts the camera and resolves with the first decoded QR value.
+ *
+ * Always stops the camera track on the way out, including on error and on
+ * cancel. A page that quietly holds the camera open after the user has moved on
+ * is both a privacy problem and, on a phone, a battery one.
+ */
+export async function scanQR({ video, signal }) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment' },
+    audio: false,
+  })
+
+  video.srcObject = stream
+  video.setAttribute('playsinline', '')  // iOS otherwise takes the video fullscreen
+  await video.play()
+
+  const detect = await createDetector()
+  const stop = () => {
+    for (const track of stream.getTracks()) track.stop()
+    video.srcObject = null
+  }
+
+  try {
+    return await new Promise((resolve, reject) => {
+      let stopped = false
+
+      signal?.addEventListener('abort', () => {
+        stopped = true
+        reject(new DOMException('Scan cancelled', 'AbortError'))
+      }, { once: true })
+
+      const tick = async () => {
+        if (stopped) return
+        try {
+          const value = await detect(video)
+          if (value) {
+            stopped = true
+            return resolve(value)
+          }
+        } catch {
+          // A single bad frame is not fatal; keep looking.
+        }
+        requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    })
+  } finally {
+    stop()
+  }
+}
+
+export const cameraAvailable = () =>
+  typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
