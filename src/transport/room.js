@@ -46,7 +46,12 @@ const DEFAULT_TIMEOUT_MS = 60_000
  * Chosen from Trystero's pool by actually connecting to each one. The obvious
  * picks -- relay.damus.io, relay.nostr.band, relay.snort.social -- are the
  * best-known Nostr relays and were all unreachable when this list was built;
- * popularity and availability are not the same thing. Re-test before editing.
+ * popularity and availability are not the same thing. Re-test before editing,
+ * and re-test by PUBLISHING, not by opening a socket: relay.nostr.place was
+ * dropped from this list after it started demanding proof-of-work (NIP-13) on
+ * writes. It still accepts connections and still answers reads, so a
+ * connectivity probe calls it healthy; Trystero cannot announce a peer on it,
+ * which is the only thing we need a relay to do.
  *
  * This array is the single source of truth for the CSP: scripts/build-site.mjs
  * imports it and generates connect-src from it, so the allowlist cannot drift
@@ -58,7 +63,6 @@ export const RELAYS = [
   'wss://relay.mostr.pub',
   'wss://purplerelay.com',
   'wss://nostr.data.haus',
-  'wss://relay.nostr.place',
   'wss://nostr-01.yakihonne.com',
   'wss://bucket.coracle.social',
 ]

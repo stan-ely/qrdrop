@@ -164,8 +164,15 @@ have nothing to do with this code teaches everyone to ignore red ticks.
 
 ```bash
 npm run test:e2e          # two real browsers, over real relays
-npm run test:e2e:interop  # Node <-> browser, both directions
+npm run test:e2e:interop  # two Node processes driving the CLI end to end
 ```
+
+The interop suite spawns two processes rather than opening two rooms in one.
+Trystero computes `selfId` once per module instance, so two rooms sharing a
+process also share an identity: each sees the other's announcement carrying its
+own id, discards it as itself, and they wait for each other until the timeout.
+That is a property of Trystero rather than a bug here, but it is invisible
+until you try it.
 
 ### Type checking without a build step
 
@@ -226,8 +233,14 @@ that array rather than from a second list kept in step by hand.
 
 **Relay choice was measured, not assumed.** The best-known Nostr relays —
 `relay.damus.io`, `relay.nostr.band`, `relay.snort.social` — were all
-unreachable when the list was built. The eight in `room.js` were picked by
+unreachable when the list was built. The seven in `room.js` were picked by
 connecting to every relay in Trystero's pool and keeping the ones that answered.
+
+**Measure by publishing, not by connecting.** `relay.nostr.place` was dropped
+after it began demanding proof-of-work (NIP-13) on writes. It still accepts
+connections and still answers reads, so a connectivity probe calls it healthy —
+it just cannot be used to announce a peer, which is the only thing a relay is
+needed for here. A socket that opens is not a relay that works.
 
 **The confidentiality path uses WebCrypto only** — P-256, HKDF, AES-GCM, no
 third-party code. Trystero sits below that boundary: it protects signalling, but
