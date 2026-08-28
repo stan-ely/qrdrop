@@ -11,13 +11,37 @@ hugo server        # http://localhost:1313
 hugo               # -> public/
 ```
 
-Node is only needed for the tests, and only for the tests:
+Node is only needed for the tests and the type checker, never to build or serve
+the site:
 
 ```bash
-npm install        # playwright, nothing else
+npm install        # playwright, tsc, and .d.ts files -- none of it ships
 npm test           # unit suite, offline
+npm run typecheck  # tsc over the JSDoc; nothing is compiled
 npm run test:e2e   # builds with hugo, then drives two real browsers
 ```
+
+### Type checking without a build step
+
+`npm run typecheck` runs `tsc --noEmit` with `checkJs` over the JSDoc
+annotations in `static/js/`. The files are still plain ES modules, still served
+verbatim by Hugo, and still loaded unmodified by the browser — nothing is
+compiled, transpiled, or bundled, and the site build does not involve Node at
+all.
+
+The third-party types come from the same packages the CDN serves: `tsconfig`
+maps each pinned jsDelivr URL in `deps.js` onto the matching version installed
+as a devDependency, so the checker reads the real `.d.ts`. **If you change a
+version, change it in all three places** — the URL in `deps.js`, the `paths`
+entry in `tsconfig.base.json`, and the devDependency — or the checker will be
+describing a different version than the one the page loads.
+
+There are two projects because there are two runtimes. `tsconfig.json` covers
+`static/js/` with `types: []`, so browser code cannot quietly reach `Buffer` or
+`process`; `tsconfig.test.json` covers `test/` and `e2e/` with Node's globals.
+
+`types/qrbeam.d.ts` holds the shared vocabulary. The important one is
+`Channel` — the contract in the [transport seam](#the-transport-seam) below.
 
 ## How it works
 
@@ -119,6 +143,28 @@ without the other and the CSP blocks the relays.
 
 ## Design notes
 
+### The transport seam
+
+Everything in `transfer/` is written against one interface and nothing else:
+`Channel` in `types/qrbeam.d.ts`. Five members — `send`, `bufferedAmount`,
+`bufferedAmountLowThreshold`, and the `addEventListener` / `removeEventListener`
+pair.
+
+That seam is why replacing the entire signalling layer — hand-rolled Nostr plus
+WebRTC negotiation, for Trystero — cost 11 lines across all of `transfer/` and
+nothing at all in `frame.js`, `session.js`, `control.js`, `digest.js`, or
+`sink.js`. The security core was untouched by a total rewrite beneath it.
+
+The one subtlety worth knowing before writing another transport: **backpressure
+may be signalled either way, but it must be signalled.** A transport can defer
+the promise returned by `send`, or it can report `bufferedAmount` and fire
+`bufferedamountlow` — Trystero does the former, a raw `RTCDataChannel` the
+latter. A transport that does neither will let a large file queue entirely into
+memory and take the tab down. `test/channel.test.mjs` runs a full sealed
+transfer over a channel with exactly those five members and nothing else, so a
+new transport finds out what it is missing there rather than against a live
+relay.
+
 **Swapping the signalling network is one line.** Trystero ships a package per
 strategy behind a shared interface, so the import in `static/js/deps.js` can
 become `@trystero-p2p/mqtt`, `/torrent`, `/ws-relay`, `/supabase`, or
@@ -147,6 +193,12 @@ since `showSaveFilePicker` requires a user gesture.
 - **The streaming save path has no automated test.** Headless Chromium exposes
   `showSaveFilePicker` but has no UI to answer it, so the e2e forces the
   in-memory fallback.
+- **The e2e depends on public Nostr relays**, so it needs a network, cannot run
+  in CI, and fails for reasons that have nothing to do with this code. Pointing
+  it at `@trystero-p2p/ws-relay` against a local WebSocket server would make it
+  deterministic and offline — a one-line change in `deps.js`, which is the
+  property the CDN-URL-in-one-file layout exists to give. Worth keeping one
+  Nostr run as a network smoke test.
 - **STUN only by default.** Roughly 10–15% of NAT pairings need a TURN relay.
 - **One file at a time.** The framing supports a file sequence; the UI does not
   expose it yet.
@@ -160,9 +212,20 @@ static/js/deps.js                  every CDN URL, pinned, in one place
 static/js/crypto/secret.js         QR secret, HKDF derivations
 static/js/crypto/session.js        ephemeral ECDH, directional keys, SAS
 static/js/signal/room.js           Trystero pairing, relay list, ICE
+static/js/signal/channel.js        the transport seam, on its own
 static/js/transfer/frame.js        per-chunk AEAD, nonce construction
 static/js/transfer/sender.js       chunking, backpressure, accept handshake
 static/js/transfer/receiver.js     demux, verification, sink management
 static/js/transfer/sink.js         File System Access, with a Blob fallback
 static/_headers                    headers a static page cannot set itself
+
+types/qrbeam.d.ts                  the Channel contract, and shared types
+types/shims.d.ts                   the one CDN import paths cannot map
+tsconfig.base.json                 shared settings, and the URL -> package map
+tsconfig.json                      the browser project (no Node globals)
+tsconfig.test.json                 the Node project (tests and e2e)
+test/channel.test.mjs              transport conformance
 ```
+
+Nothing under `types/` or `tsconfig*` reaches the site — they live outside
+`static/`, so Hugo never copies them.
