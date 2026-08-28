@@ -20,6 +20,16 @@ import { sendFile } from './transfer/sender.js'
 import { canStreamToDisk } from './transfer/sink.js'
 import { renderQR, scanQR, cameraAvailable } from './ui/qr.js'
 
+// Refuse to run framed. A page that can be embedded can be overlaid, and the
+// two clicks this design relies on -- confirming the SAS, accepting a file --
+// are exactly what clickjacking targets. frame-ancestors would cover this, but
+// browsers ignore it in a <meta> tag and a static site cannot set headers, so
+// the check lives here where it does not depend on the host's cooperation.
+if (window.top !== window.self) {
+  document.body.textContent = 'qrbeam will not run inside a frame.'
+  throw new Error('Refusing to run in a frame')
+}
+
 const $ = id => document.getElementById(id)
 
 const SCREENS = ['choose', 'send', 'receive', 'verify', 'transfer', 'done']
@@ -111,9 +121,18 @@ async function establish({ secret, role, statusEl }) {
     onState: s => { if (s === 'connected') statusEl.textContent = 'Connected' },
   })
 
-  // The rendezvous has done its job; the relays should not stay attached.
-  signal.close()
-  teardown = () => { controller.abort(); peer.close() }
+  // The rendezvous is not closed the moment the channel opens. ICE keeps
+  // trickling after that, and a better route discovered a second later still
+  // needs a path to reach the peer. Holding the relays briefly costs a few
+  // idle sockets; closing too early costs a connection that cannot recover.
+  const relayLinger = setTimeout(() => signal.close(), 15_000)
+
+  teardown = () => {
+    clearTimeout(relayLinger)
+    controller.abort()
+    signal.close()
+    peer.close()
+  }
 
   return peer
 }
@@ -182,10 +201,9 @@ async function startSend(file) {
 async function startReceive(secret) {
   const peer = await establish({ secret, role: 'guest', statusEl: $('receive-status') })
 
-  show('verify')
-  $('sas').textContent = peer.session.sas
-  $('verify-status').textContent = 'Waiting for the sender to offer a file…'
-
+  // Handlers go on before anything is drawn. A DataChannel drops messages that
+  // arrive with no listener attached, and the sender is free to offer the
+  // moment its side is up.
   attachReceiver({
     channel: peer.channel,
     session: peer.session,
@@ -230,6 +248,10 @@ async function startReceive(secret) {
       peer.close()
     },
   })
+
+  show('verify')
+  $('sas').textContent = peer.session.sas
+  $('verify-status').textContent = 'Waiting for the sender to offer a file…'
 }
 
 function pickFile() {

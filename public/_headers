@@ -1,0 +1,14 @@
+# Read by Cloudflare Pages and Netlify. Other hosts need the equivalent set in
+# their own config -- these are headers a static page cannot set for itself.
+#
+# frame-ancestors in particular is ignored when delivered via <meta>, so this
+# file is the only way to deliver it properly. main.js also refuses to run in a
+# frame, so framing is blocked even on a host that ignores this.
+
+/*
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin
+  Permissions-Policy: camera=(self), microphone=(), geolocation=(), interest-cohort=()

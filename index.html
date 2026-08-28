@@ -12,6 +12,11 @@
   style-src allows inline styles because progress bars are driven by a CSS
   custom property on the element. Inline *scripts* remain forbidden, which is
   the allowance that actually matters.
+
+  frame-ancestors is absent because browsers ignore it in a <meta> tag -- it is
+  only honoured as an HTTP header. public/_headers sets it for hosts that read
+  that file, and main.js refuses to run inside a frame regardless, so the
+  protection does not depend on the host cooperating.
 -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
@@ -24,7 +29,6 @@
     ws://127.0.0.1:* ws://localhost:*;
   base-uri 'none';
   form-action 'none';
-  frame-ancestors 'none';
   object-src 'none';
 ">
 
