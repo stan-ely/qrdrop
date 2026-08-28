@@ -1,0 +1,250 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import { generateSecret } from '../src/crypto/secret.js'
+import { createEphemeralKeypair, exportPublicKey, establishSession } from '../src/crypto/session.js'
+import { createControlStream } from '../src/transfer/control.js'
+import { createReceiver } from '../src/transfer/receiver.js'
+import { sendFile } from '../src/transfer/sender.js'
+import { CHUNK_SIZE } from '../src/transfer/frame.js'
+import { safeFilename } from '../src/transfer/sink.js'
+
+/** A DataChannel stand-in that delivers to its twin, preserving order. */
+function channelPair() {
+  const mk = () => {
+    const ch = {
+      bufferedAmount: 0,
+      bufferedAmountLowThreshold: 0,
+      sent: 0,
+      addEventListener() {},
+      removeEventListener() {},
+      send(bytes) {
+        ch.sent += bytes.length
+        ch.tail = ch.tail.then(() => ch.twin.onFrame(bytes))
+      },
+      tail: Promise.resolve(),
+      onFrame: async () => {},
+    }
+    return ch
+  }
+  const a = mk()
+  const b = mk()
+  a.twin = b
+  b.twin = a
+  return [a, b]
+}
+
+function memorySink() {
+  const parts = []
+  return {
+    parts,
+    closed: false,
+    aborted: false,
+    streaming: true,
+    name: 'memory',
+    async write(c) { parts.push(Uint8Array.from(c)) },
+    async close() { this.closed = true },
+    async abort() { this.aborted = true },
+    bytes() { return Buffer.concat(parts.map(Buffer.from)) },
+  }
+}
+
+async function pairedSessions() {
+  const secret = generateSecret()
+  const hk = await createEphemeralKeypair()
+  const gk = await createEphemeralKeypair()
+  return {
+    host: await establishSession({ keypair: hk, peerPublicRaw: await exportPublicKey(gk), secret, role: 'host' }),
+    guest: await establishSession({ keypair: gk, peerPublicRaw: await exportPublicKey(hk), secret, role: 'guest' }),
+  }
+}
+
+/**
+ * Wires a full sender to a receiver over the fake channel.
+ * `decide` chooses whether the receiver accepts the incoming offer.
+ */
+async function transfer(file, { decide = 'accept', sink = memorySink(), onProgress } = {}) {
+  const { host, guest } = await pairedSessions()
+  const [hostCh, guestCh] = channelPair()
+
+  const events = { offers: [], done: [], errors: [] }
+
+  // The sending peer also runs a receiver, to pick up accept/done replies.
+  const hostControl = createControlStream()
+  let hostCtl = 0
+  const hostRx = createReceiver({
+    channel: hostCh,
+    sendKey: host.sendKey,
+    recvKey: host.recvKey,
+    control: hostControl,
+    nextControlIndex: () => hostCtl++,
+    onOffer: () => {},
+    onError: e => events.errors.push(e),
+    createSink: async () => sink,
+  })
+  hostCh.onFrame = hostRx.handleFrame
+
+  const guestControl = createControlStream()
+  let guestCtl = 0
+  const guestRx = createReceiver({
+    channel: guestCh,
+    sendKey: guest.sendKey,
+    recvKey: guest.recvKey,
+    control: guestControl,
+    nextControlIndex: () => guestCtl++,
+    createSink: async () => sink,
+    onOffer: async o => {
+      events.offers.push(o.manifest)
+      await (decide === 'accept' ? o.accept() : o.decline())
+    },
+    onProgress,
+    onFileDone: f => events.done.push(f),
+    onError: e => events.errors.push(e),
+  })
+  guestCh.onFrame = guestRx.handleFrame
+
+  const result = await sendFile({
+    channel: hostCh,
+    key: host.sendKey,
+    file,
+    fileSeq: 0,
+    control: hostControl,
+    nextControlIndex: () => hostCtl++,
+    onProgress,
+  })
+
+  return { result, events, sink, hostCh, guestCh }
+}
+
+const fileOf = (bytes, name = 'payload.bin') =>
+  new File([bytes], name, { type: 'application/octet-stream' })
+
+const randomBytes = n => {
+  const b = new Uint8Array(n)
+  for (let i = 0; i < n; i += 65536) crypto.getRandomValues(b.subarray(i, Math.min(i + 65536, n)))
+  return b
+}
+
+test('a small file arrives byte-identical', async () => {
+  const data = randomBytes(1000)
+  const { result, events, sink } = await transfer(fileOf(data))
+
+  assert.equal(result.declined, false)
+  assert.deepEqual(events.errors, [])
+  assert.ok(sink.closed)
+  assert.deepEqual([...sink.bytes()], [...data])
+  assert.equal(events.done[0].size, 1000)
+  assert.equal(events.done[0].digest, result.digest, 'both ends agree on the digest')
+})
+
+test('files spanning exact and partial chunk boundaries arrive intact', async () => {
+  for (const size of [CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 1, CHUNK_SIZE * 3 + 77]) {
+    const data = randomBytes(size)
+    const { events, sink } = await transfer(fileOf(data))
+    assert.deepEqual(events.errors, [], `size ${size} produced errors`)
+    assert.deepEqual([...sink.bytes()], [...data], `size ${size} round-trips`)
+  }
+})
+
+test('an empty file still transfers and terminates', async () => {
+  const { events, sink } = await transfer(fileOf(new Uint8Array(0)))
+  assert.deepEqual(events.errors, [])
+  assert.equal(sink.bytes().length, 0)
+  assert.ok(sink.closed)
+})
+
+test('declining means no file bytes are ever sent', async () => {
+  const data = randomBytes(CHUNK_SIZE * 2)
+  const { result, events, sink, hostCh } = await transfer(fileOf(data), { decide: 'decline' })
+
+  assert.equal(result.declined, true)
+  assert.equal(events.offers.length, 1, 'the offer was still surfaced to the user')
+  assert.equal(sink.parts.length, 0)
+  assert.ok(hostCh.sent < 1000, `only the manifest should cross the wire, saw ${hostCh.sent} bytes`)
+})
+
+test('progress is reported monotonically and reaches the full size', async () => {
+  const size = CHUNK_SIZE * 4 + 10
+  const seen = []
+  await transfer(fileOf(randomBytes(size)), { onProgress: p => seen.push(p) })
+
+  const sent = seen.filter(p => p.sent !== undefined).map(p => p.sent)
+  assert.ok(sent.length >= 5)
+  assert.deepEqual(sent, [...sent].sort((a, b) => a - b), 'progress never goes backwards')
+  assert.equal(sent.at(-1), size)
+})
+
+test('the manifest survives the trip intact', async () => {
+  const { events } = await transfer(fileOf(randomBytes(50), 'report q3.pdf'))
+  assert.equal(events.offers[0].name, 'report q3.pdf')
+  assert.equal(events.offers[0].size, 50)
+  assert.equal(events.offers[0].chunks, 1)
+})
+
+test('a corrupted chunk is rejected and the partial file is abandoned', async () => {
+  const { host, guest } = await pairedSessions()
+  const [hostCh, guestCh] = channelPair()
+  const sink = memorySink()
+  const errors = []
+
+  const control = createControlStream()
+  let ctl = 0
+  const rx = createReceiver({
+    channel: guestCh,
+    sendKey: guest.sendKey,
+    recvKey: guest.recvKey,
+    control,
+    nextControlIndex: () => ctl++,
+    createSink: async () => sink,
+    onOffer: async o => { await o.accept() },
+    onError: e => errors.push(e),
+  })
+
+  // Flip a bit inside every chunk frame, leaving control frames untouched.
+  guestCh.onFrame = async bytes => {
+    if (bytes[0] !== 1) return rx.handleFrame(bytes)
+    const t = bytes.slice()
+    t[20] ^= 0xff
+    return rx.handleFrame(t)
+  }
+
+  const hostControl = createControlStream()
+  let hostCtl = 0
+  const hostRx = createReceiver({
+    channel: hostCh,
+    sendKey: host.sendKey,
+    recvKey: host.recvKey,
+    control: hostControl,
+    nextControlIndex: () => hostCtl++,
+    onOffer: () => {},
+    onError: () => {},
+    createSink: async () => memorySink(),
+  })
+  hostCh.onFrame = hostRx.handleFrame
+
+  await assert.rejects(() => sendFile({
+    channel: hostCh,
+    key: host.sendKey,
+    file: fileOf(randomBytes(100)),
+    fileSeq: 0,
+    control: hostControl,
+    nextControlIndex: () => hostCtl++,
+  }))
+
+  assert.ok(errors.length > 0, 'the receiver should report the tampering')
+  assert.ok(sink.aborted, 'the partial file should be abandoned')
+  assert.equal(sink.closed, false, 'a corrupt file must never be presented as complete')
+})
+
+test('filenames from the peer are sanitised before reaching a save dialog', () => {
+  assert.equal(safeFilename('../../.bashrc'), 'bashrc')
+  assert.equal(safeFilename('a/b/c.txt'), 'c.txt', 'reduces to the basename')
+  assert.equal(safeFilename(String.raw`C:\Windows\System32\evil.dll`), 'evil.dll')
+  assert.equal(safeFilename('NUL'), 'received.bin', 'Windows device name')
+  assert.equal(safeFilename('a:b.txt'), 'a_b.txt', 'no alternate data streams')
+  assert.equal(safeFilename('..'), 'received.bin')
+  assert.equal(safeFilename(''), 'received.bin')
+  assert.equal(safeFilename(null), 'received.bin')
+  assert.equal(safeFilename('ok name.pdf'), 'ok name.pdf')
+  assert.ok(safeFilename('x'.repeat(500)).length <= 180)
+})
