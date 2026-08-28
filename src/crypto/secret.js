@@ -1,0 +1,84 @@
+/**
+ * The QR secret and everything derived from it.
+ *
+ * The QR code carries 32 bytes of CSPRNG output. That is a full-entropy key,
+ * not a human-typed passphrase, which is why this file contains no PAKE
+ * (SPAKE2 / OPAQUE). Those exist to stretch low-entropy secrets safely; a
+ * 256-bit secret needs only a KDF.
+ *
+ * Nothing derived here is ever used raw. The secret itself never leaves the
+ * device -- only values HKDF'd out of it, under distinct `info` labels so that
+ * no two purposes can ever collide.
+ */
+
+const SECRET_BYTES = 32
+const TOPIC_BYTES = 16
+
+// Domain separation salt. Fixed and public; its job is to make these
+// derivations meaningless outside this protocol version, not to be secret.
+const SALT = new TextEncoder().encode('qrbeam/v1')
+
+const enc = new TextEncoder()
+
+export function generateSecret() {
+  return crypto.getRandomValues(new Uint8Array(SECRET_BYTES))
+}
+
+async function hkdf(secret, info, byteLength) {
+  const ikm = await crypto.subtle.importKey('raw', secret, 'HKDF', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: SALT, info: enc.encode(info) },
+    ikm,
+    byteLength * 8,
+  )
+  return new Uint8Array(bits)
+}
+
+/**
+ * Public rendezvous ID -- the room name peers meet on.
+ *
+ * This is deliberately NOT the secret itself. Using the raw secret as the room
+ * ID is the obvious shortcut and it silently publishes your key to every relay
+ * on the network; it works perfectly in testing, which is what makes it
+ * dangerous. HKDF gives a value that identifies the session without revealing
+ * anything that decrypts it.
+ *
+ * `epoch` supports a future persistent-pairing mode (reuse one QR across
+ * sessions), where the topic must rotate on a timer or a relay operator could
+ * link every transfer that pair ever makes. In the default flow the secret is
+ * freshly generated per session, so the topic is already unlinkable and epoch
+ * stays null.
+ */
+export async function deriveTopic(secret, epoch = null) {
+  const info = epoch === null ? 'topic' : `topic/${epoch}`
+  return toBase64url(await hkdf(secret, info, TOPIC_BYTES))
+}
+
+/** AES-GCM key protecting the signalling payload (SDP + ECDH public keys). */
+export async function deriveSignalKey(secret) {
+  const raw = await hkdf(secret, 'signal', 32)
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt'])
+}
+
+export function toBase64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+export function fromBase64url(str) {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/')
+  const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '='))
+  return Uint8Array.from(bin, c => c.charCodeAt(0))
+}
+
+/** What actually goes in the QR image. ~43 chars, trivially small for a QR. */
+export function encodeSecret(secret) {
+  return `qrbeam:${toBase64url(secret)}`
+}
+
+export function decodeSecret(text) {
+  const m = /^qrbeam:([A-Za-z0-9_-]{43})$/.exec(text.trim())
+  if (!m) throw new Error('Not a qrbeam code')
+  const bytes = fromBase64url(m[1])
+  if (bytes.length !== SECRET_BYTES) throw new Error('Malformed qrbeam code')
+  return bytes
+}
