@@ -52,7 +52,7 @@
     "qrcode-generator": "^2.0.4"
   },
   "optionalDependencies": {
-    "node-datachannel": "^0.33.1"
+    "node-datachannel": "0.33.0"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
