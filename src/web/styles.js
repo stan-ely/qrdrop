@@ -200,6 +200,87 @@ ${tokensCSS(':host')}
  * reason -- the choose screen has no cancel and no primary. */
 .card-actions:empty { display: none; }
 
+/*
+ * The sheet: the component's one <dialog>, owned by element.js and adopted by
+ * the view (see the .dialog-host wrapper in view.js).
+ *
+ * .dialog-host is display: contents so that wrapping the dialog in a <div> the
+ * \`adopt\` prop needs does not put a flex item in :host's column. The dialog
+ * itself is out of flow the moment showModal() runs, but the wrapper is not,
+ * and an empty flex child still eats the column's gap.
+ *
+ * display goes on [open], never on .sheet. A closed <dialog> is hidden by
+ * exactly one thing -- \`display: none\` in the UA stylesheet -- and any author
+ * \`display\` beats it, which renders the sheet permanently, in flow, at the
+ * bottom of the component. That mistake cost 4300px of page height once
+ * already in this file's sibling, site/styles.css; it is written down in both
+ * places because it looks correct in a stylesheet either way.
+ *
+ * No z-index: showModal() promotes the element to the browser's top layer,
+ * which is above every stacking context by definition. That immunity is the
+ * reason this is a real <dialog> rather than a positioned div -- the layout it
+ * sits inside is made of fixed-height, overflow-hidden boxes, and any
+ * in-flow overlay would be clipped by one of them.
+ */
+.dialog-host { display: contents; }
+
+.sheet {
+  max-inline-size: min(30rem, calc(100vw - var(--sp-6)));
+  max-block-size: min(80dvh, calc(100dvh - var(--sp-6)));
+  inline-size: 100%;
+  margin: auto;
+  padding: var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  flex-direction: column;
+  gap: var(--sp-4);
+  font: var(--fs-0)/var(--lh-body) var(--font-sans);
+}
+
+.sheet[open] { display: flex; }
+
+.sheet::backdrop { background: rgb(0 0 0 / 0.45); }
+
+.sheet-title {
+  margin: 0;
+  font-size: var(--fs-1);
+  line-height: var(--lh-tight);
+  font-weight: 600;
+}
+/* No ring, for the reason already written above h2:focus -- a rounded box
+ * around a line of text is the universal look of an editable field, and users
+ * tried to type in it. The sheet heading takes focus on open (see
+ * dialogContent) precisely so Accept does not, so it is a focus target that is
+ * never Tab-reachable, and the ring would be misleading rather than helpful.
+ * This rule exists only because .sheet-title would otherwise out-specify that
+ * one; it says the same thing. */
+.sheet-title:focus, .sheet-title:focus-visible { outline: none; box-shadow: none; }
+
+/* The one box in the component allowed to scroll. Long copy lives here
+ * precisely so that it does not have to fit on a screen that cannot grow. */
+.sheet-body {
+  overflow-y: auto;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.sheet-body p { margin: 0; color: var(--muted); font-size: var(--fs--1); }
+.sheet-body .filename { color: var(--text); font-size: var(--fs-0); }
+
+.sheet-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.sheet-actions .btn { flex: 1 1 10rem; }
+.sheet-actions .btn.ghost { flex: 0 1 auto; }
+
 h2 {
   margin: 0 0 var(--sp-4);
   font-size: var(--fs-1);
@@ -632,6 +713,26 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
   .sas-grid { gap: var(--sp-2); }
   .sas-tile { flex: 1 1 40%; }
   .sas-emoji { font-size: var(--fs-2); }
+}
+
+/*
+ * The height counterpart, and the query this stylesheet did not have.
+ *
+ * Every breakpoint here used to be about width, which is the axis a phone
+ * makes obvious and the one this component was never actually short of. The
+ * failure mode was always vertical -- a wide, short laptop window has plenty
+ * of room for the text and none for the padding around it, and the first thing
+ * to go was whatever sat at the bottom of the card. Trading generous spacing
+ * for a screen that fits is the right way round: the padding is a comfort and
+ * the content is the point.
+ */
+@media (max-height: 46rem) {
+  .card { padding: var(--sp-4); gap: var(--sp-3); }
+  .card-body { gap: var(--sp-3); }
+  .card-actions { padding-block-start: var(--sp-3); }
+  .steps { margin-bottom: var(--sp-3); }
+  .outcome { padding: var(--sp-3); }
+  .qr, .beam-stage { inline-size: min(12rem, 100%); }
 }
 
 /* Absent from the pre-restyle stylesheet entirely: every transition and the

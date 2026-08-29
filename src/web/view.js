@@ -92,6 +92,11 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {boolean} pairing
  * @property {boolean} busy true between the receiver's Accept click and the
  *   save destination coming back -- see element.js's onOfferAccept handlers
+ * @property {Element | null} dialogNode the adopted <dialog> element.js owns.
+ *   Its contents are patched separately -- see dialogContent below.
+ * @property {'beam-offer' | 'error' | null} modal which sheet is open, if any.
+ *   The sheet is the only box on a non-scrolling page allowed to scroll
+ *   inside itself, so it is where long copy and anything unplanned goes.
  * @property {Element | null} beamNode the adopted <canvas> the player owns
  * @property {{ fps: number, loops: number, solved: number, blocks: number, eta: number | null } | null} beam
  *   `eta` is seconds: one full pass on the sending screen, and the measured
@@ -225,10 +230,98 @@ export function render(state, dispatch) {
   return /** @type {import('./vdom.js').VNode[]} */ ([
     stepRail(state),
     ...SCREENS.map(name => screen(name, state, dispatch)),
-    state.error
-      ? h('p', { class: 'error', role: 'alert', 'aria-live': 'assertive' }, state.error)
-      : null,
+
+    // The <dialog> is adopted, not described -- see the `adopt` prop in
+    // vdom.js, and the same technique on the QR <svg> and the beam <canvas>.
+    // `key` is required rather than decorative: it pins this wrapper's
+    // position so canReuse never rebuilds it, and a rebuilt wrapper would
+    // orphan the dialog element.js is holding a reference to and calling
+    // showModal() on.
+    //
+    // patch() stops at an adopted node and never descends into it, so nothing
+    // inside the dialog is rendered by this pass. dialogContent() below is
+    // patched separately, against its own prev-tree. Two patch roots, one
+    // owner each.
+    h('div', { class: 'dialog-host', key: 'dialog-host', adopt: state.dialogNode }),
   ].filter(Boolean))
+}
+
+/**
+ * The contents of the adopted <dialog>, patched as its own root.
+ *
+ * Lives here rather than in element.js because this file is where all
+ * user-facing copy lives, and a sheet is where the longest copy in the app now
+ * goes -- putting it in element.js would move the most-read prose in the
+ * component into a behaviour file.
+ *
+ * The heading carries `autofocus` and `tabindex="-1"`, and that is the whole
+ * reason it exists. showModal() focuses the dialog's first focusable
+ * descendant unless something claims it, which on the beam sheet would be
+ * Accept: a person still lifting their finger off the Enter that opened the
+ * sheet would accept a file. element.js's _focusScreenHeading has the same
+ * rule for the same reason, and the safety gestures must not be dismissible by
+ * a stray keypress.
+ *
+ * @param {State} state
+ * @param {Dispatch} dispatch
+ * @returns {import('./vdom.js').VNode[]}
+ */
+export function dialogContent(state, dispatch) {
+  if (state.modal === 'beam-offer' && state.offer) {
+    return [
+      h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, 'Before you accept'),
+      h('div', { class: 'sheet-body' }, [
+        h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`),
+
+        // Said BEFORE the click, not after, because both of these are things a
+        // person would have chosen differently had they known. Accepting opens
+        // a save dialog, and the browser creates that file the instant a
+        // location is picked -- minutes before there are any bytes to write
+        // into it. A transfer abandoned in between therefore leaves a real,
+        // zero-byte file sitting in Downloads, which is indistinguishable from
+        // a corrupted download and is exactly how the first tester read it.
+        // Nothing can delete it from here: the File System Access handle
+        // grants writing to that file and nothing else.
+        h('p', {},
+          'This saves a file straight away and fills it in at the end, so both screens have to stay '
+          + 'as they are until it finishes. Stopping early leaves an empty file you can delete.'),
+        h('p', {}, BEAM_KEEP_GOING),
+      ]),
+
+      // The notice and the gesture in one box. These used to be two paragraphs
+      // above an Accept button that a phone could not show, which is the worst
+      // of both: the warning was unread and the button was unreachable.
+      // Nothing is awaited between this click and createSink -- the click is
+      // the user activation showSaveFilePicker spends, and an await here would
+      // spend it on nothing.
+      h('div', { class: 'sheet-actions' }, [
+        h('button', {
+          class: 'btn primary', type: 'button', disabled: state.busy,
+          onclick: () => dispatch('offer:accept'),
+        }, 'Accept'),
+        h('button', {
+          class: 'btn ghost', type: 'button', disabled: state.busy,
+          onclick: () => dispatch('offer:decline'),
+        }, 'Decline'),
+      ]),
+    ]
+  }
+
+  if (state.modal === 'error' && state.error) {
+    return [
+      h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, 'Something went wrong'),
+      // role="alert" so this is announced even though focus went to the
+      // heading rather than to the message.
+      h('div', { class: 'sheet-body' }, [h('p', { role: 'alert' }, state.error)]),
+      h('div', { class: 'sheet-actions' }, [
+        h('button', {
+          class: 'btn', type: 'button', onclick: () => dispatch('modal:close'),
+        }, 'Close'),
+      ]),
+    ]
+  }
+
+  return []
 }
 
 /** @param {State} state */

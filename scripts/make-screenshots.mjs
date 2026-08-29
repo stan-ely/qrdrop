@@ -89,6 +89,27 @@ for (const scheme of /** @type {const} */ (['light', 'dark'])) {
   for (const shot of shots) {
     await page.evaluate(installState, { state: shot.state, link: LINK })
 
+    // The card fills the viewport now -- that is the whole point of the layout
+    // -- so a fixed 1200px-tall window photographs every screen with a column
+    // of empty space in the middle of it, which is a picture of nothing. The
+    // viewport is fitted to the shot instead: measure what this screen's
+    // content actually wants, add back the chrome around the card, and resize
+    // to that. Each README image then shows a card at its natural height,
+    // while the app under it is still the real one, laid out by the real rules.
+    //
+    // Twice, because the fit changes the answer: the component tightens its
+    // padding below a height threshold (the max-height query in styles.js), so
+    // a size measured in the roomy regime is wrong once the resize lands in
+    // the compact one, and the card stretches to fill the difference. The
+    // second pass measures in the regime it will actually be photographed in.
+    // Reset to the tall viewport first so the first pass always starts from
+    // the same place regardless of what the previous shot left behind.
+    await page.setViewportSize({ width: WIDTH, height: 1200 })
+    for (let pass = 0; pass < 2; pass++) {
+      await page.evaluate(() => new Promise(requestAnimationFrame))
+      await page.setViewportSize({ width: WIDTH, height: await measure(page) })
+    }
+
     const card = page.locator(`#screen-${shot.screen}`)
     const out = path.join(OUT, `${shot.name}.${scheme}.png`)
     await card.screenshot({ path: out })
@@ -100,3 +121,44 @@ for (const scheme of /** @type {const} */ (['light', 'dark'])) {
 
 await browser.close()
 await server.close()
+
+/**
+ * The viewport height at which the live screen's card sits at its natural
+ * size -- neither stretched by a window with room to spare nor compressed by
+ * one without.
+ *
+ * @param {import('playwright').Page} page
+ */
+function measure(page) {
+  return page.evaluate(() => {
+    const el = /** @type {any} */ (document.querySelector('qr-drop'))
+    const root = /** @type {ShadowRoot} */ (el.shadowRoot)
+    const card = /** @type {HTMLElement} */ (
+      root.querySelector('section[id^="screen-"]:not([hidden])'))
+    const body = /** @type {HTMLElement} */ (card.querySelector('.card-body'))
+
+    // Everything that is not the card: the page header, the footer, the step
+    // rail, and the grid's gaps and padding. Measured before the card is
+    // unpinned, while the layout is still the real one.
+    const chrome = window.innerHeight - card.getBoundingClientRect().height
+
+    // The card is measured with its stretch switched off, then switched back.
+    //
+    // scrollHeight was the obvious way to ask "how tall does this content want
+    // to be" and it cannot answer here: scrollHeight is never less than
+    // clientHeight, so on a box that has been STRETCHED to fill a tall window
+    // it just reports the stretched height, and fitting the viewport to that
+    // is a fixed point at whatever size the run started from. Releasing the
+    // flex for one measurement is the only way to see the natural height, and
+    // it is restored before the frame is ever painted.
+    const cardFlex = card.style.flex
+    const bodyFlex = body.style.flex
+    card.style.flex = '0 0 auto'
+    body.style.flex = '0 0 auto'
+    const natural = card.getBoundingClientRect().height
+    card.style.flex = cardFlex
+    body.style.flex = bodyFlex
+
+    return Math.ceil(natural + chrome)
+  })
+}

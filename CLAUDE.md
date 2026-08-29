@@ -35,10 +35,24 @@ node scripts/make-diagrams.mjs                           # docs/diagrams/*.png f
 npm run build && node scripts/make-screenshots.mjs       # docs/screenshots/*.png
 ```
 
-`make-screenshots.mjs` is also the cheapest way to see every screen at once —
-it drives `_setState` across all of them, which is the technique the "screenshot
-the states" note below describes. If a screenshot comes out wrong, that is the
-finding.
+`make-screenshots.mjs` produces the README's pictures and **only** those: three
+screens, at one 760px-wide viewport. This file used to claim it drove `_setState`
+"across all of them", and that claim is how `beam-receive` went unphotographed at
+any size until a tester found its Accept button 99px below the fold on a phone.
+
+Seeing every screen is `check-layout.mjs`'s job, and it is a check rather than an
+image generator — it walks all of them at four viewport sizes and exits non-zero
+on a page that scrolls or a button outside the viewport, writing a picture of
+each failure to `docs/screenshots/layout/` (gitignored):
+
+```bash
+npm run build && node scripts/check-layout.mjs
+```
+
+Run it after anything that touches `src/web/view.js`, `src/web/styles.js`, or the
+site's page chrome. The fixtures both scripts drive are shared, in
+`scripts/screen-states.mjs`, so a new screen gets added once and both see it. If
+a screenshot comes out wrong, that is the finding.
 
 `localhost` counts as a secure context, so WebCrypto and the camera work against
 `npm start` without a certificate. The same is true of `127.0.0.1`, which is what
@@ -146,7 +160,29 @@ e2e suite reads text and visibility, not paint.
 
 **Screenshot the states when changing the view.** The above class of bug is invisible to
 the test suite. Driving `_setState` from Playwright across every screen is how it was
-found.
+found. `node scripts/check-layout.mjs` is that, automated.
+
+**The layout is fixed-height and the page never scrolls.** The page owns the viewport
+(`site/styles.css`: `body` is `100dvh`, `main` is an auto/1fr/auto grid) and the
+component fills the row it is given — `:host` is `block-size: 100%`, never `100dvh`,
+or it would overflow by exactly the height of the page chrome above it. Every screen
+builder returns `{ body, actions }`: the body may scroll as a last resort, the action
+bar never does. There is nowhere else for a button to go, which is the point.
+
+**Anywhere a rule sets `display`, check what it just un-hid.** An author `display` beats
+the UA stylesheet's `display: none` for both `[hidden]` and a closed `<dialog>`, and this
+bit three times in one sitting — `.card` laid out all eight screens at once (a 4300px
+page), and `.sheet` rendered both closed dialogs in flow. `.card[hidden]` and
+`.sheet[open]` say the hiding again. Related: a host-page rule always beats `:host` for
+the same property, regardless of specificity, which is why `site/styles.css` no longer
+sets `display` on `qr-drop`.
+
+**Long copy goes in a sheet, not on the screen.** The component owns one `<dialog>`
+(`element.js`, adopted by the view) whose contents are patched as a *separate* root —
+`patch()` stops at an adopted node and never descends into it. Its heading takes
+`autofocus`, because `showModal()` would otherwise focus the first control, and on the
+beam sheet that is Accept: a stray Enter would accept a file. Same rule, same reason as
+`_focusScreenHeading`.
 
 **These ids are a contract with `e2e/transfer.e2e.mjs`**: `#btn-send`, `#screen-send`,
 `#manual-code`, `#qr`, `#btn-receive`, `#screen-receive`, `#manual-input`, `#manual-form`,

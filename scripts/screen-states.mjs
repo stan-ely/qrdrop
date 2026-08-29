@@ -158,6 +158,34 @@ export const FIXTURES = [
       beam: { fps: 10, loops: 1, solved: 41, blocks: 190, eta: 74 },
     },
   },
+  {
+    // The Accept sheet, open. This is the state a beam receiver is in for the
+    // whole time it matters: the manifest has decoded, the warning is on
+    // screen, and the click that spends the showSaveFilePicker activation is
+    // in front of them. It is a separate fixture rather than a flag on the
+    // one above because both states are real and both have to fit.
+    name: 'beam-offer-sheet',
+    screen: 'beam-receive',
+    state: {
+      screen: 'beam-receive', mode: 'beam', role: 'receiver',
+      cameraAvailable: true,
+      offer: NOTES,
+      modal: 'beam-offer',
+      beam: { fps: 10, loops: 1, solved: 41, blocks: 190, eta: 74 },
+    },
+  },
+  {
+    // An error sheet over a live screen. Errors used to render as a banner at
+    // the very bottom of the card, which on a page that no longer scrolls is
+    // the one place a message cannot be read from.
+    name: 'error-sheet',
+    screen: 'receive',
+    state: {
+      screen: 'receive', role: 'receiver', cameraAvailable: true,
+      error: 'The other device disconnected before the transfer finished.',
+      modal: 'error',
+    },
+  },
 ]
 
 /** The three fixtures the README leads with, by name. */

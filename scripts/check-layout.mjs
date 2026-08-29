@@ -60,6 +60,11 @@ const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844 },
   { name: 'tablet', width: 834, height: 1112 },
   { name: 'laptop', width: 1440, height: 900 },
+  // Wide and short, which is the case a design tuned on a phone forgets: a
+  // 1366x768 laptop with browser chrome and a dock leaves roughly this, and it
+  // is the shape that made the width-only media query the page used to have
+  // report success while Accept sat off the bottom of the screen.
+  { name: 'laptop-short', width: 1280, height: 620 },
 ]
 
 await rm(OUT, { recursive: true, force: true })
@@ -91,6 +96,17 @@ for (const vp of VIEWPORTS) {
   await page.addScriptTag({ url: '/qrcode-generator.js' })
 
   for (const fixture of FIXTURES) {
+    // One page drives every fixture, so each has to start from a closed sheet.
+    // Without this a fixture inherits the previous one's open dialog: the
+    // component only calls showModal() on a closed one, so the sheet stays up
+    // from the earlier state with a backdrop belonging to a screen that is no
+    // longer there. Nothing in the app can reach that state -- _setState closes
+    // the sheet on every screen change -- so it is the harness that has to
+    // behave, not the component.
+    await page.evaluate(() => {
+      const el = /** @type {any} */ (document.querySelector('qr-drop'))
+      el?._setState({ modal: null })
+    })
     await page.evaluate(installState, { state: fixture.state, link: LINK })
 
     // One frame, so layout has settled before anything is measured. The
@@ -106,7 +122,19 @@ for (const vp of VIEWPORTS) {
       // Buttons only, and only the ones on the live screen. The hidden
       // screens are still in the DOM -- `screen()` renders all eight and
       // hides seven -- and a hidden section's buttons have no useful box.
-      const buttons = screen ? [...screen.querySelectorAll('button')] : []
+      //
+      // An open sheet counts too, and is the case most worth checking: it is
+      // where the beam Accept button now lives, and a dialog is exempt from
+      // the page's own overflow rules, which makes it the one place a button
+      // could drift off-screen without anything else looking wrong. A CLOSED
+      // dialog is skipped -- display: none gives every descendant a zero box
+      // at the origin, which would read as "above the viewport" and fail every
+      // screen that has a sheet it is not currently showing.
+      const sheet = root.querySelector('dialog[open]')
+      const buttons = [
+        ...(screen ? screen.querySelectorAll('button') : []),
+        ...(sheet ? sheet.querySelectorAll('button') : []),
+      ]
 
       return {
         pageOverflow: document.documentElement.scrollHeight - window.innerHeight,

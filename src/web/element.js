@@ -50,7 +50,7 @@ import { renderQR, scanQR, cameraAvailable } from './qr.js'
 import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
 import { patch } from './vdom.js'
-import { render, NO_CAMERA_SCAN } from './view.js'
+import { render, dialogContent, NO_CAMERA_SCAN } from './view.js'
 import { copyText } from './copy.js'
 import { STYLES } from './styles.js'
 
@@ -119,6 +119,34 @@ export class QRDropElement extends HTMLElement {
 
     /** @type {HTMLStyleElement | null} Fallback only; see above and _render. */
     this._styleEl = null
+
+    /**
+     * The one <dialog>, created once and never rebuilt.
+     *
+     * Built here rather than described in the view for the same reason the QR
+     * <svg> and the beam <canvas> are: patch() stops at an `adopt`ed node and
+     * never descends into it, so a dialog described in vnodes would be
+     * reconciled like any other element -- and a rebuilt <dialog> is a
+     * different element from the one showModal() was called on, which drops it
+     * out of the browser's top layer mid-transfer.
+     *
+     * Its contents are patched separately, against _dialogPrev. Two roots, one
+     * owner each; see _render.
+     */
+    this._dialogNode = document.createElement('dialog')
+    this._dialogNode.className = 'sheet'
+
+    /** @type {import('./vdom.js').VNode[] | null} prev-tree for the dialog's own patch root. */
+    this._dialogPrev = null
+
+    // Escape, and the close button on any sheet that has one. A <dialog>
+    // dismissed by the platform does not tell the component anything, so
+    // without this `state.modal` stays set, _render keeps calling showModal()
+    // on an already-open dialog, and the sheet cannot be reopened because
+    // nothing ever observed it closing.
+    this._dialogNode.addEventListener('close', () => {
+      if (this._state.modal) this._setState({ modal: null })
+    })
 
     /** @type {string | null} Set via the `base-url` attribute; see below. */
     this._baseURL = this.getAttribute('base-url') || null
@@ -327,6 +355,8 @@ export class QRDropElement extends HTMLElement {
       manualError: /** @type {string | null} */ (null),
       mode: /** @type {'p2p' | 'beam'} */ ('p2p'),
       beamNode: /** @type {Element | null} */ (null),
+      dialogNode: /** @type {Element | null} */ (this._dialogNode),
+      modal: /** @type {'beam-offer' | 'error' | null} */ (null),
       beam: /** @type {import('./view.js').State['beam']} */ (null),
     }
   }
@@ -469,6 +499,11 @@ export class QRDropElement extends HTMLElement {
       case 'verify:confirm': return this._onVerifyConfirm?.()
       case 'offer:accept': return this._onOfferAccept?.()
       case 'offer:decline': return this._onOfferDecline?.()
+      // Closes the sheet only. Never routed to _reset: dismissing an
+      // explanation is not declining a transfer, and a sheet whose Close
+      // button silently cancelled the thing it was explaining would be the
+      // most expensive possible reading of a dismissal.
+      case 'modal:close': return this._setState({ modal: null })
       case 'cancel': return this._reset()
       case 'restart': return this._reset()
       case 'copy': return void this._copy(payload)
@@ -495,7 +530,12 @@ export class QRDropElement extends HTMLElement {
   _setState(partial) {
     const prevScreen = this._state.screen
     if ('screen' in partial && partial.screen !== prevScreen) {
-      partial = { error: null, ...partial }
+      // `modal: null` alongside the error reset, and for the same reason: a
+      // sheet belongs to the screen that opened it. Left set across a screen
+      // change it would reopen itself over the new screen -- the beam offer
+      // sheet floating above the choose screen after a cancel -- describing a
+      // decision that is no longer on the table.
+      partial = { error: null, modal: null, ...partial }
     }
     if (partial.screen === 'done') this._sessionEnded = true
 
@@ -510,6 +550,26 @@ export class QRDropElement extends HTMLElement {
     // Only reached on browsers without constructable stylesheets, where the
     // sheet has to be a real child and patch() has just discarded it.
     if (this._styleEl) this._root.append(this._styleEl)
+
+    // The dialog's own patch root. The pass above stops at the adopted node
+    // and never descends into it (see vdom.js's adoptInto), so this is the
+    // only thing that renders what is inside the sheet.
+    this._dialogPrev = patch(
+      this._dialogNode, dialogContent(this._state, this._dispatch), this._dialogPrev)
+
+    // showModal(), not the `open` attribute. Only showModal puts the element
+    // in the browser's top layer, and only the top layer is immune to being
+    // clipped by the fixed-height, overflow-hidden boxes this layout is now
+    // made of. It also brings the focus trap, the inert background, ::backdrop
+    // and Escape -- none of which this component had before, since there was
+    // no keyboard handling anywhere in src/web/ at all.
+    //
+    // Guarded on .open in both directions: showModal() on an already-open
+    // dialog throws, and close() on a closed one fires a spurious 'close'
+    // event straight back into _setState.
+    const wantOpen = this._state.modal !== null
+    if (wantOpen && !this._dialogNode.open) this._dialogNode.showModal()
+    else if (!wantOpen && this._dialogNode.open) this._dialogNode.close()
   }
 
   /**
@@ -529,7 +589,17 @@ export class QRDropElement extends HTMLElement {
   _fail(error) {
     console.error(error)
     // textContent, never innerHTML: some of these strings originate from the peer.
-    this._setState({ error: error instanceof Error ? error.message : String(error) })
+    //
+    // A sheet rather than the banner this used to render at the bottom of the
+    // card. The banner was the last element on a page that could be taller
+    // than the screen, so the thing most worth reading was the thing least
+    // likely to be seen -- and on a layout that no longer scrolls it would
+    // simply be clipped. A failure is also exactly the case where a change on
+    // screen has to be impossible to miss rather than quietly announced.
+    this._setState({
+      error: error instanceof Error ? error.message : String(error),
+      modal: 'error',
+    })
   }
 
   /**
@@ -579,8 +649,12 @@ export class QRDropElement extends HTMLElement {
       path: null, pathDebug: null,
       // Last key wins over the `error: null` _setState injects for any
       // update carrying a screen change, which is what lets this one reset
-      // set an error while every other one still clears the stale one.
+      // set an error while every other one still clears the stale one. The
+      // same trick puts the message in a sheet rather than leaving it to be
+      // clipped: these are the resets the user did not ask for, so the
+      // explanation has to be the thing they cannot miss.
       error: message ?? null,
+      modal: message ? /** @type {const} */ ('error') : null,
     })
   }
 
@@ -1046,11 +1120,33 @@ export class QRDropElement extends HTMLElement {
           })
           if (!sink) return this._reset('The save dialog was closed without choosing a location, so nothing was saved.')
 
-          this._setState({ offer: null, status: '', busy: false })
+          // modal: null explicitly, not as a consequence of offer going null.
+          // The screen does not change here, so _setState's screen-change
+          // reset never runs, and dialogContent would simply render an empty
+          // sheet over a running transfer.
+          this._setState({ offer: null, modal: null, status: '', busy: false })
           await finish()
         }
 
-        this._setState({ offer: { name: incoming.name, size: incoming.size } })
+        // The sheet opens itself the moment the manifest decodes, rather than
+        // waiting to be asked. That is the point: the warning it carries is
+        // about a file this is going to create on disk immediately, and the
+        // previous arrangement -- the same words as a paragraph above an
+        // Accept button a phone could not show -- delivered neither the
+        // warning nor the button.
+        //
+        // Opening it here also keeps the activation intact. The click on
+        // Accept inside the sheet is the user activation showSaveFilePicker
+        // spends; if opening the sheet were itself part of that click, the
+        // gesture would be spent on the dialog instead of the picker.
+        //
+        // Accept and Decline remain in the screen's action bar as well, so a
+        // sheet dismissed with Escape leaves the transfer answerable rather
+        // than stranded.
+        this._setState({
+          offer: { name: incoming.name, size: incoming.size },
+          modal: 'beam-offer',
+        })
       },
 
       onProgress: ({ solved, blocks }) => {
