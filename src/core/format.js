@@ -10,6 +10,28 @@
  */
 
 /**
+ * A rough, human duration -- "about 2 min", not "1m 47s".
+ *
+ * Deliberately coarse. This is used to tell someone how long they have to keep
+ * a phone pointed at a laptop, and a figure to the second reads as a promise
+ * the transfer cannot keep: the real rate depends on how steady a hand is and
+ * how well the camera is focusing, and it changes while they watch. Rounding
+ * to something obviously approximate is the honest register, and it stops the
+ * number flickering distractingly on every progress tick.
+ *
+ * @param {number} seconds
+ * @returns {string}
+ */
+export function duration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return ''
+  if (seconds < 20) return 'a few seconds'
+  if (seconds < 90) return `about ${Math.round(seconds / 10) * 10} seconds`
+  const mins = Math.round(seconds / 30) / 2 // nearest half-minute
+  if (mins < 10) return `about ${mins % 1 === 0 ? mins : Math.floor(mins) + '½'} min`
+  return `about ${Math.round(seconds / 60)} min`
+}
+
+/**
  * @param {number} n
  * @returns {string}
  */

@@ -39,7 +39,7 @@
  */
 
 import { h } from './vdom.js'
-import { bytes } from '../core/format.js'
+import { bytes, duration } from '../core/format.js'
 // A value import, not just a type -- checked once against beam.js's own
 // module top level before relying on it here: it defines constants and
 // exported functions and touches neither `document` nor a camera at import
@@ -79,7 +79,10 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {'code' | 'digest' | null} copied
  * @property {boolean} pairing
  * @property {Element | null} beamNode the adopted <canvas> the player owns
- * @property {{ fps: number, loops: number, solved: number, blocks: number } | null} beam
+ * @property {{ fps: number, loops: number, solved: number, blocks: number, eta: number | null } | null} beam
+ *   `eta` is seconds: one full pass on the sending screen, and the measured
+ *   time remaining on the receiving one. Null while there is not yet enough
+ *   evidence to estimate honestly.
  */
 
 /** @typedef {(intent: string, payload?: any) => void} Dispatch */
@@ -488,12 +491,30 @@ const BEAM_WARNING = 'This is not encrypted, and cannot be -- there is no handsh
   + 'verify. Anyone who can see this screen while it plays can read the file.'
 
 /**
+ * The other sentence that must not drift, for a duller but more frequent
+ * reason than BEAM_WARNING's.
+ *
+ * Beam is the only transfer here where accepting does NOT mean the bytes now
+ * move on their own -- the camera has to keep watching a screen that has to
+ * keep playing, for minutes. Every other transfer anyone has used, including
+ * this app's own WebRTC path, works the other way round, so "Accept means I
+ * can put the phone down" is the assumption a new user arrives with rather
+ * than one they could be talked out of by a status line. It is said on both
+ * screens and before as well as after the click, because the first person to
+ * try it stopped showing the code the instant they had tapped Accept, and got
+ * an empty file for it.
+ */
+const BEAM_KEEP_GOING = 'Keep the camera on the other screen, and leave that screen playing, '
+  + 'until this one says it is done.'
+
+/**
  * @param {State} state
  * @param {Dispatch} dispatch
  */
 function beamSend(state, dispatch) {
   const fps = state.beam?.fps ?? DEFAULT_FPS
   const loops = state.beam?.loops ?? 0
+  const eta = state.beam?.eta ?? 0
 
   return [
     h('h2', { tabindex: '-1' }, 'Show this to the other device'),
@@ -524,15 +545,25 @@ function beamSend(state, dispatch) {
       }, FPS_CHOICES.map(choice => h('option', { key: String(choice), value: String(choice) }, `${choice} fps`))),
     ]),
 
+    // The single most important instruction on the screen, and it is styled as
+    // one rather than as a status line. The first person to use this stopped
+    // showing the code as soon as the other device said "Accept", because in
+    // every other transfer UI -- including this app's own WebRTC path -- Accept
+    // means the bytes now move on their own. Here it means the opposite: the
+    // work has not started yet. That misreading is the default, so it is worth
+    // spending the most prominent element on the page to prevent.
+    h('p', { class: 'beam-instruction' }, 'Keep this code on screen until the other device says it is done.'),
+
     // Loops, not percent: a sender has no back channel at all (see
     // core/beam.js's header), so "how far along is the other device" is a
     // question this screen structurally cannot answer. The one honest signal
-    // is how many times the whole file has already gone by, plus telling the
-    // truth that the only way to know when to stop is to look at the other
-    // screen -- not this one.
+    // is how many times the whole file has already gone by, and how long a
+    // single pass takes -- which at least turns "keep it up indefinitely" into
+    // a number someone can plan around.
     h('p', { class: 'status', 'aria-live': 'polite' },
-      `Shown in full ${loops} time${loops === 1 ? '' : 's'}. Keep this on screen until the other `
-      + "device's own screen says it is done -- there is no signal back to this one that says so."),
+      `Shown in full ${loops} time${loops === 1 ? '' : 's'}. One pass takes ${duration(eta)}, and a `
+      + 'few passes are normal -- the other device only needs to catch enough of the frames, not '
+      + 'all of them. Nothing is sent back to this screen, so it cannot tell you when to stop.'),
 
     h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
   ]
@@ -565,6 +596,21 @@ function beamReceive(state, dispatch) {
 
     state.offer ? [
       h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`),
+
+      // Said BEFORE the click, not after, because both of these are things a
+      // person would have chosen differently had they known. Accepting opens a
+      // save dialog, and the browser creates that file the instant a location
+      // is picked -- minutes before there are any bytes to write into it. A
+      // transfer abandoned in between therefore leaves a real, zero-byte file
+      // sitting in Downloads, which is indistinguishable from a corrupted
+      // download and is exactly how the first tester read it. Nothing can
+      // delete it from here: the File System Access handle grants writing to
+      // that file and nothing else.
+      h('p', { class: 'note' },
+        'This saves a file straight away and fills it in at the end, so both screens have to stay '
+        + 'as they are until it finishes. Stopping early leaves an empty file you can delete.'),
+
+      h('p', { class: 'note' }, BEAM_KEEP_GOING),
       // Accept is offered the instant the manifest decodes -- a second or two
       // into pointing the camera -- rather than after the transfer finishes
       // minutes later, because this click IS the user activation
@@ -574,7 +620,15 @@ function beamReceive(state, dispatch) {
       // beam-specific version of it.
       h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('offer:accept') }, 'Accept'),
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('offer:decline') }, 'Decline'),
-    ] : h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
+    ] : [
+      // Post-Accept. This is the state the first tester was in when they put
+      // the sending laptop down, so the instruction is promoted to the loudest
+      // thing on the screen rather than left as the quiet status line it was.
+      state.beam && state.beam.blocks > 0
+        ? h('p', { class: 'beam-instruction' }, BEAM_KEEP_GOING)
+        : null,
+      h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
+    ],
 
     // Solving proceeds from the moment frames arrive, whether or not Accept
     // has been clicked yet (core/beam.js absorbs blocks eagerly; only the
@@ -587,6 +641,19 @@ function beamReceive(state, dispatch) {
       id: 'beam-progress', class: 'bar', role: 'progressbar',
       'aria-valuemin': '0', 'aria-valuemax': String(blocks), 'aria-valuenow': String(solved),
     }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]) : null,
+
+    // A bare bar answers "is it moving?" only if you stare at it. These are
+    // the two questions actually being asked -- how far, and how much longer
+    // do I have to hold this phone up -- and neither was answerable before.
+    // The remaining time is measured from the rate this camera is really
+    // achieving rather than from the sender's chosen fps, which this device
+    // has no way to learn; it stays absent for the first few seconds because
+    // an estimate extrapolated from two blocks reads as broken.
+    state.beam && blocks > 0
+      ? h('p', { class: 'status', 'aria-live': 'polite' },
+        `${Math.floor(pct)}% — ${solved} of ${blocks} pieces`
+        + (state.beam.eta ? `, ${duration(state.beam.eta)} left` : ''))
+      : null,
 
     h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
   ]

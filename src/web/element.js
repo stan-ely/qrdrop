@@ -172,6 +172,13 @@ export class QRDropElement extends HTMLElement {
      */
     this._beam = null
 
+    /**
+     * Frames in one full pass of the running beam, so the fps control can
+     * recompute the per-pass estimate without asking the player again.
+     * @type {number}
+     */
+    this._beamCycle = 0
+
     this._dispatch = this._dispatch.bind(this)
 
     this._state = this._initialState()
@@ -203,7 +210,7 @@ export class QRDropElement extends HTMLElement {
       pairing: false,
       mode: /** @type {'p2p' | 'beam'} */ ('p2p'),
       beamNode: /** @type {Element | null} */ (null),
-      beam: /** @type {{ fps: number, loops: number, solved: number, blocks: number } | null} */ (null),
+      beam: /** @type {import('./view.js').State['beam']} */ (null),
     }
   }
 
@@ -427,6 +434,7 @@ export class QRDropElement extends HTMLElement {
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
     this._beam = null
+    this._beamCycle = 0
     this._onVerifyConfirm = null
     this._onOfferAccept = null
     this._onOfferDecline = null
@@ -733,7 +741,7 @@ export class QRDropElement extends HTMLElement {
       screen: 'beam-send', mode: 'beam', role: 'sender',
       file: { name: file.name, size: file.size },
       status: 'Preparing the code…',
-      beam: { fps: DEFAULT_FPS, loops: 0, solved: 0, blocks: 0 },
+      beam: { fps: DEFAULT_FPS, loops: 0, solved: 0, blocks: 0, eta: null },
     })
 
     const player = await startBeamSend({
@@ -758,9 +766,13 @@ export class QRDropElement extends HTMLElement {
     this._teardown = () => player.stop()
 
     const { manifest } = player
+    this._beamCycle = player.cycleLength
     this._setState({
       beamNode: player.canvas,
-      beam: { fps: DEFAULT_FPS, loops: 0, solved: 0, blocks: player.frameCount },
+      beam: {
+        fps: DEFAULT_FPS, loops: 0, solved: 0, blocks: player.frameCount,
+        eta: Math.round(player.cycleLength / DEFAULT_FPS),
+      },
       // The compression figure is worth showing rather than hiding: it is the
       // difference between a transfer that takes one minute and one that takes
       // six, and it is the only lever a sender has (send the CSV, not the zip
@@ -775,7 +787,12 @@ export class QRDropElement extends HTMLElement {
   _setBeamFps(fps) {
     this._beam?.setFps(fps)
     const beam = this._state.beam
-    if (beam) this._setState({ beam: { ...beam, fps } })
+    if (!beam) return
+    // The per-pass estimate is the whole reason anyone touches this control,
+    // so it has to move with it. Left stale it would say the same "about 2
+    // min" at 5 fps and at 20, which is worse than showing nothing.
+    const eta = this._beamCycle ? Math.round(this._beamCycle / fps) : beam.eta
+    this._setState({ beam: { ...beam, fps, eta } })
   }
 
   /**
@@ -787,9 +804,11 @@ export class QRDropElement extends HTMLElement {
       status: cameraAvailable()
         ? 'Point the camera at the other screen.'
         : 'No camera available, so there is no way to read the code.',
-      beam: { fps: 0, loops: 0, solved: 0, blocks: 0 },
+      beam: { fps: 0, loops: 0, solved: 0, blocks: 0, eta: null },
     })
     if (!cameraAvailable()) return
+
+    const startedAt = Date.now()
 
     // _setState renders synchronously, so the <video> the view just described
     // is already in the shadow root. Reaching for it by id afterwards is the
@@ -799,6 +818,7 @@ export class QRDropElement extends HTMLElement {
 
     /** @type {Sink | null} */
     let sink = null
+    let wrote = false
     /** @type {(() => Promise<Bytes>) | null} */
     let assemble = null
     /** @type {import('../core/beam.js').BeamManifest | null} */
@@ -820,6 +840,7 @@ export class QRDropElement extends HTMLElement {
         // plausible-looking partial file.
         await sink.write(await produce())
         await sink.close()
+        wrote = true
       } catch (error) {
         await sink.abort()
         return this._failTransfer(error)
@@ -867,7 +888,7 @@ export class QRDropElement extends HTMLElement {
           })
           if (!sink) return this._reset() // the save dialog was dismissed
 
-          this._setState({ offer: null, status: 'Keep the camera steady.' })
+          this._setState({ offer: null, status: '' })
           await finish()
         }
 
@@ -877,8 +898,20 @@ export class QRDropElement extends HTMLElement {
       onProgress: ({ solved, blocks }) => {
         const beam = this._state.beam
         if (!beam || beam.solved === solved) return
+
+        // Measured, not assumed. A receiver has no idea what rate the sender
+        // chose -- there is no back channel to ask -- so the only honest
+        // estimate is the one this camera is actually achieving, which also
+        // folds in a shaky hand and a slow decoder for free. Withheld for the
+        // first few seconds because a rate extrapolated from two blocks
+        // predicts an hour and then collapses, which reads as broken.
+        const elapsed = (Date.now() - startedAt) / 1000
+        const eta = solved > 0 && elapsed > 4
+          ? Math.round((blocks - solved) * (elapsed / solved))
+          : null
+
         this._setState({
-          beam: { ...beam, solved, blocks },
+          beam: { ...beam, solved, blocks, eta },
           progress: { moved: solved, total: blocks },
         })
       },
@@ -892,7 +925,18 @@ export class QRDropElement extends HTMLElement {
       onError: e => this._failTransfer(e),
     })
 
-    this._teardown = () => session.stop()
+    // Cancelling has to release the save handle as well as the camera. The
+    // file itself is already on disk and empty -- showSaveFilePicker creates
+    // it the moment a location is chosen, minutes before there are any bytes
+    // to put in it -- and nothing here can delete it, because the File System
+    // Access handle only permits writing to it. That asymmetry is exactly how
+    // an abandoned beam transfer comes to look like a corrupted download, so
+    // the honest fix is the warning view.js shows before Accept is clicked;
+    // this is only the half that stops the writable leaking.
+    this._teardown = () => {
+      session.stop()
+      if (sink && !wrote) void sink.abort()
+    }
   }
 
   async _beginScan() {

@@ -57,6 +57,7 @@ export const FPS_CHOICES = [5, 10, 15, 20]
  *   canvas: HTMLCanvasElement,
  *   manifest: import('../core/beam.js').BeamManifest,
  *   frameCount: number,
+ *   cycleLength: number,
  *   setFps: (fps: number) => void,
  *   stop: () => void,
  * }>}
@@ -108,6 +109,12 @@ export async function startBeamSend({ source, fps = DEFAULT_FPS, onTick }) {
     canvas,
     manifest: encoder.manifest,
     frameCount: encoder.frameCount,
+    // Frames in one full pass, manifests included. This is what a per-pass
+    // duration must be computed from rather than frameCount: the interleaved
+    // manifests are ~5% of what actually goes on screen, and a sender told
+    // "about 2 min" who is really waiting 2:06 every lap will conclude the
+    // estimate is lying long before they conclude it is rounding.
+    cycleLength: encoder.cycleLength,
 
     /** @param {number} next */
     setFps(next) {

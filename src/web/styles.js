@@ -235,6 +235,22 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   image-rendering: pixelated;
 }
 
+/* The "don't put the phone down yet" line, on both beam screens.
+ *
+ * Weighted deliberately heavier than .status and .note around it. This is the
+ * one instruction whose absence produced a real failure -- an abandoned
+ * transfer and an empty file that read as a corrupt download -- and it was a
+ * quiet status line when that happened. It is not a warning (--warn belongs to
+ * the unencrypted banner, and two competing amber blocks would flatten both),
+ * so it leans on weight and the accent rule instead of colour. */
+.beam-instruction {
+  margin: var(--sp-4) 0 var(--sp-2);
+  padding-left: var(--sp-3);
+  border-left: 3px solid var(--accent);
+  font-weight: 600;
+  color: var(--text);
+}
+
 .beam-controls {
   display: flex;
   align-items: center;
