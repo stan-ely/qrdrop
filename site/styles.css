@@ -19,21 +19,55 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * The page is exactly the viewport and does not scroll. This is where 100dvh
+ * belongs and the only place it appears: <qr-drop> sizes to the row this grid
+ * gives it (see the :host comment in src/web/styles.js for why the component
+ * must not claim the viewport itself).
+ *
+ * dvh rather than vh. On iOS Safari 100vh is the EXPANDED viewport -- the
+ * height the page would have if the URL bar were hidden -- so a layout built
+ * on it puts its last row underneath the browser chrome, which is precisely
+ * the "the button is off the bottom of my phone" bug this work exists to fix,
+ * reintroduced by the fix. The vh line above it is the fallback for engines
+ * that do not know dvh, where being a little too tall beats being unstyled.
+ *
+ * env(safe-area-inset-*) for the notch and the home indicator: without it the
+ * bottom row of a fixed-height layout sits under the gesture bar on any recent
+ * iPhone, which is the same class of unreachable as being off-screen.
+ */
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font: var(--fs-0)/var(--lh-body) var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  block-size: 100vh;
+  block-size: 100dvh;
+  overflow: hidden;
 }
 
+/*
+ * auto / 1fr / auto: the heading and the footer take what they need, and the
+ * component takes the rest. minmax(0, 1fr) rather than 1fr because a grid
+ * track refuses to shrink below its content's min-content height otherwise --
+ * the single most common reason a "fixed height" layout keeps growing anyway.
+ */
 main {
-  max-width: 34rem;
+  max-inline-size: var(--col);
   margin: 0 auto;
-  padding: var(--sp-7) var(--sp-4) var(--sp-7);
+  padding:
+    calc(var(--sp-5) + env(safe-area-inset-top))
+    calc(var(--sp-4) + env(safe-area-inset-right))
+    calc(var(--sp-4) + env(safe-area-inset-bottom))
+    calc(var(--sp-4) + env(safe-area-inset-left));
+  block-size: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--sp-4);
 }
 
-header { margin-bottom: var(--sp-6); }
+header { min-inline-size: 0; }
 
 h1 {
   margin: 0;
@@ -107,9 +141,135 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
-qr-drop { display: block; }
+/*
+ * Which of the two orientation affordances is shown. This block must stay
+ * BELOW `.how`'s own rule above: both set `display` on the same selector at
+ * the same specificity, so source order decides, and written above it these
+ * rules lose silently and the page renders the strip and the button at once.
+ *
+ * The collapsed form -- button, no strip -- is the DEFAULT, and the strip is
+ * the enhancement for viewports with room to spare. That way round on purpose:
+ * a layout whose default assumes space and trims when cramped is how the
+ * transfer UI ended up below the fold to begin with.
+ *
+ * Room to spare means BOTH axes. Tall enough that ~90px of orientation copy is
+ * not the difference between seeing Accept and not, and wide enough that the
+ * column is not already cramped. The page had a width-only query before, which
+ * is exactly why a short laptop window -- wide, so it passed -- rendered the
+ * beam screen's Accept button 197px below the fold.
+ */
+#how-open { display: inline-flex; }
+.how { display: none; }
 
-footer { margin-top: var(--sp-5); }
+@media (min-height: 46rem) and (min-width: 26rem) {
+  #how-open { display: none; }
+  .how { display: flex; }
+}
+
+/*
+ * This rule used to be `qr-drop { display: block }`, which quietly beat the
+ * component's own `:host { display: flex }` and left the card overflowing its
+ * grid row by 300px with no clue why.
+ *
+ * A rule in the host page always wins over a `:host` rule for the same
+ * property -- specificity does not come into it; the page is simply the more
+ * authoritative side of the shadow boundary. That makes `display` on a custom
+ * element a property the page must either leave alone or set deliberately, and
+ * an undated `display: block` from before the component had a layout of its
+ * own is neither.
+ *
+ * It is not deleted, because the element must still be a block before its
+ * definition loads -- an unregistered custom element is inline, and an inline
+ * grid row collapses. min-block-size: 0 for the usual grid-item reason.
+ */
+qr-drop {
+  min-block-size: 0;
+}
+qr-drop:not(:defined) {
+  display: block;
+}
+
+footer { min-inline-size: 0; }
+
+/*
+ * The one button style the page chrome owns. Deliberately quieter than
+ * anything inside <qr-drop>: these open explanations, and an explanation must
+ * never compete with "Send a file" or with Accept. The component's own buttons
+ * are styled in its shadow root and inherit none of this.
+ */
+.chip {
+  font: inherit;
+  font-size: var(--fs--1);
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+  align-items: center;
+  gap: var(--sp-2);
+  text-align: start;
+  transition: color var(--dur-base), border-color var(--dur-base);
+}
+.chip:hover { color: var(--text); border-color: var(--line-strong); }
+.chip:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/*
+ * The page's dialogs. `max-block-size` plus a scrolling body is the whole
+ * point of moving this copy here: the disclosure list is long, and a dialog is
+ * the one box on a non-scrolling page that is allowed to scroll inside itself.
+ * At 200% zoom this is what keeps the words reachable instead of clipped.
+ *
+ * No z-index. showModal() promotes a <dialog> to the browser's top layer,
+ * which is above every stacking context on the page by definition -- that is
+ * the reason this is a real <dialog> and not a positioned div, along with the
+ * focus trap and Escape that would otherwise be hand-written.
+ */
+.sheet {
+  max-inline-size: min(var(--col), calc(100vw - var(--sp-6)));
+  max-block-size: min(80dvh, calc(100dvh - var(--sp-6)));
+  inline-size: 100%;
+  margin: auto;
+  padding: var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/*
+ * display goes on [open], never on .sheet itself.
+ *
+ * A closed <dialog> is hidden by exactly one thing: `display: none` in the UA
+ * stylesheet. Any `display` in an author rule beats it, so styling .sheet as
+ * a flex column silently makes both dialogs permanently visible, in flow, at
+ * the bottom of the page. That is not a subtle failure -- it added 4300px to a
+ * page whose entire premise is that it is exactly one viewport tall -- but it
+ * is an easy one to write and it looks correct in the stylesheet.
+ */
+.sheet[open] {
+  display: flex;
+}
+.sheet::backdrop { background: rgb(0 0 0 / 0.45); }
+.sheet h2 {
+  margin: 0;
+  font-size: var(--fs-1);
+  line-height: var(--lh-tight);
+}
+.sheet h2:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.sheet-body {
+  overflow-y: auto;
+  min-block-size: 0;
+}
+.sheet-body ul { padding-left: 1.1rem; color: var(--muted); font-size: var(--fs--1); margin: 0; }
+.sheet-body li { margin-bottom: var(--sp-2); }
+.sheet-body strong { color: var(--text); font-weight: 600; }
+.sheet-body .how { display: flex; margin-block-start: 0; }
+.sheet form { margin: 0; }
 footer summary {
   cursor: pointer;
   color: var(--muted);

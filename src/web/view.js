@@ -268,8 +268,23 @@ function screen(name, state, dispatch) {
     choose, send, receive, verify, transfer, done,
     'beam-send': beamSend, 'beam-receive': beamReceive,
   }
-  return h('section', { id: `screen-${name}`, class: 'card', hidden: state.screen !== name },
-    builders[name](state, dispatch))
+
+  // Every builder returns { body, actions } rather than one flat array, and
+  // the two halves land in different boxes: `.card-body` may give up space and
+  // scroll as a last resort, `.card-actions` never does. See the .card comment
+  // in styles.js for the bug that shape exists to make unspeakable -- in
+  // short, a button rendered after content can be pushed off a phone, and one
+  // of these buttons is the user activation showSaveFilePicker spends.
+  //
+  // The split is enforced here rather than left as a convention, so a new
+  // screen cannot accidentally opt out of it: there is nowhere else for a
+  // button to go.
+  const { body, actions } = builders[name](state, dispatch)
+
+  return h('section', { id: `screen-${name}`, class: 'card', hidden: state.screen !== name }, [
+    h('div', { class: 'card-body' }, body),
+    h('div', { class: 'card-actions' }, actions),
+  ])
 }
 
 /**
@@ -277,39 +292,47 @@ function screen(name, state, dispatch) {
  * @param {Dispatch} dispatch
  */
 function choose(state, dispatch) {
-  return [
-    h('div', { class: `dropzone${state.dragging ? ' is-dragging' : ''}` }, [
-      h('p', {}, 'Drop a file here, or choose one below.'),
-      h('div', { class: 'choices' }, [
-        h('button', { id: 'btn-send', class: 'btn primary', onclick: () => dispatch('send:pick') },
-          'Send a file'),
-        h('button', { id: 'btn-receive', class: 'btn', onclick: () => dispatch('receive:scan') },
-          'Receive a file'),
+  return {
+    body: [
+      // The dropzone keeps the prose and the drag target; the two buttons that
+      // used to sit inside it moved to the action bar. They read no differently
+      // -- they are still the first thing the eye lands on, because the bar is
+      // where every screen's primary action now is -- and the box goes back to
+      // being what its name says it is.
+      h('div', { class: `dropzone${state.dragging ? ' is-dragging' : ''}` }, [
+        h('p', {}, 'Drop a file here, or choose one below.'),
       ]),
-    ]),
-    // Shown only when this browser cannot stream a download to disk (see
-    // web/sink.js's canStreamToDisk) -- everyone else never sees this note.
-    state.capabilityNote ? h('p', { class: 'note' }, state.capabilityNote) : null,
+      // Shown only when this browser cannot stream a download to disk (see
+      // web/sink.js's canStreamToDisk) -- everyone else never sees this note.
+      state.capabilityNote ? h('p', { class: 'note' }, state.capabilityNote) : null,
 
-    // A deliberately quieter, third row rather than a third .choices button:
-    // the network path above is better in every measurable way when a
-    // network exists (encrypted, faster, no camera needed), so beam is an
-    // escape hatch for when there genuinely is no network, not an equal
-    // alternative. `.btn.ghost` and its own row keep it from competing for
-    // the eye with "Send a file" / "Receive a file" above.
-    h('div', { class: 'beam-entry' }, [
-      h('div', { class: 'choices secondary' }, [
-        h('button', { id: 'btn-beam', class: 'btn ghost', onclick: () => dispatch('beam:pick') },
-          'No network? Show it as a QR code'),
-        h('button', { id: 'btn-beam-receive', class: 'btn ghost', onclick: () => dispatch('beam:scan') },
-          'Scan a beamed file'),
+      // A deliberately quieter, third row rather than a third .choices button:
+      // the network path is better in every measurable way when a network
+      // exists (encrypted, faster, no camera needed), so beam is an escape
+      // hatch for when there genuinely is no network, not an equal
+      // alternative. `.btn.ghost` and its place below the fold-line of the
+      // action bar keep it from competing for the eye with "Send a file" /
+      // "Receive a file".
+      h('div', { class: 'beam-entry' }, [
+        h('div', { class: 'choices secondary' }, [
+          h('button', { id: 'btn-beam', class: 'btn ghost', onclick: () => dispatch('beam:pick') },
+            'No network? Show it as a QR code'),
+          h('button', { id: 'btn-beam-receive', class: 'btn ghost', onclick: () => dispatch('beam:scan') },
+            'Scan a beamed file'),
+        ]),
+        h('p', { class: 'note' },
+          'Beaming needs no network at all: the file is shown as an animated QR code and read back by a '
+          + 'camera, at about 6 kB/s. It is not encrypted, and the cap is smaller — 1 MiB after '
+          + 'compression, so most text and code but few photos.'),
       ]),
-      h('p', { class: 'note' },
-        'Beaming needs no network at all: the file is shown as an animated QR code and read back by a '
-        + 'camera, at about 6 kB/s. It is not encrypted, and the cap is smaller — 1 MiB after '
-        + 'compression, so most text and code but few photos.'),
-    ]),
-  ]
+    ],
+    actions: [
+      h('button', { id: 'btn-send', class: 'btn primary', onclick: () => dispatch('send:pick') },
+        'Send a file'),
+      h('button', { id: 'btn-receive', class: 'btn', onclick: () => dispatch('receive:scan') },
+        'Receive a file'),
+    ],
+  }
 }
 
 /**
@@ -317,7 +340,8 @@ function choose(state, dispatch) {
  * @param {Dispatch} dispatch
  */
 function send(state, dispatch) {
-  return [
+  return {
+    body: [
     h('h2', { tabindex: '-1' }, 'Scan this on the other device'),
     h('div', { id: 'qr', class: 'qr', key: 'qr', adopt: state.qrNode }),
 
@@ -355,8 +379,11 @@ function send(state, dispatch) {
       }, [h('div', { class: 'bar-fill' })])
       : null,
     h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
-  ]
+    ],
+    actions: [
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+    ],
+  }
 }
 
 /**
@@ -364,7 +391,8 @@ function send(state, dispatch) {
  * @param {Dispatch} dispatch
  */
 function receive(state, dispatch) {
-  return [
+  return {
+    body: [
     h('h2', { tabindex: '-1' }, "Scan the sender's code"),
 
     // Hidden entirely rather than shown black -- a <video> with no stream
@@ -424,8 +452,11 @@ function receive(state, dispatch) {
     ]),
 
     h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
-  ]
+    ],
+    actions: [
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+    ],
+  }
 }
 
 /**
@@ -435,7 +466,8 @@ function receive(state, dispatch) {
 function verify(state, dispatch) {
   const emoji = state.sas ? state.sas.split(' ') : []
 
-  return [
+  return {
+    body: [
     h('h2', { tabindex: '-1' }, 'Check both devices show the same symbols'),
 
     // The exact-string element the e2e suite and CLI interop depend on --
@@ -466,10 +498,18 @@ function verify(state, dispatch) {
     // Both placements are still above the gesture, which is the point.
     state.role === 'sender' ? pathBadge(state) : null,
 
-    h('div', { id: 'verify-status', 'aria-live': 'polite' }, verifyStatus(state, dispatch)),
-
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
-  ]
+    ],
+    actions: [
+      // #verify-status moves into the bar whole rather than having its buttons
+      // lifted out of it: e2e/transfer.e2e.mjs clicks
+      // `#verify-status button.primary`, and it is also this screen's
+      // aria-live region, so both the selector and the announcement depend on
+      // the element staying exactly what it is.
+      h('div', { id: 'verify-status', class: 'verify-actions', 'aria-live': 'polite' },
+        verifyStatus(state, dispatch)),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+    ],
+  }
 }
 
 /**
@@ -528,7 +568,8 @@ function transfer(state, dispatch) {
   const total = state.progress?.total ?? 0
   const pct = total > 0 ? Math.min(100, (moved / total) * 100) : 0
 
-  return [
+  return {
+    body: [
     h('h2', { tabindex: '-1' }, state.role === 'receiver' ? 'Receiving' : 'Sending'),
     state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
     pathBadge(state),
@@ -537,8 +578,11 @@ function transfer(state, dispatch) {
       'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(moved),
     }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]),
     h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
-  ]
+    ],
+    actions: [
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+    ],
+  }
 }
 
 /**
@@ -589,7 +633,8 @@ function restartLabel(state) {
 function done(state, dispatch) {
   const info = (state.outcome && OUTCOME_INFO[state.outcome]) || OUTCOME_INFO.failed
 
-  return [
+  return {
+    body: [
     h('h2', { tabindex: '-1' }, info.title),
     h('div', { class: `outcome ${info.variant}` }, [
       h('span', { class: 'glyph', 'aria-hidden': 'true' }, info.glyph),
@@ -613,8 +658,11 @@ function done(state, dispatch) {
       ]),
       h('p', { class: 'note' }, 'Both devices computed this independently from the file contents.'),
     ]) : null,
-    h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
-  ]
+    ],
+    actions: [
+      h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
+    ],
+  }
 }
 
 /**
@@ -676,7 +724,8 @@ function beamSend(state, dispatch) {
   const loops = state.beam?.loops ?? 0
   const eta = state.beam?.eta ?? 0
 
-  return [
+  return {
+    body: [
     h('h2', { tabindex: '-1' }, 'Show this to the other device'),
     h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
     state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
@@ -724,9 +773,11 @@ function beamSend(state, dispatch) {
       `Shown in full ${loops} time${loops === 1 ? '' : 's'}. One pass takes ${duration(eta)}, and a `
       + 'few passes are normal — the other device only needs to catch enough of the frames, not '
       + 'all of them. Nothing is sent back to this screen, so it cannot tell you when to stop.'),
-
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
-  ]
+    ],
+    actions: [
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+    ],
+  }
 }
 
 /**
@@ -738,89 +789,91 @@ function beamReceive(state, dispatch) {
   const blocks = state.beam?.blocks ?? 0
   const pct = blocks > 0 ? Math.min(100, (solved / blocks) * 100) : 0
 
-  return [
-    h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
-    h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
+  return {
+    body: [
+      h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
+      h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
 
-    // Unlike receive()'s scanner, there is no manual-entry fallback to fall
-    // back to here -- a beam code is thousands of frames, not one string a
-    // person could read aloud or paste. So a missing camera is said outright
-    // instead of the silent omission receive() uses (see its comment): there
-    // the fallback is right there below; here there genuinely is none.
-    state.cameraAvailable
-      ? h('div', { class: 'scanner-frame' }, [
-        h('video', { id: 'beam-scanner', key: 'beam-scanner', class: 'scanner', muted: true, playsinline: '' }),
-        h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
-      ])
-      : h('p', { class: 'note' }, NO_CAMERA_BEAM),
+      // Unlike receive()'s scanner, there is no manual-entry fallback to fall
+      // back to here -- a beam code is thousands of frames, not one string a
+      // person could read aloud or paste. So a missing camera is said outright
+      // instead of the silent omission receive() uses (see its comment): there
+      // the fallback is right there below; here there genuinely is none.
+      state.cameraAvailable
+        ? h('div', { class: 'scanner-frame' }, [
+          h('video', { id: 'beam-scanner', key: 'beam-scanner', class: 'scanner', muted: true, playsinline: '' }),
+          h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
+        ])
+        : h('p', { class: 'note' }, NO_CAMERA_BEAM),
 
-    state.offer ? [
-      h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`),
+      state.offer
+        ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`)
+        : null,
 
-      // Said BEFORE the click, not after, because both of these are things a
-      // person would have chosen differently had they known. Accepting opens a
-      // save dialog, and the browser creates that file the instant a location
-      // is picked -- minutes before there are any bytes to write into it. A
-      // transfer abandoned in between therefore leaves a real, zero-byte file
-      // sitting in Downloads, which is indistinguishable from a corrupted
-      // download and is exactly how the first tester read it. Nothing can
-      // delete it from here: the File System Access handle grants writing to
-      // that file and nothing else.
-      h('p', { class: 'note' },
-        'This saves a file straight away and fills it in at the end, so both screens have to stay '
-        + 'as they are until it finishes. Stopping early leaves an empty file you can delete.'),
-
-      h('p', { class: 'note' }, BEAM_KEEP_GOING),
-      // Accept is offered the instant the manifest decodes -- a second or two
-      // into pointing the camera -- rather than after the transfer finishes
-      // minutes later, because this click IS the user activation
-      // showSaveFilePicker needs, and by the time a beam transfer completes
-      // there is no activation left to spend. Same rule as the WebRTC path's
-      // verify screen; see web/beam.js's startBeamReceive doc comment for the
-      // beam-specific version of it.
-      h('button', {
-        class: 'btn primary', type: 'button', disabled: state.busy,
-        onclick: () => dispatch('offer:accept'),
-      }, 'Accept'),
-      h('button', {
-        class: 'btn ghost', type: 'button', disabled: state.busy,
-        onclick: () => dispatch('offer:decline'),
-      }, 'Decline'),
-    ] : [
       // Post-Accept. This is the state the first tester was in when they put
       // the sending laptop down, so the instruction is promoted to the loudest
       // thing on the screen rather than left as the quiet status line it was.
-      state.beam && state.beam.blocks > 0
+      !state.offer && state.beam && state.beam.blocks > 0
         ? h('p', { class: 'beam-instruction' }, BEAM_KEEP_GOING)
         : null,
-      h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
+      !state.offer
+        ? h('p', { class: 'status', 'aria-live': 'polite' }, state.status)
+        : null,
+
+      // Solving proceeds from the moment frames arrive, whether or not Accept
+      // has been clicked yet (core/beam.js absorbs blocks eagerly; only the
+      // final decompress-and-verify waits on the user's decision) -- so this
+      // can and does progress while the Accept/Decline buttons are still
+      // sitting there unanswered. `state.beam` is null until the first block
+      // arrives, which is what keeps this from claiming 0% before there is
+      // anything to report at all.
+      state.beam ? h('div', {
+        id: 'beam-progress', class: 'bar', role: 'progressbar',
+        'aria-valuemin': '0', 'aria-valuemax': String(blocks), 'aria-valuenow': String(solved),
+      }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]) : null,
+
+      // A bare bar answers "is it moving?" only if you stare at it. These are
+      // the two questions actually being asked -- how far, and how much longer
+      // do I have to hold this phone up -- and neither was answerable before.
+      // The remaining time is measured from the rate this camera is really
+      // achieving rather than from the sender's chosen fps, which this device
+      // has no way to learn; it stays absent for the first few seconds because
+      // an estimate extrapolated from two blocks reads as broken.
+      state.beam && blocks > 0
+        ? h('p', { class: 'status', 'aria-live': 'polite' },
+          `${Math.floor(pct)}% — ${solved} of ${blocks} pieces`
+          + (state.beam.eta ? `, ${duration(state.beam.eta)} left` : ''))
+        : null,
     ],
 
-    // Solving proceeds from the moment frames arrive, whether or not Accept
-    // has been clicked yet (core/beam.js absorbs blocks eagerly; only the
-    // final decompress-and-verify waits on the user's decision) -- so this
-    // can and does progress while the Accept/Decline buttons above are still
-    // sitting there unanswered. `state.beam` is null until the first block
-    // arrives, which is what keeps this from claiming 0% before there is
-    // anything to report at all.
-    state.beam ? h('div', {
-      id: 'beam-progress', class: 'bar', role: 'progressbar',
-      'aria-valuemin': '0', 'aria-valuemax': String(blocks), 'aria-valuenow': String(solved),
-    }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]) : null,
-
-    // A bare bar answers "is it moving?" only if you stare at it. These are
-    // the two questions actually being asked -- how far, and how much longer
-    // do I have to hold this phone up -- and neither was answerable before.
-    // The remaining time is measured from the rate this camera is really
-    // achieving rather than from the sender's chosen fps, which this device
-    // has no way to learn; it stays absent for the first few seconds because
-    // an estimate extrapolated from two blocks reads as broken.
-    state.beam && blocks > 0
-      ? h('p', { class: 'status', 'aria-live': 'polite' },
-        `${Math.floor(pct)}% — ${solved} of ${blocks} pieces`
-        + (state.beam.eta ? `, ${duration(state.beam.eta)} left` : ''))
-      : null,
-
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
-  ]
+    // Accept is offered the instant the manifest decodes -- a second or two
+    // into pointing the camera -- rather than after the transfer finishes
+    // minutes later, because this click IS the user activation
+    // showSaveFilePicker needs, and by the time a beam transfer completes
+    // there is no activation left to spend. Same rule as the WebRTC path's
+    // verify screen; see web/beam.js's startBeamReceive doc comment for the
+    // beam-specific version of it.
+    //
+    // Which is exactly why it is in the action bar. Rendered after the camera
+    // and two paragraphs of notes, this button sat 99px below the bottom of a
+    // phone screen, and the activation it exists to spend was never spent
+    // because nobody knew it was there. The notes it used to follow are now in
+    // the sheet that opens with it (see dialogContent), so the warning still
+    // arrives before the gesture -- in the same box as it, rather than above a
+    // button nobody could see.
+    actions: state.offer
+      ? [
+        h('button', {
+          class: 'btn primary', type: 'button', disabled: state.busy,
+          onclick: () => dispatch('offer:accept'),
+        }, 'Accept'),
+        h('button', {
+          class: 'btn ghost', type: 'button', disabled: state.busy,
+          onclick: () => dispatch('offer:decline'),
+        }, 'Decline'),
+      ]
+      : [
+        h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+      ],
+  }
 }

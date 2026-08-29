@@ -21,9 +21,42 @@
 import { tokensCSS } from './tokens.js'
 
 export const STYLES = `
+/*
+ * The component fills the box it is given, and does NOT claim the viewport.
+ *
+ * \`block-size: 100%\` rather than \`100dvh\`, which is the obvious thing to
+ * write and is wrong here: on the deployed site <qr-drop> is one row of a page
+ * grid that also holds a heading and a footer (site/index.html), so a
+ * component sized to the whole viewport would overflow it by exactly the
+ * height of that chrome -- which is the bug this layout exists to fix,
+ * reintroduced one level up. The page owns the viewport; the component owns
+ * its row. site/styles.css is where \`100dvh\` is allowed to appear.
+ *
+ * It also degrades correctly for the embedding case package.json's
+ * \`exports["./web"]\` exists to serve: \`height: 100%\` inside a parent of
+ * auto height resolves to auto, so a consumer who drops <qr-drop> into an
+ * ordinary flowing page gets a component the height of its content, exactly
+ * as before. Nothing about this requires the host page to cooperate.
+ *
+ * min-block-size: 0 because this is itself a grid item on that page, and a
+ * grid item refuses to shrink below its content without it -- the single most
+ * common reason a "fixed height" layout silently keeps growing.
+ *
+ * A flex column rather than a grid with named rows, which was tried first and
+ * does not survive contact with render(): the shadow root's children are the
+ * step rail, all eight screens, and the error banner, of which the rail and
+ * the banner are conditional and seven of the screens are \`hidden\`. The
+ * number of laid-out children is therefore 1, 2, or 3 depending on state, and
+ * a three-row template silently puts the card in the wrong row whenever the
+ * rail is absent -- which is every beam screen. Flex asks nothing about how
+ * many children there are.
+ */
 :host {
   all: initial;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
   font: var(--fs-0)/var(--lh-body) var(--font-sans);
   -webkit-font-smoothing: antialiased;
   color: var(--text);
@@ -76,15 +109,96 @@ ${tokensCSS(':host')}
 .step.is-done { color: var(--text); }
 .step.is-done::before { background: var(--ok); }
 
+/*
+ * The live screen. Exactly one .card is ever laid out -- screen() renders all
+ * eight and marks seven \`hidden\` -- so this is the component's flexible row,
+ * and it is split into a body that may give up space and an action bar that
+ * may not.
+ *
+ * That split is the whole fix. A beam receiver used to render its heading,
+ * warning, camera, filename and two paragraphs of notes above Accept, in one
+ * flat column, and on a phone Accept landed 99px past the bottom of the
+ * screen: the tester read a camera with nothing under it as a failed scan and
+ * put the phone down. Buttons are no longer laid out after content -- they are
+ * laid out in a row content cannot reach, so "below the fold" stops being a
+ * state this component can express.
+ */
 .card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-block-size: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-1);
   padding: var(--sp-6);
+  gap: var(--sp-4);
 }
 
-.card + .card { margin-top: var(--sp-5); }
+/*
+ * Restores what \`display: flex\` above just broke.
+ *
+ * screen() renders all eight screens and marks seven \`hidden\`, and \`hidden\`
+ * hides them by exactly one mechanism: \`[hidden] { display: none }\` in the UA
+ * stylesheet. Any author \`display\` on the same element wins on specificity, so
+ * the moment .card gained one, all eight screens laid themselves out in a
+ * column -- a 4300px page inside a component that had just been told to be
+ * exactly one viewport tall.
+ *
+ * This is the same edit that has to be made for \`<dialog>\` in
+ * site/styles.css, and for the same reason. Anywhere a rule sets \`display\` on
+ * something the platform hides with \`display: none\`, the hiding has to be
+ * said again.
+ */
+.card[hidden] { display: none; }
+
+/*
+ * overflow-y: auto is a safety valve, not the layout.
+ *
+ * At the three sizes scripts/check-layout.mjs walks, every screen is designed
+ * to fit without it -- long prose lives in dialogs and the camera gives up
+ * space. But a layout that only fits at sizes someone thought to test is the
+ * previous bug wearing a different hat, and the two cases nobody tests are a
+ * browser at 200% zoom and a phone held sideways. Clipping there would make
+ * content unreachable with no scrollbar and no hint, which is strictly worse
+ * than the overflow it replaces. So the body may scroll as a last resort; the
+ * page still may not, and the action bar below is outside this box either way.
+ */
+.card-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/*
+ * flex: none, so it keeps its height while .card-body above gives up whatever
+ * is needed. The separator is drawn only when the body can scroll away
+ * underneath it, which is what makes the bar read as pinned rather than as
+ * the end of the content.
+ */
+.card-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: center;
+  padding-block-start: var(--sp-4);
+  border-block-start: 1px solid var(--line);
+}
+
+/* The primary action leads and takes the room; the ghost escape hatch does
+ * not stretch to match it. Reusing .choices' flex basis so a button in the bar
+ * and a button in the body are visibly the same object. */
+.card-actions .btn { flex: 1 1 12rem; }
+.card-actions .btn.ghost { flex: 0 1 auto; }
+
+/* An action bar with nothing in it draws a rule across the card for no
+ * reason -- the choose screen has no cancel and no primary. */
+.card-actions:empty { display: none; }
 
 h2 {
   margin: 0 0 var(--sp-4);
@@ -271,17 +385,33 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
  * .scanner-frame is a plain positioned box; .viewfinder draws its four
  * corner brackets with box-shadow slivers rather than four extra elements,
  * so it can sit over the <video> without intercepting pointer events. */
+/*
+ * The camera is the one element allowed to give up space, and it is the reason
+ * everything else used to be pushed off the screen.
+ *
+ * \`width: 100%; aspect-ratio: 1\` with nothing capping it made this an
+ * unconditional 390px square on a 390px phone -- the tallest thing in the app,
+ * demanding its full height before any of the text or buttons under it were
+ * given a pixel. \`flex: 1 1 auto\` with \`min-block-size\` puts that the other
+ * way round: the frame takes the space the card has left after the copy and
+ * the action bar are served, down to a floor below which a viewfinder stops
+ * being usable to aim with. The square is now a preference, not a demand --
+ * \`object-fit: cover\` on the video means a shorter frame crops the picture
+ * rather than distorting it, which is what a camera viewfinder does anyway.
+ */
 .scanner-frame {
   position: relative;
-  width: 100%;
+  flex: 1 1 auto;
+  inline-size: 100%;
   aspect-ratio: 1;
+  min-block-size: 8rem;
+  max-block-size: 100%;
   margin-bottom: var(--sp-4);
 }
 
 .scanner {
   width: 100%;
   height: 100%;
-  aspect-ratio: 1;
   object-fit: cover;
   background: var(--scan-bg);
   border-radius: var(--r-sm);

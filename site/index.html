@@ -88,23 +88,42 @@
       then never again, and an <ol> because they genuinely are ordered -- the
       numbers come from a CSS counter (site/styles.css) rather than list
       markers so they can be styled as chips without a second element per
-      item. Kept to the true minimum: the security story already has a home
-      in the disclosure at the foot of the page, and repeating it up here
-      would push the buttons below the fold on a phone, which is the one
-      thing this row must not do.
+      item.
+
+      The comment here used to end by noting that repeating the security story
+      up here "would push the buttons below the fold on a phone, which is the
+      one thing this row must not do". That was the right instinct aimed at the
+      wrong target: this row, at its true minimum, still did exactly that. The
+      page is now a fixed-height grid (site/styles.css) and the row collapses
+      to the button below it when there is not room for both -- site/main.js
+      clones these same three <li>s into the dialog, so there is still only one
+      copy of the words.
     -->
     <ol class="how">
       <li>Pick a file on one device</li>
       <li>Scan the code with the other</li>
       <li>Check the words match</li>
     </ol>
+    <button type="button" class="chip" id="how-open" aria-haspopup="dialog">How it works</button>
   </header>
 
   <qr-drop></qr-drop>
 
   <footer>
-    <details>
-      <summary>What this does and does not protect</summary>
+    <!--
+      A <details> until the page became a fixed-height grid, which it cannot
+      survive: expanding in place adds several hundred pixels the layout has
+      nowhere to put, and the only ways to absorb that are scrolling the page
+      (which this design does not do) or clipping the list (which loses the
+      part people opened it to read). It is a dialog trigger instead, and
+      site/main.js moves the list below into the dialog at load -- so the words
+      still exist exactly once, in the markup, where they can be read with no
+      script running at all.
+    -->
+    <button type="button" class="chip" id="protect-open" aria-haspopup="dialog">
+      What this does and does not protect
+    </button>
+    <div id="protect-body" hidden>
       <ul>
         <li><strong>Files are encrypted end to end</strong> under a key derived from the
           QR code, on top of WebRTC's own encryption. Relays and TURN servers see
@@ -129,7 +148,7 @@
           general -- but here the fragment is exactly what stops it from leaving your
           device, the same guarantee the plain <code>qrdrop:</code> code has always had.</li>
       </ul>
-    </details>
+    </div>
 
     <!--
       target="_blank" is not a stylistic choice. A transfer in flight lives in
@@ -163,6 +182,25 @@
     </nav>
   </footer>
 </main>
+
+<!--
+  Page-level dialogs, distinct from the one inside <qr-drop>: these hold the
+  site's own orientation and disclosure copy, and the component must keep
+  working with none of this present (it is published standalone, see
+  package.json exports["./web"]). Both are filled by site/main.js from the
+  markup above rather than authored twice.
+-->
+<dialog id="how-dialog" class="sheet" aria-labelledby="how-title">
+  <h2 id="how-title" tabindex="-1">How it works</h2>
+  <div class="sheet-body"></div>
+  <form method="dialog"><button class="chip" type="submit">Close</button></form>
+</dialog>
+
+<dialog id="protect-dialog" class="sheet" aria-labelledby="protect-title">
+  <h2 id="protect-title" tabindex="-1">What this does and does not protect</h2>
+  <div class="sheet-body"></div>
+  <form method="dialog"><button class="chip" type="submit">Close</button></form>
+</dialog>
 
 <!-- script src is rewritten by scripts/build-site.mjs to the content-hashed bundle filename. -->
 <script type="module" src="__SCRIPT__"></script>

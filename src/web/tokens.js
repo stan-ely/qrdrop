@@ -39,6 +39,40 @@ ${selector} {
   --r-lg: 1rem;
   --r-full: 999px;
 
+  /* ---- layout ----
+   *
+   * The app occupies exactly the viewport and never scrolls the page; overflow
+   * lives inside dialogs. These are the two rows that bracket the scrollable
+   * middle, and they are tokens rather than literals because the grid
+   * definition, the dialog's max height, and the site's page grid all have to
+   * agree on them -- three places, which is two too many for a hand-kept
+   * number.
+   *
+   * --col is the reading column, matching the cap site/styles.css puts on
+   * main. It
+   * moved here when the site began sharing the viewport grid with the
+   * component: two files claiming a different idea of "the column" is the same
+   * drift this whole file exists to prevent.
+   */
+  --col: 34rem;
+  --bar-h: 4.5rem;
+  --head-h: 3rem;
+
+  /* ---- stacking ----
+   *
+   * A named ladder rather than integers scattered across rules. There was no
+   * z-index anywhere in this codebase before the dialog layer, which is the
+   * best possible moment to decide the order once: anything competing for the
+   * same plane is a bug in one of these two values, not a reason to type 9999.
+   *
+   * The dialog itself needs no token -- showModal() promotes it to the
+   * browser's top layer, which sits above every z-index on the page by
+   * definition. --z-dialog is here for the non-modal fallback path only.
+   */
+  --z-bar: 10;
+  --z-dialog: 20;
+  --z-toast: 30;
+
   /* ---- type ---- */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

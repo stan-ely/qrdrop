@@ -4,3 +4,10 @@ site/dist/
 .vite/
 *.local
 .DS_Store
+
+# scripts/check-layout.mjs writes a picture of every failing screen/viewport
+# combination here and clears the directory on each run. They are a debugging
+# aid for the run that produced them, not artefacts anything reads later --
+# unlike docs/screenshots/*.png, which the README embeds and which are
+# committed on purpose.
+docs/screenshots/layout/
