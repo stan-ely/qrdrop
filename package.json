@@ -32,15 +32,16 @@
   },
   "files": [
     "src",
-    "types"
+    "types",
+    "site/dist"
   ],
   "scripts": {
     "test": "node --test",
-    "prepublishOnly": "node --test",
+    "prepublishOnly": "node --test && node scripts/build-site.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "build": "node scripts/build-site.mjs",
     "start": "node scripts/build-site.mjs --serve",
-    "web": "node scripts/build-site.mjs --serve",
+    "web": "node scripts/build-site.mjs && node src/cli.js web",
     "cli": "node src/cli.js",
     "test:e2e": "npm run build && node e2e/transfer.e2e.mjs",
     "test:e2e:interop": "npm run build && node e2e/interop.e2e.mjs"

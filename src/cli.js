@@ -20,6 +20,7 @@
 
 import { parseArgs } from 'node:util'
 import { createInterface } from 'node:readline/promises'
+import { fileURLToPath } from 'node:url'
 import process from 'node:process'
 
 import {
@@ -29,7 +30,8 @@ import {
 import { encodeSecretURL } from './core/secret.js'
 import { bytes as formatBytes } from './core/format.js'
 import { relayCapMessage, relayCapDeclineMessage, PEER_DISCONNECTED } from './core/messages.js'
-import { createFileSink, fromPath, renderQRToTerminal, loadRTCPolyfill } from './node/index.js'
+import { createFileSink, fromPath, renderQRToTerminal, loadRTCPolyfill, serveStatic } from './node/index.js'
+import { openURL } from './node/open-url.js'
 import { styleFor } from './cli/style.js'
 
 /**
@@ -48,6 +50,13 @@ const OPTIONS = [
   ] },
   { flag: '--out <dir>', desc: [
     'Directory to save into (receive only; default: current directory)',
+  ] },
+  { flag: '--port <n>', desc: [
+    'Port for the local web UI (web only; default 4173, 0 picks',
+    'a free one)',
+  ] },
+  { flag: '--no-open', desc: [
+    `Don't open a browser; just print the URL (web only)`,
   ] },
   { flag: '--strategy <name>', desc: [
     'Pair over one signalling network only: nostr or torrent.',
@@ -100,11 +109,16 @@ const USAGE = `qrdrop -- send a file peer-to-peer, keyed by a QR code
 Usage:
   qrdrop send <file> [--no-qr] [--yes] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
   qrdrop receive [code] [--out <dir>] [--yes] [--strategy <name>] [--relay <url>]... [--debug]
+  qrdrop web [--port <n>] [--no-open]
   qrdrop --help
   qrdrop --version
 
 Options:
 ${formatOptions(OPTIONS)}
+
+"qrdrop web" serves this project's browser UI from the copy you installed, on
+http://localhost -- nothing is uploaded, and no other device can reach it. It is
+the way to run a transfer whose code you can read before trusting it with a file.
 
 A transfer that ends up going through a public TURN relay (rare -- only when a
 direct connection cannot be made) is capped at ${Math.round(RELAYED_MAX_BYTES / (1024 * 1024))} MB.
@@ -494,6 +508,62 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
 }
 
 /**
+ * `qrdrop web`: serve the built browser UI on localhost and, unless --no-open,
+ * point a browser at it.
+ *
+ * site/dist/ is the same bundle this project deploys, shipped in the npm
+ * tarball via package.json "files". Serving it is a file operation, not an
+ * import, so nothing here loads src/web/ into Node.
+ *
+ * This branch never returns. The awaited promise at the end has no resolve
+ * path, so main() stays parked and the module-scope `process.exit(code)` at
+ * the bottom of this file -- which would kill the server -- never runs. The
+ * server keeps the event loop alive until a signal; the SIGINT/SIGTERM
+ * handlers here turn Ctrl-C into a clean close() and a 0 exit. main()'s own
+ * rl.on('SIGINT') is not wired on this path, because readline is only set up
+ * after this call, which does not come back.
+ *
+ * @param {object} args
+ * @param {number} args.port
+ * @param {boolean} args.open
+ * @returns {Promise<never>}
+ */
+async function runWeb({ port, open }) {
+  const style = styleFor(process.stdout)
+  const distURL = new URL('../site/dist/', import.meta.url)
+
+  const { access } = await import('node:fs/promises')
+  await access(new URL('index.html', distURL)).catch(() => {
+    throw new Error(
+      'The web UI is not present in this install. It ships in published ' +
+      'releases; from a source checkout, run `npm run build` first.',
+    )
+  })
+
+  const { url, close } = await serveStatic({ root: fileURLToPath(distURL), port })
+
+  process.stdout.write(`\nqrdrop web UI: ${style.accent(url)}\n`)
+  process.stdout.write('Localhost only -- nothing is uploaded, and no other device can reach it.\n')
+  process.stdout.write('Press Ctrl-C to stop.\n')
+
+  if (open) {
+    const opened = await openURL(url)
+    if (!opened) process.stdout.write('Could not open a browser automatically; open the URL above yourself.\n')
+  }
+
+  for (const signal of /** @type {const} */ (['SIGINT', 'SIGTERM'])) {
+    process.on(signal, () => {
+      process.stdout.write('\nStopping.\n')
+      close().then(() => process.exit(0), () => process.exit(0))
+    })
+  }
+
+  // Deliberately never settles -- see the note above. The process ends only
+  // through a signal handler's process.exit().
+  return new Promise(() => {})
+}
+
+/**
  * A discriminated union spelled out explicitly rather than left to
  * inference: the `command` field is what every call site switches on, and
  * without an annotation TypeScript infers it as plain `string` (object
@@ -506,6 +576,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
  *   | { command: 'version' }
  *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, qrUrl: string | undefined, debug: boolean }
  *   | { command: 'receive', code: string | undefined, outDir: string, assumeYes: boolean, relays: readonly string[] | undefined, strategy: string | undefined, debug: boolean }
+ *   | { command: 'web', port: number, open: boolean, debug: boolean }
  * } ParsedArgs
  */
 
@@ -523,7 +594,7 @@ function parseCliArgs(argv) {
   if (command === '--version') {
     return { command: 'version' }
   }
-  if (command !== 'send' && command !== 'receive') {
+  if (command !== 'send' && command !== 'receive' && command !== 'web') {
     throw new UsageError(`Unknown command: ${command}\n\n${USAGE}`)
   }
 
@@ -538,6 +609,10 @@ function parseCliArgs(argv) {
       'no-qr': { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
       out: { type: 'string', default: '.' },
+      // web only. Same --no-<flag> story as no-qr above: parseArgs has no
+      // negation, so the off switch is its own boolean.
+      port: { type: 'string' },
+      'no-open': { type: 'boolean', default: false },
       relay: { type: 'string', multiple: true },
       strategy: { type: 'string' },
       // No default -- deliberately. A default here would be a hosted origin
@@ -553,6 +628,16 @@ function parseCliArgs(argv) {
   if (values.help) {
     process.stdout.write(USAGE)
     return { command: 'help' }
+  }
+
+  if (command === 'web') {
+    // Number(), not parseInt(): parseInt('4173x') is 4173, and a port typo
+    // that silently half-parses is worse than one that is rejected.
+    const port = values.port === undefined ? 4173 : Number(values.port)
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      throw new UsageError(`--port must be a whole number from 0 to 65535, got: ${values.port}\n\n${USAGE}`)
+    }
+    return { command, port, open: !values['no-open'], debug: values.debug }
   }
 
   if (command === 'send') {
@@ -580,6 +665,22 @@ function parseCliArgs(argv) {
   }
 }
 
+/**
+ * The failure report shared by the web branch and the send/receive branch of
+ * main(): a one-line message on stderr, or the full stack under --debug.
+ *
+ * @param {unknown} error
+ * @param {boolean} debug
+ */
+function reportError(error, debug) {
+  if (debug) {
+    console.error(error)
+    return
+  }
+  const style = styleFor(process.stderr)
+  process.stderr.write(`${style.bad('Error:')} ${error instanceof Error ? error.message : String(error)}\n`)
+}
+
 async function main() {
   let parsed
   try {
@@ -599,6 +700,17 @@ async function main() {
     const pkg = JSON.parse(await readFile(url, 'utf8'))
     process.stdout.write(`${pkg.version}\n`)
     return 0
+  }
+
+  // Before readline: `web` has no prompt, and its handler must not sit behind
+  // the interface's SIGINT wiring, which is meant for an open transfer.
+  if (parsed.command === 'web') {
+    try {
+      return await runWeb({ port: parsed.port, open: parsed.open })
+    } catch (error) {
+      reportError(error, parsed.debug)
+      return 1
+    }
   }
 
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -626,12 +738,7 @@ async function main() {
       relays: parsed.relays, strategy: parsed.strategy, prompter,
     })
   } catch (error) {
-    if (parsed.debug) {
-      console.error(error)
-    } else {
-      const style = styleFor(process.stderr)
-      process.stderr.write(`${style.bad('Error:')} ${error instanceof Error ? error.message : String(error)}\n`)
-    }
+    reportError(error, parsed.debug)
     return 1
   } finally {
     rl.close()
