@@ -57,6 +57,37 @@
           device, the same guarantee the plain <code>qrdrop:</code> code has always had.</li>
       </ul>
     </details>
+
+    <!--
+      target="_blank" is not a stylistic choice. A transfer in flight lives in
+      this document: a WebRTC connection, a key that exists nowhere else, and a
+      partially written file. Following one of these links in the same tab tears
+      all of that down silently, with no way back. These three links are the
+      least important thing on the page, so they must not be able to destroy the
+      most important thing on it.
+
+      rel="noreferrer" because site/_headers sets Referrer-Policy: no-referrer
+      and GitHub Pages ignores _headers entirely (see .github/workflows/pages.yml),
+      so on the live deploy that header simply is not there. The fragment -- the
+      part carrying the key -- is never sent as a referrer by any browser, so
+      nothing secret leaks either way; this just keeps the deployed page honest
+      about the posture the rest of the site asks for. noopener is implied by
+      noreferrer, and stated anyway rather than relying on a reader knowing that.
+    -->
+    <nav class="meta" aria-label="About qrdrop">
+      <a href="https://github.com/stan-ely/qrdrop" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Source
+      </a>
+      <a href="https://github.com/stan-ely/qrdrop/issues" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        Feedback
+      </a>
+      <a class="who" href="https://stan-ely.com" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Bevan Stanely
+      </a>
+    </nav>
   </footer>
 </main>
 

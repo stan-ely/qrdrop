@@ -60,6 +60,110 @@ footer ul { padding-left: 1.1rem; color: var(--muted); font-size: var(--fs--1); 
 footer li { margin-bottom: var(--sp-2); }
 footer strong { color: var(--text); font-weight: 600; }
 
+/*
+ * The three links at the very bottom -- source, feedback, author. Scoped to
+ * .meta rather than styled as a bare `a { }` rule, because the security
+ * disclosure above is prose that may one day want links of its own, and those
+ * should read as links inside a paragraph, not as another row of chrome.
+ *
+ * Resting colour is --muted, not --accent: this row is the least important
+ * thing on a page whose whole purpose is the transfer above it, and --muted is
+ * measured (see tokens.js) to clear 4.5:1 on --bg in both themes, so quiet
+ * here does not mean unreadable. --accent, a raised pill, and a 1px lift all
+ * arrive on hover, borrowed from .btn in src/web/styles.js so that a link in
+ * the page and a button in the component answer a pointer the same way.
+ *
+ * The links are pills rather than underlined text because the underline was
+ * the only thing distinguishing them and it crashed through the descenders at
+ * --fs--1. .meta is pulled out by one --sp-2 (and the rule below pushed back
+ * in by the same amount) so that the pills' padding does not indent the row
+ * relative to the column of text above it -- the pill is a hover affordance,
+ * not a change to where the page's left edge is.
+ */
+.meta {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+  margin: var(--sp-5) calc(var(--sp-2) * -1) 0;
+  padding-top: var(--sp-4);
+  font-size: var(--fs--1);
+}
+
+/* A hairline that starts at the text column's left edge and dissolves before
+ * it reaches the right. A full-width `border-top` drew a hard line under a
+ * page that has no other hard lines in the light DOM, and read as the start of
+ * a second section rather than the quiet end of this one. */
+.meta::before {
+  content: '';
+  position: absolute;
+  inset: 0 var(--sp-2) auto;
+  height: 1px;
+  background: linear-gradient(to right, var(--line-strong), var(--line) 45%, transparent);
+}
+
+.meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-full);
+  color: var(--muted);
+  text-decoration: none;
+  transition: color var(--dur-base), background var(--dur-base), transform var(--dur-fast);
+}
+.meta a:hover { color: var(--accent); background: var(--surface-raised); transform: translateY(-1px); }
+.meta a:active { transform: translateY(0); }
+.meta a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Who made this, set apart from what it is -- the two project links are one
+ * thought and the byline is another, and a gap says so without a separator
+ * character. Dropped at the narrow breakpoint, where the row wraps and an
+ * auto margin would strand the name alone on its own line. */
+.meta .who { margin-left: auto; }
+
+/* aria-hidden in the markup: every label already says what the link is, so
+ * the icon is decoration and a screen reader announcing it would be reading
+ * the same word twice. Sized in em so it tracks --fs--1, and drawn in
+ * currentColor so the hover and focus rules above only ever have to name one
+ * colour. */
+.meta svg {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.7;
+  transition: opacity var(--dur-base);
+}
+.meta a:hover svg { opacity: 1; }
+
+/* The disclosure above shares the row's hover and focus language, so the two
+ * halves of the footer read as one thing rather than as a styled row bolted
+ * under an unstyled summary. */
+footer summary { transition: color var(--dur-base); }
+footer summary:hover { color: var(--text); }
+footer summary:focus-visible {
+  outline: none;
+  border-radius: var(--r-sm);
+  box-shadow: var(--focus-ring);
+}
+
 @media (max-width: 30rem) {
   main { padding: var(--sp-5) var(--sp-3) var(--sp-6); }
+  /* The row has wrapped by now, so pushing the byline right would leave it
+   * alone on a second line with a hand-width of empty space beside it. */
+  .meta .who { margin-left: 0; }
+}
+
+/* The same bargain src/web/styles.js strikes for the component: someone who
+ * has asked the OS to reduce motion still gets every state change, told in
+ * colour, with nothing moving to tell it. */
+@media (prefers-reduced-motion: reduce) {
+  .meta a, .meta svg, footer summary { transition-duration: 0s; }
+  .meta a:hover { transform: none; }
 }
