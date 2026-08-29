@@ -175,6 +175,21 @@ export const FIXTURES = [
     },
   },
   {
+    // The toast, over the screen it most often appears on. It is position:
+    // fixed so that the component's overflow-hidden boxes cannot clip it, and
+    // that is precisely the kind of claim worth having a picture of.
+    name: 'toast',
+    screen: 'verify',
+    state: {
+      screen: 'verify', role: 'sender',
+      sas: SAS.map(e => e[0]).join(' '),
+      sasWords: SAS.map(e => e[1]),
+      file: PDF,
+      path: 'local',
+      toast: 'Local network',
+    },
+  },
+  {
     // An error sheet over a live screen. Errors used to render as a banner at
     // the very bottom of the card, which on a page that no longer scrolls is
     // the one place a message cannot be read from.

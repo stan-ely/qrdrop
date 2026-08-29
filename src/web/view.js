@@ -94,6 +94,10 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   save destination coming back -- see element.js's onOfferAccept handlers
  * @property {Element | null} dialogNode the adopted <dialog> element.js owns.
  *   Its contents are patched separately -- see dialogContent below.
+ * @property {string | null} toast a transient announcement, cleared on a timer
+ *   by element.js. For things that HAPPENED rather than things that are true:
+ *   a state a screen can go on describing belongs in `status`, which is always
+ *   on screen, not in something that disappears.
  * @property {'beam-offer' | 'error' | null} modal which sheet is open, if any.
  *   The sheet is the only box on a non-scrolling page allowed to scroll
  *   inside itself, so it is where long copy and anything unplanned goes.
@@ -243,6 +247,19 @@ export function render(state, dispatch) {
     // patched separately, against its own prev-tree. Two patch roots, one
     // owner each.
     h('div', { class: 'dialog-host', key: 'dialog-host', adopt: state.dialogNode }),
+
+    // A change the user did not cause should still be a change the user
+    // notices. The step rail and the status line both describe what is true
+    // now, and neither draws the eye when what is true changes -- a peer
+    // arriving or the route turning out to be relayed used to alter a word in
+    // a paragraph and nothing else. This says it happened, once, and goes.
+    //
+    // role="status" rather than "alert": these are informational, and an alert
+    // interrupts a screen reader mid-sentence, which is the wrong weight for
+    // news that the connection is direct. Real failures go to the error sheet.
+    state.toast
+      ? h('div', { class: 'toast', role: 'status', key: 'toast' }, state.toast)
+      : null,
   ].filter(Boolean))
 }
 

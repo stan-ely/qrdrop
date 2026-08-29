@@ -281,6 +281,48 @@ ${tokensCSS(':host')}
 .sheet-actions .btn { flex: 1 1 10rem; }
 .sheet-actions .btn.ghost { flex: 0 1 auto; }
 
+/*
+ * The toast: one transient line, for a change the user did not cause.
+ *
+ * position: absolute against :host, NOT fixed against the viewport. Fixed was
+ * the first attempt and is wrong on the deployed site: the viewport's bottom
+ * edge is the page's, not the component's, so the toast landed on top of the
+ * site footer's links. Absolute anchors it to the component, which is the
+ * thing it is reporting about. Nothing clips it -- :host sets no overflow, and
+ * only .card-body does, which is not an ancestor of this.
+ *
+ * Sitting just above the card's bottom edge puts it directly over the action
+ * bar, which is where the eye already is.
+ *
+ * pointer-events: none because it must never intercept a tap meant for the
+ * button underneath it. It says something; it is not something to use.
+ */
+:host { position: relative; }
+
+.toast {
+  position: absolute;
+  inset-block-end: var(--sp-4);
+  inset-inline: var(--sp-4);
+  margin-inline: auto;
+  inline-size: fit-content;
+  max-inline-size: calc(100% - var(--sp-6));
+  z-index: var(--z-toast);
+  pointer-events: none;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full);
+  background: var(--text);
+  color: var(--surface);
+  font-size: var(--fs--1);
+  font-weight: 500;
+  box-shadow: var(--shadow-1);
+  animation: toast-in var(--dur-slow) ease-out;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(var(--sp-3)); }
+  to { opacity: 1; transform: none; }
+}
+
 h2 {
   margin: 0 0 var(--sp-4);
   font-size: var(--fs-1);
@@ -398,14 +440,33 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 }
 
 /* Always light, whatever the page theme: scanners read dark-on-light best. */
+/*
+ * Sized from its HEIGHT, with aspect-ratio deriving the width -- the reverse
+ * of the obvious inline-size cap this used to have.
+ *
+ * A QR is square, so whichever axis is scarcer has to be the one that governs.
+ * On a phone that is the height: a 16rem-wide code demands 16rem of vertical
+ * space unconditionally, and on the send screen that was 322px of a card that
+ * did not have it, pushing the rest of the screen into a scroll. Driving the
+ * block size instead lets the code shrink when the card is short and sit at
+ * its full size when it is not, with the width following rather than leading.
+ *
+ * The floor matters: below roughly 7rem the modules of a version-6 code get
+ * small enough that a phone camera at arm length stops locking on, and a QR
+ * nobody can scan is not a smaller QR, it is a broken screen.
+ */
 .qr {
   background: var(--qr-quiet-zone);
   border-radius: var(--r-sm);
   padding: var(--sp-3);
-  width: min(16rem, 100%);
+  flex: 0 1 auto;
+  block-size: min(16rem, 100%);
+  min-block-size: 7rem;
+  aspect-ratio: 1;
+  max-inline-size: 100%;
   margin: 0 auto var(--sp-5);
 }
-.qr svg { display: block; width: 100%; height: auto; }
+.qr svg { display: block; inline-size: 100%; block-size: 100%; }
 
 /* Same "always light" reasoning as .qr above, and the same quiet-zone padding
  * -- a beam frame is read by the exact same class of scanner as the pairing
@@ -414,7 +475,11 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   background: var(--qr-quiet-zone);
   border-radius: var(--r-sm);
   padding: var(--sp-3);
-  width: min(16rem, 100%);
+  flex: 0 1 auto;
+  block-size: min(16rem, 100%);
+  min-block-size: 7rem;
+  aspect-ratio: 1;
+  max-inline-size: 100%;
   margin: 0 auto var(--sp-4);
 }
 
@@ -425,8 +490,8 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
  * an un-pixelated beam looks fine to a person and is unreadable to a camera. */
 .beam-canvas {
   display: block;
-  width: 100%;
-  height: auto;
+  inline-size: 100%;
+  block-size: 100%;
   image-rendering: pixelated;
 }
 
@@ -732,7 +797,31 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
   .card-actions { padding-block-start: var(--sp-3); }
   .steps { margin-bottom: var(--sp-3); }
   .outcome { padding: var(--sp-3); }
-  .qr, .beam-stage { inline-size: min(12rem, 100%); }
+  .qr, .beam-stage { block-size: min(12rem, 100%); }
+}
+
+/*
+ * The SAS tiles on a small phone, which is the one screen where trimming
+ * padding was not enough.
+ *
+ * Four tiles at their full size, a two-line heading and the "if these differ"
+ * warning together overflow a 390x844 viewport, and the warning is the half
+ * that was being cut -- the sentence that tells a person what the screen is
+ * FOR. Shrinking the tiles is the right trade: the emoji is decoration and the
+ * word underneath is the content (see view.js), so the tile can lose a few
+ * millimetres without losing anything a person reads aloud.
+ */
+@media (max-width: 26rem) {
+  .sas-tile { padding: var(--sp-2); }
+  .sas-emoji { font-size: var(--fs-1); }
+  h2 { font-size: var(--fs-0); }
+
+  /* The path badge keeps its label and loses its explanatory sentence. On this
+   * screen that sentence is the third time the same fact is stated -- the
+   * toast announces the route, the badge names it, and this explains it -- and
+   * it was costing 40px that the "if these differ" warning needed. The badge
+   * itself stays: losing the fact would be a different and worse trade. */
+  .path-info .note { display: none; }
 }
 
 /* Absent from the pre-restyle stylesheet entirely: every transition and the

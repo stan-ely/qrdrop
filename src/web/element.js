@@ -43,7 +43,7 @@ import { openRoom, RELAYED_MAX_BYTES, combinePaths } from '../transport/room.js'
 import { createControlStream } from '../core/control.js'
 import { createReceiver, sendPathVerdict } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
-import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED } from '../core/messages.js'
+import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED, pathDescription } from '../core/messages.js'
 import { bytes } from '../core/format.js'
 import { createSink, canStreamToDisk } from './sink.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
@@ -200,6 +200,9 @@ export class QRDropElement extends HTMLElement {
     /** @type {number | undefined} */
     this._copyTimer = undefined
 
+    /** @type {number | undefined} Clears the transient toast; see _toast. */
+    this._toastTimer = undefined
+
     /**
      * The running beam player, kept only so the fps control can reach it.
      *
@@ -268,7 +271,7 @@ export class QRDropElement extends HTMLElement {
     const publish = path => {
       this._myPath = path
       if (this._sessionEnded) return
-      this._setState({ path: combinePaths(path, this._peerPath ?? 'unknown') })
+      this._announcePath(combinePaths(path, this._peerPath ?? 'unknown'))
       // No control stream, no send. This used to fall back to `() => 0`,
       // which is not a harmless default: index 0 is the manifest's, and two
       // control frames sharing an index under one key is AES-GCM nonce reuse
@@ -309,7 +312,7 @@ export class QRDropElement extends HTMLElement {
   _mergePeerPath(path) {
     this._peerPath = path
     if (this._sessionEnded) return
-    this._setState({ path: combinePaths(this._myPath ?? 'unknown', path) })
+    this._announcePath(combinePaths(this._myPath ?? 'unknown', path))
   }
 
   /**
@@ -357,6 +360,7 @@ export class QRDropElement extends HTMLElement {
       beamNode: /** @type {Element | null} */ (null),
       dialogNode: /** @type {Element | null} */ (this._dialogNode),
       modal: /** @type {'beam-offer' | 'error' | null} */ (null),
+      toast: /** @type {string | null} */ (null),
       beam: /** @type {import('./view.js').State['beam']} */ (null),
     }
   }
@@ -482,6 +486,7 @@ export class QRDropElement extends HTMLElement {
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
     clearTimeout(this._copyTimer)
+    clearTimeout(this._toastTimer)
   }
 
   /**
@@ -585,6 +590,50 @@ export class QRDropElement extends HTMLElement {
     if (heading instanceof HTMLElement) heading.focus()
   }
 
+  /**
+   * Set the network path, and say so out loud the first time it settles.
+   *
+   * The badge this feeds arrives a beat after the verify screen has already
+   * been read -- it is the one thing on that screen that appears on its own,
+   * with no gesture behind it, quietly inserting itself above the SAS tiles.
+   * It is also the most security-relevant sentence in the app: "Local network"
+   * and "Relayed" are materially different promises about where the bytes go,
+   * and a user who never noticed the badge change has not been told.
+   *
+   * Once per settled value, not once per call. Both sides' verdicts arrive
+   * independently (see _mergePeerPath) so this runs twice for one pairing, and
+   * combinePaths can also sharpen 'unknown' into a real answer a moment later
+   * -- announcing every call would toast the same fact two or three times.
+   *
+   * @param {NetworkPath} path
+   */
+  _announcePath(path) {
+    const changed = path !== this._state.path
+    this._setState({ path })
+    if (changed && path !== 'unknown') this._toast(pathDescription(path).label)
+  }
+
+  /**
+   * Announce something that just happened, briefly.
+   *
+   * Deliberately narrow. A toast for every state change is a UI that flashes
+   * constantly and is therefore ignored, which is a worse outcome than the
+   * silence it replaced -- these fire for changes the user did not cause and
+   * could not otherwise notice. Anything the screen can go on describing
+   * belongs in `status`; anything that went wrong belongs in the error sheet,
+   * which does not disappear on a timer.
+   *
+   * @param {string} message
+   */
+  _toast(message) {
+    clearTimeout(this._toastTimer)
+    this._setState({ toast: message })
+    // Long enough to read a short sentence twice. Cleared through _setState
+    // rather than by touching the DOM, so a re-render in between cannot
+    // resurrect a toast that has already expired.
+    this._toastTimer = setTimeout(() => this._setState({ toast: null }), 4000)
+  }
+
   /** @param {unknown} error */
   _fail(error) {
     console.error(error)
@@ -641,6 +690,7 @@ export class QRDropElement extends HTMLElement {
     this._peerPath = null
     this._nextControlIndex = null
     clearTimeout(this._copyTimer)
+    clearTimeout(this._toastTimer)
     this._setState({
       screen: 'choose', role: null, status: '', code: '', qrNode: null, qrIsLink: false,
       sas: '', sasWords: [], offer: null, file: null, progress: null,
@@ -666,6 +716,7 @@ export class QRDropElement extends HTMLElement {
     if (!text) return
     const ok = await copyText(text)
     clearTimeout(this._copyTimer)
+    clearTimeout(this._toastTimer)
     // A failed copy gets a state of its own rather than the early return it
     // used to get -- see view.js's copyLabel for why silence was the wrong
     // answer. It reverts on the same timer as the success case.
