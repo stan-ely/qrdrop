@@ -15,7 +15,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { classifyPath, isPrivateAddress, addressForm, addressShape, openRoom } from '../src/transport/room.js'
+import {
+  classifyPath, isPrivateAddress, addressForm, addressShape, combinePaths, openRoom,
+} from '../src/transport/room.js'
+import { createEphemeralKeypair, exportPublicKey, establishSession } from '../src/core/session.js'
+import { createControlStream } from '../src/core/control.js'
+import { createReceiver, sendPathVerdict } from '../src/core/receiver.js'
 import { pathDescription, meteredWarning, METERED_WARN_BYTES } from '../src/core/messages.js'
 import { generateSecret, deriveTopic, derivePassword } from '../src/core/secret.js'
 import { fakeNetwork } from './helpers/fake-network.mjs'
@@ -324,4 +329,69 @@ test('classifyPath: carrier-grade NAT counts as crossing the internet', async ()
     ['sel', { state: 'succeeded', nominated: true, selected: true, localCandidateId: 'L', remoteCandidateId: 'R' }],
   ], { L: { type: 'host', address: '192.168.1.5' }, R: { type: 'prflx', address: '100.71.3.9' } })
   assert.equal(await classifyPath(pc), 'direct')
+})
+
+test('combinePaths: evidence beats absence, and cost beats convenience', () => {
+  // Absence of evidence is not evidence. One peer answering 'unknown' -- the
+  // normal outcome when Firefox withholds a peer-reflexive address -- must not
+  // erase what the other peer could actually see.
+  assert.equal(combinePaths('local', 'unknown'), 'local')
+  assert.equal(combinePaths('unknown', 'local'), 'local')
+  assert.equal(combinePaths('direct', 'unknown'), 'direct')
+
+  // A genuine conflict resolves the expensive way. Being wrongly warned about
+  // data cost is an annoyance; being wrongly told a metered transfer is free
+  // is a bill, and this asymmetry is why the ordering is not symmetric.
+  assert.equal(combinePaths('local', 'direct'), 'direct')
+  assert.equal(combinePaths('direct', 'local'), 'direct')
+
+  // Relay outranks everything: it is the only one carrying a size cap.
+  assert.equal(combinePaths('relay', 'local'), 'relay')
+  assert.equal(combinePaths('local', 'relay'), 'relay')
+  assert.equal(combinePaths('relay', 'direct'), 'relay')
+
+  assert.equal(combinePaths('local', 'local'), 'local')
+  assert.equal(combinePaths('unknown', 'unknown'), 'unknown')
+})
+
+test('a path verdict crosses the wire sealed, and reaches the peer', async () => {
+  // The exchange end to end over the real framing, because the risk in adding
+  // a control message is not the message: it is the counted nonce stream it
+  // shares with the manifest and the replies. Sealed with the sender's key and
+  // opened with the receiver's, at the right index, or nothing arrives.
+  const secret = generateSecret()
+  const [hk, gk] = await Promise.all([createEphemeralKeypair(), createEphemeralKeypair()])
+  const [host, guest] = await Promise.all([
+    establishSession({ keypair: hk, peerPublicRaw: await exportPublicKey(gk), secret, role: 'host' }),
+    establishSession({ keypair: gk, peerPublicRaw: await exportPublicKey(hk), secret, role: 'guest' }),
+  ])
+
+  /** @type {NetworkPath[]} */
+  const received = []
+  let guestCtl = 0
+  /** @type {any} */
+  const guestCh = { bufferedAmount: 0, send: async () => {}, onbufferedamountlow: null }
+  const guestRx = createReceiver({
+    channel: guestCh,
+    sendKey: guest.sendKey,
+    recvKey: guest.recvKey,
+    control: createControlStream(),
+    nextControlIndex: () => guestCtl++,
+    onOffer: () => {},
+    onPeerPath: path => received.push(path),
+    createSink: async () => { throw new Error('no file expected') },
+  })
+
+  let hostCtl = 0
+  /** @type {any} */
+  const hostCh = {
+    bufferedAmount: 0, onbufferedamountlow: null,
+    send: (/** @type {Bytes} */ bytes) => guestRx.handleFrame(bytes),
+  }
+
+  await sendPathVerdict({
+    channel: hostCh, key: host.sendKey, nextControlIndex: () => hostCtl++, path: 'local',
+  })
+
+  assert.deepEqual(received, ['local'])
 })

@@ -31,6 +31,9 @@ const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
  * @param {(p: ReceiveProgress) => void} [args.onProgress]
  * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
  * @param {(error: unknown) => void} [args.onError]
+ * @param {(path: NetworkPath) => void} [args.onPeerPath] The peer's own view of
+ *   the network route. Advisory: nothing waits for it, and a peer that never
+ *   sends one is not an error.
  * @param {(manifest: Manifest) => Promise<Sink>} args.createSink Where received
  *   bytes land. Required, and deliberately not defaulted: this module is the
  *   runtime-agnostic core, and a default would have to name either the browser
@@ -41,7 +44,7 @@ const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
  */
 export function createReceiver({
   channel, sendKey, recvKey, control, nextControlIndex,
-  onOffer, onProgress, onFileDone, onError, createSink,
+  onOffer, onProgress, onFileDone, onError, onPeerPath, createSink,
 }) {
   let controlIn = 0
 
@@ -177,6 +180,14 @@ export function createReceiver({
         const msg = await openControl(recvKey, bytes, controlIn)
         controlIn += 1
 
+        // Handled before the reply queue and entirely outside the transfer
+        // state machine: 'path' is one peer telling the other what kind of
+        // network route it observed, it is not part of any request/response
+        // pair, and nothing ever waits for it. Pushing it into the control
+        // queue would leave sendFile's control.next() holding a message it
+        // did not ask for.
+        if (msg.t === 'path') return void onPeerPath?.(msg.path)
+
         if (SENDER_REPLIES.includes(msg.t)) return void control.push(msg)
         if (msg.t === 'manifest') return void await handleManifest(msg)
         if (msg.t === 'complete') return void await handleComplete(msg)
@@ -221,4 +232,29 @@ export function createReceiver({
   }
 
   return { handleFrame, get busy() { return active !== null } }
+}
+
+/**
+ * Tells the peer which network route this side observed.
+ *
+ * Sealed and index-counted like every other control message rather than sent
+ * beside them in the clear. The verdict is not a secret -- a TURN operator
+ * carrying the packets can already see the path -- but an unauthenticated one
+ * could be forged, and a forged 'local' suppresses the warning that a transfer
+ * is about to cost someone money. Cheap to authenticate, so authenticate it.
+ *
+ * Fire-and-forget by contract: the peer may never send one back, may be an
+ * older build that has never heard of this message, or may answer after the
+ * transfer is over. Nothing waits on it, and a failure here must never fail a
+ * transfer -- callers swallow the rejection.
+ *
+ * @param {object} args
+ * @param {Channel} args.channel
+ * @param {CryptoKey} args.key This side's send key.
+ * @param {() => number} args.nextControlIndex
+ * @param {NetworkPath} args.path
+ * @returns {Promise<void>}
+ */
+export async function sendPathVerdict({ channel, key, nextControlIndex, path }) {
+  await channel.send(await sealControl(key, nextControlIndex(), { t: 'path', path }))
 }

@@ -51,7 +51,7 @@ export { createControlStream } from './core/control.js'
 export { EMPTY_CHAIN, chainHash, hex, equalHex } from './core/digest.js'
 export { fromBytes } from './core/source.js'
 export { sendFile } from './core/sender.js'
-export { createReceiver } from './core/receiver.js'
+export { createReceiver, sendPathVerdict } from './core/receiver.js'
 
 // Pairing. STRATEGIES / SIGNALING_URLS / ICE_SERVERS are exported so a caller
 // can pass a modified list back in -- and so scripts/build-site.mjs can
@@ -66,5 +66,9 @@ export {
   SIGNALING_URLS,
   ICE_SERVERS,
   RELAYED_MAX_BYTES,
+  // Both peers classify their own end and exchange verdicts; combinePaths is
+  // how two partial views become the one answer each of them shows.
+  classifyPath,
+  combinePaths,
 } from './transport/room.js'
 export { createChannel } from './transport/channel.js'

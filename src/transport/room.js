@@ -256,6 +256,38 @@ export function isPrivateAddress(address) {
 }
 
 /**
+ * One verdict from two, when both peers have classified their own end.
+ *
+ * Needed because the two peers genuinely see different evidence and neither is
+ * wrong. Firefox withholds the address of a peer-reflexive candidate, so the
+ * side that failed to resolve the other's mDNS name can only answer 'unknown',
+ * while the side that resolved it answers 'local' about the same connection.
+ * Left alone, one person is told where their bytes went and the person beside
+ * them is told nothing.
+ *
+ * Precedence is relay > direct > local > unknown, which is two rules at once.
+ *
+ * Evidence beats absence: 'local' and 'unknown' resolves to 'local', because
+ * 'unknown' is one peer having nothing to say, not a claim that contradicts
+ * the other. And where the two genuinely conflict, the more expensive reading
+ * wins: 'local' and 'direct' resolves to 'direct'. Being wrongly warned about
+ * data cost is an annoyance; being wrongly told a metered transfer is free is
+ * a bill. The asymmetry of those two mistakes is the whole reason this ordering
+ * is not symmetric.
+ *
+ * @param {NetworkPath} mine
+ * @param {NetworkPath} theirs
+ * @returns {NetworkPath}
+ */
+export function combinePaths(mine, theirs) {
+  const both = [mine, theirs]
+  if (both.includes('relay')) return 'relay'
+  if (both.includes('direct')) return 'direct'
+  if (both.includes('local')) return 'local'
+  return 'unknown'
+}
+
+/**
  * The candidate pair the connection actually settled on, or null if it has not
  * settled yet.
  *

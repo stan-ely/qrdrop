@@ -27,6 +27,7 @@ import process from 'node:process'
 import {
   generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword,
   openRoom, STRATEGIES, RELAYED_MAX_BYTES, createControlStream, createReceiver, sendFile,
+  combinePaths, sendPathVerdict,
 } from './index.js'
 import { encodeSecretURL } from './core/secret.js'
 import { bytes as formatBytes } from './core/format.js'
@@ -184,18 +185,20 @@ function makePrompter(rl) {
  *
  * @param {PairedRoom} room
  * @param {{ name: string, size: number }} file
+ * @param {ReturnType<typeof createPathExchange>} exchange
  * @returns {Promise<void>}
  */
-async function reportPath(room, file) {
+async function reportPath(room, file, exchange) {
   const style = styleFor(process.stderr)
   /** @type {Record<NetworkPath, (s: string) => string>} */
   const paint = { local: style.ok, direct: style.accent, relay: style.warn, unknown: style.dim }
 
   /** @param {NetworkPath} path */
   const announce = path => {
-    const { label, detail } = pathDescription(path)
-    process.stderr.write(`${paint[path](label)} — ${detail}\n`)
-    const warning = meteredWarning({ name: file.name, size: file.size, path })
+    const combined = exchange.combineWith(path)
+    const { label, detail } = pathDescription(combined)
+    process.stderr.write(`${paint[combined](label)} — ${detail}\n`)
+    const warning = meteredWarning({ name: file.name, size: file.size, path: combined })
     if (warning) process.stderr.write(`${style.warn(warning)}\n`)
   }
 
@@ -204,6 +207,46 @@ async function reportPath(room, file) {
     return
   }
   room.path().then(announce, () => {})
+}
+
+/**
+ * Holds this side's verdict and the peer's, and keeps the two in step.
+ *
+ * The two peers see genuinely different evidence -- see combinePaths -- so a
+ * CLI that only reported its own view would contradict the browser at the
+ * other end. Node needs this more than anything else does: node-datachannel
+ * reports nothing useful from getStats(), so this side's own answer is very
+ * often 'unknown' while the browser opposite knows the path exactly.
+ *
+ * @param {PairedRoom} room
+ * @returns {{
+ *   combineWith: (mine: NetworkPath) => NetworkPath,
+ *   onPeerPath: (path: NetworkPath) => void,
+ *   send: (nextControlIndex: () => number) => void,
+ * }}
+ */
+function createPathExchange(room) {
+  /** @type {NetworkPath} */
+  let peerPath = 'unknown'
+
+  return {
+    combineWith(mine) {
+      return combinePaths(mine, peerPath)
+    },
+    onPeerPath(path) {
+      peerPath = path
+    },
+    // Fire-and-forget in both directions: a peer on an older build never
+    // answers, and that must cost nothing.
+    send(nextControlIndex) {
+      room.path().then(
+        path => sendPathVerdict({
+          channel: room.channel, key: room.session.sendKey, nextControlIndex, path,
+        }).catch(() => {}),
+        () => {},
+      )
+    },
+  }
 }
 
 /**
@@ -254,8 +297,9 @@ function makeProgressReporter({ verb }) {
  * @param {(p: ReceiveProgress) => void} [args.onProgress]
  * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
  * @param {(manifest: Manifest) => Promise<Sink>} args.createSink
+ * @param {(path: NetworkPath) => void} [args.onPeerPath]
  */
-function attachReceiver({ room, onOffer, onProgress, onFileDone, createSink }) {
+function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, createSink }) {
   const control = createControlStream()
   let controlOut = 0
   const nextControlIndex = () => controlOut++
@@ -272,6 +316,7 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone, createSink }) {
     onProgress,
     onFileDone,
     onError: error => console.error('Transfer error:', error instanceof Error ? error.message : error),
+    onPeerPath,
     createSink,
   })
 
@@ -405,9 +450,13 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
     if (source.size > RELAYED_MAX_BYTES && await room.isRelayed()) {
       throw new Error(relayCapMessage({ name: source.name, size: source.size, limit: RELAYED_MAX_BYTES }))
     }
-    const { control, nextControlIndex } = attachReceiver({ room, createSink: async () => {
-      throw new Error('Peer tried to send us a file mid-send')
-    } })
+    const exchange = createPathExchange(room)
+    const { control, nextControlIndex } = attachReceiver({
+      room,
+      onPeerPath: exchange.onPeerPath,
+      createSink: async () => { throw new Error('Peer tried to send us a file mid-send') },
+    })
+    exchange.send(nextControlIndex)
 
     // A peer that leaves mid-transfer would otherwise park this process on
     // control.next() forever: sendFile blocks awaiting an 'accept' or a 'done'
@@ -425,7 +474,7 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
       if (!sessionEnded.done) control.fail(new Error(PEER_DISCONNECTED))
     })
 
-    await reportPath(room, { name: source.name, size: source.size })
+    await reportPath(room, { name: source.name, size: source.size }, exchange)
 
     process.stdout.write(`\nSending ${source.name} (${formatBytes(source.size)})…\n`)
     const onProgress = makeProgressReporter({ verb: 'Sent' })
@@ -514,10 +563,12 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
         if (!sessionEnded.done) reject(new Error(PEER_DISCONNECTED))
       })
 
-      attachReceiver({
+      const exchange = createPathExchange(paired)
+      const { nextControlIndex } = attachReceiver({
         room: paired,
         createSink,
         onProgress,
+        onPeerPath: exchange.onPeerPath,
         onFileDone: file => resolve({ kind: 'done', file }),
         onOffer: ({ manifest, accept, decline }) => {
           const describe = `${manifest.name} (${formatBytes(manifest.size)})`
@@ -535,7 +586,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
                 resolve({ kind: 'declined' })
                 return
               }
-              await reportPath(paired, { name: manifest.name, size: manifest.size })
+              await reportPath(paired, { name: manifest.name, size: manifest.size }, exchange)
 
               const ok = assumeYes || await prompter.confirm(`\nIncoming: ${describe}. Accept?`)
               if (!ok) {
@@ -551,6 +602,11 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
           })()
         },
       })
+
+      // Sent as soon as this side has classified, without waiting for an
+      // offer: the peer wants it for its own badge whether or not a file ever
+      // moves.
+      exchange.send(nextControlIndex)
     })
 
     sessionEnded.done = true

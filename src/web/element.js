@@ -39,9 +39,9 @@
 import {
   generateSecret, encodeSecret, encodeSecretURL, decodeSecret, deriveTopic, derivePassword,
 } from '../core/secret.js'
-import { openRoom, RELAYED_MAX_BYTES } from '../transport/room.js'
+import { openRoom, RELAYED_MAX_BYTES, combinePaths } from '../transport/room.js'
 import { createControlStream } from '../core/control.js'
-import { createReceiver } from '../core/receiver.js'
+import { createReceiver, sendPathVerdict } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
 import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED } from '../core/messages.js'
 import { bytes } from '../core/format.js'
@@ -148,6 +148,16 @@ export class QRDropElement extends HTMLElement {
     /** @type {(() => void) | null} */
     this._teardown = null
 
+    // The two halves of the path verdict. Both peers classify their own end
+    // and tell the other, because neither sees the whole picture -- see
+    // _mergePeerPath.
+    /** @type {NetworkPath | null} */
+    this._myPath = null
+    /** @type {NetworkPath | null} */
+    this._peerPath = null
+    /** @type {(() => number) | null} */
+    this._nextControlIndex = null
+
     // One-shot closures for the two safety gestures. Set when the relevant
     // offer/SAS becomes available, cleared the instant they fire (mirroring
     // the old `{ once: true }` listeners) so a slow double-click cannot
@@ -225,13 +235,45 @@ export class QRDropElement extends HTMLElement {
    */
   async _publishPath(room, size) {
     this._publishPathDebug(room)
+
+    /** @param {NetworkPath} path */
+    const publish = path => {
+      this._myPath = path
+      if (this._sessionEnded) return
+      this._setState({ path: combinePaths(path, this._peerPath ?? 'unknown') })
+      // Advisory, so the rejection is swallowed: a peer on an older build, or
+      // one that has already gone, must not turn into a failed transfer.
+      sendPathVerdict({
+        channel: room.channel,
+        key: room.session.sendKey,
+        nextControlIndex: this._nextControlIndex ?? (() => 0),
+        path,
+      }).catch(() => {})
+    }
+
     if (size > METERED_WARN_BYTES) {
-      this._setState({ path: await room.path() })
+      publish(await room.path())
       return
     }
-    room.path().then(/** @param {NetworkPath} path */ path => {
-      if (!this._sessionEnded) this._setState({ path })
-    }, () => {})
+    room.path().then(publish, () => {})
+  }
+
+  /**
+   * Folds the peer's verdict into ours.
+   *
+   * Both peers see genuinely different evidence: Firefox withholds the address
+   * of a peer-reflexive candidate, so the side that could not resolve the
+   * other's mDNS name can only answer 'unknown' about a connection the other
+   * side describes exactly. Without this, two people sitting together are
+   * shown different answers for one transfer -- the original complaint about
+   * this feature, in a new form.
+   *
+   * @param {NetworkPath} path
+   */
+  _mergePeerPath(path) {
+    this._peerPath = path
+    if (this._sessionEnded) return
+    this._setState({ path: combinePaths(this._myPath ?? 'unknown', path) })
   }
 
   /**
@@ -587,6 +629,8 @@ export class QRDropElement extends HTMLElement {
     const control = createControlStream()
     let controlOut = 0
     const nextControlIndex = () => controlOut++
+    // Shared with _publishPath, which sends on this same counted stream.
+    this._nextControlIndex = nextControlIndex
 
     const receiver = createReceiver({
       channel: room.channel,
@@ -598,6 +642,7 @@ export class QRDropElement extends HTMLElement {
       onProgress,
       onFileDone,
       onError: e => this._failTransfer(e),
+      onPeerPath: path => this._mergePeerPath(path),
       createSink,
     })
 

@@ -323,11 +323,23 @@ in a browser with no install on either side.
   NAT), *Through a public relay* (TURN), or *Path unknown*. Treat "Local
   network" as evidence, not proof — a host candidate can also belong to a VPN,
   Tailscale, or container interface, which is a local *interface* rather than a
-  local *network*, so the copy never promises the transfer is free. Two peers
-  do not always see the same candidate types for one connection — mDNS means
-  the side that cannot resolve the other's `.local` name sees a peer-reflexive
-  candidate instead of a host one — so a LAN hop is recognised by candidate
-  type *or* by both addresses being unroutable, never by type alone. "Local"
+  local *network*, so the copy never promises the transfer is free. The two peers do
+  not see the same evidence: Firefox withholds the address of a peer-reflexive
+  candidate, so the side that could not resolve the other's mDNS `.local` name
+  can only answer "unknown" about a connection the other side describes
+  exactly. Each peer therefore classifies its own end, sends the verdict as a
+  sealed `path` control message, and both show the combination — evidence beats
+  absence (`local` + `unknown` → `local`), and a genuine conflict resolves the
+  expensive way (`local` + `direct` → `direct`), because being wrongly warned
+  about data cost is an annoyance and being wrongly told a metered transfer is
+  free is a bill. A peer that never sends one is not an error; nothing waits on
+  it.
+
+  Set `?debug=path` in the query string (never the fragment, which is where the
+  secret lives) to see the raw candidate pairs behind a verdict on either
+  device. Addresses are reported as a category — `mdns`, `ipv4-rfc1918`,
+  `ipv4-cgnat`, `ipv4-public` — rather than as values, so a dump can be shared
+  while diagnosing without disclosing anyone's network. "Local"
   describes the file bytes only: pairing always crossed the internet, over a
   public signalling network. "Path unknown" means this device could not read
   the stats — the ordinary answer under `node-datachannel`, and not a fault.

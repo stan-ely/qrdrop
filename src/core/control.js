@@ -28,7 +28,12 @@ export function createControlStream() {
   // not even know which file it was -- a malformed control frame has no seq.
   /** @type {(msg: ControlMessage, types: readonly ControlType[], seq?: number) => boolean} */
   const matches = (msg, types, seq) =>
-    types.includes(msg.t) && (seq === undefined || msg.seq === seq || msg.t === 'error')
+    // 'path' carries no seq -- it describes the connection, not a file -- and
+    // is routed straight to its callback before ever reaching this queue. The
+    // guard is here so the type of msg.seq stays honest rather than to catch a
+    // message that can actually arrive.
+    types.includes(msg.t) && (seq === undefined || msg.t === 'error'
+      || (msg.t !== 'path' && msg.seq === seq))
 
   return {
     push(msg) {

@@ -219,6 +219,15 @@ type ControlMessage =
   | { t: 'done'; seq: number }
   /** Truncated to 200 chars by the sender. Still untrusted; never innerHTML. */
   | { t: 'error'; seq: number; message: string }
+  /**
+   * One peer's view of the network route, so both can show the same answer.
+   * Carries no seq: it belongs to the connection rather than to any file, is
+   * not a reply to anything, and nothing waits for it. Untrusted like every
+   * other peer-supplied value -- combinePaths only ever widens the result
+   * towards the more cautious reading, so a peer lying here can cause a
+   * needless data-cost warning but cannot suppress a real one.
+   */
+  | { t: 'path'; path: NetworkPath }
 
 type ControlType = ControlMessage['t']
 
