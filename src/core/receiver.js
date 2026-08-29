@@ -191,7 +191,21 @@ export function createReceiver({
         if (SENDER_REPLIES.includes(msg.t)) return void control.push(msg)
         if (msg.t === 'manifest') return void await handleManifest(msg)
         if (msg.t === 'complete') return void await handleComplete(msg)
-        throw new Error(`Unknown control message: ${msg.t}`)
+
+        // Ignored, not fatal. This threw until adding the 'path' message
+        // proved why it must not: a peer one version ahead sent a type this
+        // build had never heard of, the throw reached processFrame's catch,
+        // and a working transfer died with "Unknown control message" and
+        // nothing saved. Any new control message is a breaking change while
+        // this line throws, which makes the protocol effectively unextendable.
+        //
+        // Safe because the frame is already open: only a peer holding the
+        // session key can produce one, so an unrecognised type is a newer
+        // build talking, never an attacker probing. Anything a transfer
+        // actually depends on is awaited by name in control.next(), so
+        // dropping a message that no one is waiting for cannot hide a
+        // failure -- it stalls into that wait instead, which is reported.
+        return
       }
 
       await handleChunk(bytes)

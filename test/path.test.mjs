@@ -21,6 +21,7 @@ import {
 import { createEphemeralKeypair, exportPublicKey, establishSession } from '../src/core/session.js'
 import { createControlStream } from '../src/core/control.js'
 import { createReceiver, sendPathVerdict } from '../src/core/receiver.js'
+import { sealControl } from '../src/core/frame.js'
 import { pathDescription, meteredWarning, METERED_WARN_BYTES } from '../src/core/messages.js'
 import { generateSecret, deriveTopic, derivePassword } from '../src/core/secret.js'
 import { fakeNetwork } from './helpers/fake-network.mjs'
@@ -394,4 +395,54 @@ test('a path verdict crosses the wire sealed, and reaches the peer', async () =>
   })
 
   assert.deepEqual(received, ['local'])
+})
+
+test('a control message this build does not know is ignored, not fatal', async () => {
+  // The regression. Adding the 'path' message broke live transfers between a
+  // peer that had it and a peer that did not: the older side hit
+  // "Unknown control message: path", the throw reached processFrame's catch,
+  // and the transfer died having saved nothing. Every future control message
+  // would do the same while that line throws, so the protocol could not be
+  // extended at all without breaking whoever updated second.
+  const secret = generateSecret()
+  const [hk, gk] = await Promise.all([createEphemeralKeypair(), createEphemeralKeypair()])
+  const [host, guest] = await Promise.all([
+    establishSession({ keypair: hk, peerPublicRaw: await exportPublicKey(gk), secret, role: 'host' }),
+    establishSession({ keypair: gk, peerPublicRaw: await exportPublicKey(hk), secret, role: 'guest' }),
+  ])
+
+  /** @type {unknown[]} */
+  const errors = []
+  let guestCtl = 0
+  /** @type {any} */
+  const guestCh = { bufferedAmount: 0, send: async () => {}, onbufferedamountlow: null }
+  const control = createControlStream()
+  const guestRx = createReceiver({
+    channel: guestCh,
+    sendKey: guest.sendKey,
+    recvKey: guest.recvKey,
+    control,
+    nextControlIndex: () => guestCtl++,
+    onOffer: () => {},
+    onError: e => errors.push(e),
+    createSink: async () => { throw new Error('no file expected') },
+  })
+
+  let hostCtl = 0
+  /** @type {any} */
+  const hostCh = {
+    bufferedAmount: 0, onbufferedamountlow: null,
+    send: (/** @type {Bytes} */ bytes) => guestRx.handleFrame(bytes),
+  }
+  // A type from a hypothetical future build, then a real one behind it.
+  // Cast because this type deliberately is not in ControlMessage -- the whole
+  // point is a message this build has never heard of.
+  const future = /** @type {ControlMessage} */ (/** @type {unknown} */ ({ t: 'from-the-future', v: 1 }))
+  await hostCh.send(await sealControl(host.sendKey, hostCtl++, future))
+  await hostCh.send(await sealControl(host.sendKey, hostCtl++, { t: 'accept', seq: 0 }))
+
+  assert.deepEqual(errors, [], 'an unknown message must not surface as an error')
+  // And the stream behind it is intact: the index counter kept moving, so the
+  // message after the unknown one still opened and still arrived.
+  assert.equal((await control.next(['accept'], 0)).t, 'accept')
 })

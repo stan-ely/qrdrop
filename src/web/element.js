@@ -241,12 +241,20 @@ export class QRDropElement extends HTMLElement {
       this._myPath = path
       if (this._sessionEnded) return
       this._setState({ path: combinePaths(path, this._peerPath ?? 'unknown') })
+      // No control stream, no send. This used to fall back to `() => 0`,
+      // which is not a harmless default: index 0 is the manifest's, and two
+      // control frames sharing an index under one key is AES-GCM nonce reuse
+      // -- the exact failure frame.js counts indices to make impossible.
+      // Skipping an advisory message is the only acceptable answer here.
+      const nextControlIndex = this._nextControlIndex
+      if (!nextControlIndex) return
+
       // Advisory, so the rejection is swallowed: a peer on an older build, or
       // one that has already gone, must not turn into a failed transfer.
       sendPathVerdict({
         channel: room.channel,
         key: room.session.sendKey,
-        nextControlIndex: this._nextControlIndex ?? (() => 0),
+        nextControlIndex,
         path,
       }).catch(() => {})
     }
@@ -557,12 +565,18 @@ export class QRDropElement extends HTMLElement {
     this._onVerifyConfirm = null
     this._onOfferAccept = null
     this._onOfferDecline = null
+    // Per-session, all three: a verdict or a control counter surviving into
+    // the next transfer would describe a connection that no longer exists.
+    this._myPath = null
+    this._peerPath = null
+    this._nextControlIndex = null
     clearTimeout(this._copyTimer)
     this._setState({
       screen: 'choose', role: null, status: '', code: '', qrNode: null, qrIsLink: false,
       sas: '', sasWords: [], offer: null, file: null, progress: null,
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
       mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
+      path: null, pathDebug: null,
       // Last key wins over the `error: null` _setState injects for any
       // update carrying a screen change, which is what lets this one reset
       // set an error while every other one still clears the stale one.
