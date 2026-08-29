@@ -4,6 +4,15 @@
   "type": "module",
   "description": "Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.",
   "license": "MIT",
+  "author": "Bevan Stanely",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stan-ely/qrdrop.git"
+  },
+  "homepage": "https://github.com/stan-ely/qrdrop#readme",
+  "bugs": {
+    "url": "https://github.com/stan-ely/qrdrop/issues"
+  },
   "keywords": [
     "file-transfer",
     "webrtc",
@@ -27,6 +36,7 @@
   ],
   "scripts": {
     "test": "node --test",
+    "prepublishOnly": "node --test",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "build": "node scripts/build-site.mjs",
     "start": "node scripts/build-site.mjs --serve",
