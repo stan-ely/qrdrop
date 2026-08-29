@@ -15,7 +15,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { classifyPath, isPrivateAddress, openRoom } from '../src/transport/room.js'
+import { classifyPath, isPrivateAddress, addressForm, openRoom } from '../src/transport/room.js'
 import { pathDescription, meteredWarning, METERED_WARN_BYTES } from '../src/core/messages.js'
 import { generateSecret, deriveTopic, derivePassword } from '../src/core/secret.js'
 import { fakeNetwork } from './helpers/fake-network.mjs'
@@ -201,4 +201,27 @@ test('meteredWarning names the file and hedges the cost', () => {
   // home broadband, and a warning that overclaims gets dismissed on sight.
   assert.match(String(warning), /may cost/)
   assert.doesNotMatch(String(warning), /will cost/)
+})
+
+test('addressForm: categorises without revealing the address', () => {
+  assert.equal(addressForm('abc-123.local'), 'mdns')
+  assert.equal(addressForm('192.168.1.34'), 'ipv4-rfc1918')
+  assert.equal(addressForm('10.1.2.3'), 'ipv4-rfc1918')
+  assert.equal(addressForm('172.20.0.1'), 'ipv4-rfc1918')
+  assert.equal(addressForm('169.254.5.5'), 'ipv4-linklocal')
+  assert.equal(addressForm('127.0.0.1'), 'ipv4-loopback')
+  assert.equal(addressForm('103.74.136.124'), 'ipv4-public')
+  assert.equal(addressForm('fe80::1'), 'ipv6-linklocal')
+  assert.equal(addressForm('fd00::1'), 'ipv6-ula')
+  assert.equal(addressForm('2401:4900::1'), 'ipv6-global')
+  assert.equal(addressForm(undefined), 'none')
+  assert.equal(addressForm(''), 'none')
+
+  // Carrier-grade NAT, 100.64.0.0/10: what a phone on mobile data usually
+  // has. Not routable, but not a LAN address either, and its own category so
+  // the two can never be confused for one another.
+  assert.equal(addressForm('100.64.0.1'), 'ipv4-cgnat')
+  assert.equal(addressForm('100.127.255.254'), 'ipv4-cgnat')
+  assert.equal(addressForm('100.63.0.1'), 'ipv4-public')
+  assert.equal(addressForm('100.128.0.1'), 'ipv4-public')
 })

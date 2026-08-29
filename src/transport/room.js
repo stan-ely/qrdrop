@@ -337,6 +337,49 @@ export async function classifyPath(pc) {
 }
 
 /**
+ * A coarse category for an ICE candidate address: enough to reason about a
+ * path, not enough to identify anyone.
+ *
+ * Exists because diagnosing this needed the address, and an address is exactly
+ * the thing a person is right to be reluctant to paste into a chat window. The
+ * category answers every question the raw value would -- is this a LAN
+ * address, a carrier-NAT address, a public one -- while being useless to
+ * anyone who reads it later.
+ *
+ * @param {unknown} address
+ * @returns {string}
+ */
+export function addressForm(address) {
+  if (typeof address !== 'string' || address === '') return 'none'
+  const addr = address.toLowerCase()
+
+  // An mDNS placeholder. Deliberately its own category rather than folded in
+  // with the private ranges: it is a NAME, and it says nothing whatsoever
+  // about where the packets actually went.
+  if (addr.endsWith('.local')) return 'mdns'
+
+  if (addr.includes(':')) {
+    if (addr === '::1') return 'ipv6-loopback'
+    if (/^fe[89ab]/.test(addr)) return 'ipv6-linklocal'
+    if (/^f[cd]/.test(addr)) return 'ipv6-ula'
+    return 'ipv6-global'
+  }
+
+  const parts = addr.split('.')
+  if (parts.length !== 4) return 'unrecognised'
+  const [a, b] = parts.map(Number)
+  if (!Number.isInteger(a) || !Number.isInteger(b)) return 'unrecognised'
+
+  if (a === 127) return 'ipv4-loopback'
+  if (a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)) return 'ipv4-rfc1918'
+  if (a === 169 && b === 254) return 'ipv4-linklocal'
+  // Carrier-grade NAT. Not routable on the public internet, but not a LAN
+  // address either -- a phone on mobile data typically has one.
+  if (a === 100 && b >= 64 && b <= 127) return 'ipv4-cgnat'
+  return 'ipv4-public'
+}
+
+/**
  * Every candidate pair the connection knows about, for diagnosing a
  * disagreement between two peers about one connection.
  *
@@ -368,12 +411,26 @@ export async function collectPathEvidence(pc) {
   }
 
   /** @param {any} c */
+  // The address itself is NOT reported. Its category and the answer
+  // isPrivateAddress gives for it are what a diagnosis needs, and asking
+  // someone to paste their IP into a chat to get a bug fixed is a bad trade
+  // when the category answers the same questions.
   const candidate = c => c && {
     type: c.candidateType,
-    address: c.address ?? c.ip ?? null,
+    addressForm: addressForm(c.address ?? c.ip),
+    privateByRule: isPrivateAddress(c.address ?? c.ip),
     port: c.port ?? null,
     protocol: c.protocol ?? null,
     network: c.networkType ?? null,
+  }
+
+  // Every server-reflexive address in these stats -- that is, this peer's own
+  // public mappings as STUN reported them.
+  /** @type {Set<string>} */
+  const reflexive = new Set()
+  for (const r of byId.values()) {
+    if ((r.type === 'local-candidate' || r.type === 'remote-candidate')
+      && r.candidateType === 'srflx' && (r.address ?? r.ip)) reflexive.add(r.address ?? r.ip)
   }
 
   /** @type {string[]} */
@@ -397,6 +454,22 @@ export async function collectPathEvidence(pc) {
       isSelectedByTransport: selectedIds.includes(id),
       local: candidate(byId.get(report.localCandidateId)),
       remote: candidate(byId.get(report.remoteCandidateId)),
+      // Whether this pair's remote address is the SAME address STUN reported
+      // as the peer's public mapping. If it is, the packets are going to the
+      // peer's internet-facing address, whatever the candidate types claim --
+      // which is the check that does not depend on trusting an mDNS name.
+      remoteIsPeerPublic: (() => {
+        const rc = byId.get(report.remoteCandidateId)
+        const addr = rc?.address ?? rc?.ip
+        return Boolean(addr && reflexive.has(addr))
+      })(),
+      // Exactly which branch of classifyPath this pair would take.
+      wouldBeBothHost: byId.get(report.localCandidateId)?.candidateType === 'host'
+        && byId.get(report.remoteCandidateId)?.candidateType === 'host',
+      wouldBeBothPrivate: isPrivateAddress(byId.get(report.localCandidateId)?.address
+          ?? byId.get(report.localCandidateId)?.ip)
+        && isPrivateAddress(byId.get(report.remoteCandidateId)?.address
+          ?? byId.get(report.remoteCandidateId)?.ip),
     })
   }
 
