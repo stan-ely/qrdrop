@@ -1,0 +1,16 @@
+flowchart TB
+    web["qrdrop/web<br/>the qr-drop custom element<br/>File → FileSource<br/>File System Access → Sink"]
+    node["qrdrop/node<br/>the qrdrop command<br/>fs → FileSource<br/>fs → Sink"]
+
+    subgraph core["qrdrop — isomorphic: no DOM, no fs"]
+        direction TB
+        proto["secret · session · frame<br/>sender · receiver"]
+        seam["Channel — five members, and nothing else"]
+        proto --- seam
+    end
+
+    net["Trystero<br/>Nostr relays · WebTorrent trackers<br/>WebRTC data channel"]
+
+    web -- "FileSource / Sink" --> core
+    node -- "FileSource / Sink" --> core
+    core --> net

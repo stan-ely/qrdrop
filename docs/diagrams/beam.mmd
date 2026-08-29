@@ -1,0 +1,9 @@
+sequenceDiagram
+    participant S as Sender's screen
+    participant R as Receiver's camera
+
+    loop ~10 frames a second, ~600 bytes each
+        S-->>R: one LT-coded block
+    end
+    Note over S,R: the manifest is woven in every 20 frames, so a receiver can join mid-stream
+    Note over S,R: no back channel. none. the sender cannot tell how the receiver is doing except by looking at it.

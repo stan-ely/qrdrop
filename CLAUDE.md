@@ -24,6 +24,22 @@ node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
 ```
 
+Three image generators, all hand-run and none of them in `npm run build` — that
+runs in CI and in `prepublishOnly`, where downloading a browser is not
+acceptable. Their output is committed; run the relevant one when the palette,
+the card copy, or a diagram source changes:
+
+```bash
+node scripts/make-og.mjs                                 # site/og.png, the social card
+node scripts/make-diagrams.mjs                           # docs/diagrams/*.png from the .mmd sources
+npm run build && node scripts/make-screenshots.mjs       # docs/screenshots/*.png
+```
+
+`make-screenshots.mjs` is also the cheapest way to see every screen at once —
+it drives `_setState` across all of them, which is the technique the "screenshot
+the states" note below describes. If a screenshot comes out wrong, that is the
+finding.
+
 `localhost` counts as a secure context, so WebCrypto and the camera work against
 `npm start` without a certificate. The same is true of `127.0.0.1`, which is what
 the `qrdrop web` subcommand (`src/cli.js` → `src/node/serve.js`) binds and prints

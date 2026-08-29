@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    participant S as Sender
+    participant N as Nostr relays<br/>WebTorrent trackers
+    participant R as Receiver
+
+    Note over S: 32 random bytes from the CSPRNG
+    S-->>R: QR code, carried by light and a camera
+    Note over S,R: room ID, signalling password, session keys and the SAS all derive from those 32 bytes
+
+    S->>N: announce, on every network at once
+    R->>N: announce, on every network at once
+    N-->>S: peer found
+    N-->>R: peer found
+    Note over S,R: session descriptions, AES-GCM under the derived password
+
+    S-->>R: WebRTC data channel opens
+    Note over S,R: ephemeral ECDH — one key per direction, per session
+    Note over S,R: four emoji, read aloud, matched by hand
+
+    S->>R: manifest (name, size) — only once the SAS is confirmed
+    R->>S: accept — the same click that opens the save picker
+    S->>R: file chunks, each one sealed by us
