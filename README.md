@@ -323,7 +323,11 @@ in a browser with no install on either side.
   NAT), *Through a public relay* (TURN), or *Path unknown*. Treat "Local
   network" as evidence, not proof — a host candidate can also belong to a VPN,
   Tailscale, or container interface, which is a local *interface* rather than a
-  local *network*, so the copy never promises the transfer is free. "Local"
+  local *network*, so the copy never promises the transfer is free. Two peers
+  do not always see the same candidate types for one connection — mDNS means
+  the side that cannot resolve the other's `.local` name sees a peer-reflexive
+  candidate instead of a host one — so a LAN hop is recognised by candidate
+  type *or* by both addresses being unroutable, never by type alone. "Local"
   describes the file bytes only: pairing always crossed the internet, over a
   public signalling network. "Path unknown" means this device could not read
   the stats — the ordinary answer under `node-datachannel`, and not a fault.

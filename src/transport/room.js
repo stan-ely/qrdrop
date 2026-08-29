@@ -193,6 +193,63 @@ const tryLeave = room => {
 }
 
 /**
+ * Whether an ICE candidate address is one that only exists on a local network.
+ *
+ * Needed because "both ends reported a host candidate" is too strict a test for
+ * a LAN hop, and fails asymmetrically -- which is how this was found: a phone
+ * and a laptop on one Wi-Fi disagreed, the laptop saying 'local' and the phone
+ * 'direct', over the same nominated pair.
+ *
+ * The cause is mDNS. Browsers do not signal raw LAN addresses; a host candidate
+ * goes out as a random `<uuid>.local` name. When the far side cannot resolve
+ * that name -- Android Chrome is markedly worse at it than desktop, and plenty
+ * of access points block multicast between clients -- ICE still connects,
+ * because the connectivity check arrives anyway and its SOURCE address is
+ * adopted as a peer-reflexive candidate. So the peer that resolved the name
+ * sees host/host, and the peer that did not sees host/prflx, for one connection.
+ *
+ * A prflx address is read off the packet rather than out of the SDP, so it is
+ * always a real IP and never an mDNS name. That is what makes inspecting the
+ * address safe here specifically, and it is not a licence to inspect addresses
+ * generally: classifying a HOST candidate by address would see `.local` and
+ * silently downgrade every LAN transfer, which is the trap the type check
+ * exists to avoid.
+ *
+ * `.local` still counts as private below, for the case where a resolvable mDNS
+ * name reaches us paired with something else.
+ *
+ * A VPN or Tailscale interface also hands out RFC1918 addresses, so "private"
+ * here means "not routed over the public internet", which is the strongest
+ * claim available and exactly what pathDescription's copy is hedged to.
+ *
+ * @param {unknown} address
+ * @returns {boolean}
+ */
+export function isPrivateAddress(address) {
+  if (typeof address !== 'string' || address === '') return false
+  const addr = address.toLowerCase()
+
+  // An mDNS name is a local-network name by definition.
+  if (addr.endsWith('.local')) return true
+
+  // IPv6. Link-local (fe80::/10) and unique-local (fc00::/7), plus loopback.
+  if (addr.includes(':')) {
+    return addr === '::1' || /^fe[89ab]/.test(addr) || /^f[cd]/.test(addr)
+  }
+
+  const parts = addr.split('.')
+  if (parts.length !== 4) return false
+  const [a, b] = parts.map(Number)
+  if (!Number.isInteger(a) || !Number.isInteger(b)) return false
+
+  if (a === 10 || a === 127) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 169 && b === 254) return true // link-local, no DHCP
+  return false
+}
+
+/**
  * Which route the live connection actually took, read off the nominated ICE
  * candidate pair. Drives both the RELAYED_MAX_BYTES cap and the path badge the
  * user sees.
@@ -249,12 +306,28 @@ export async function classifyPath(pc) {
       const local = byId.get(report.localCandidateId)
       const remote = byId.get(report.remoteCandidateId)
       if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return 'relay'
+      if (!local && !remote) continue
 
-      // Both ends must be host before claiming the bytes stayed local. A
-      // host/srflx pair means one side reached the other through NAT, which is
-      // an internet path however local the near end looks.
-      if (local?.candidateType === 'host' && remote?.candidateType === 'host') return 'local'
-      if (local || remote) return 'direct'
+      // Two ways to be sure the bytes stayed on the network, because neither
+      // holds on its own.
+      //
+      // Both ends reporting a host candidate is the clean case. It is NOT
+      // sufficient by itself: mDNS makes the two peers disagree about the same
+      // connection, one seeing host/host and the other host/prflx. See
+      // isPrivateAddress above -- that asymmetry was a live bug, with a phone
+      // and a laptop on one Wi-Fi reporting different paths to their users.
+      const bothHost = local?.candidateType === 'host' && remote?.candidateType === 'host'
+
+      // So also accept a pair whose addresses are both demonstrably not
+      // routable over the public internet. This is what catches the
+      // peer-reflexive half of that disagreement. A srflx candidate carries a
+      // public address and fails this, which is the point: reaching a peer
+      // through NAT is an internet path however local the near end looks.
+      const bothPrivate = isPrivateAddress(local?.address ?? local?.ip)
+        && isPrivateAddress(remote?.address ?? remote?.ip)
+
+      if (bothHost || bothPrivate) return 'local'
+      return 'direct'
     }
 
     await new Promise(resolve => setTimeout(resolve, 300))

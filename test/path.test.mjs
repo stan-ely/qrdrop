@@ -15,7 +15,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { classifyPath, openRoom } from '../src/transport/room.js'
+import { classifyPath, isPrivateAddress, openRoom } from '../src/transport/room.js'
 import { pathDescription, meteredWarning, METERED_WARN_BYTES } from '../src/core/messages.js'
 import { generateSecret, deriveTopic, derivePassword } from '../src/core/secret.js'
 import { fakeNetwork } from './helpers/fake-network.mjs'
@@ -24,17 +24,22 @@ import { fakeNetwork } from './helpers/fake-network.mjs'
  * A peer connection that reports exactly one nominated, succeeded candidate
  * pair between the two given candidate types.
  *
+ * Addresses default to public ones, so a test that says nothing about them is
+ * asking purely about candidate types.
+ *
  * @param {string | null} local
  * @param {string | null} remote
+ * @param {{ localAddress?: string, remoteAddress?: string }} [addrs]
  */
-function fakePC(local, remote) {
+function fakePC(local, remote, addrs = {}) {
+  const { localAddress = '203.0.113.7', remoteAddress = '198.51.100.9' } = addrs
   const reports = new Map()
   reports.set('pair', {
     type: 'candidate-pair', state: 'succeeded', nominated: true,
     localCandidateId: 'L', remoteCandidateId: 'R',
   })
-  if (local) reports.set('L', { type: 'local-candidate', candidateType: local })
-  if (remote) reports.set('R', { type: 'remote-candidate', candidateType: remote })
+  if (local) reports.set('L', { type: 'local-candidate', candidateType: local, address: localAddress })
+  if (remote) reports.set('R', { type: 'remote-candidate', candidateType: remote, address: remoteAddress })
 
   return /** @type {any} */ ({
     getStats: async () => ({
@@ -45,7 +50,37 @@ function fakePC(local, remote) {
 }
 
 test('classifyPath: both ends on a host candidate means the bytes stayed local', async () => {
+  // Type alone decides here -- these carry public addresses, and a host
+  // candidate under mDNS has no usable address at all.
   assert.equal(await classifyPath(fakePC('host', 'host')), 'local')
+
+  assert.equal(await classifyPath(fakePC('host', 'host', {
+    localAddress: 'e6c1a0f2-9d4b-4a11-8f3e-2b7c5d9a1e04.local',
+    remoteAddress: '9f2b7c5d-1e04-4a11-8f3e-e6c1a0f29d4b.local',
+  })), 'local')
+})
+
+test('classifyPath: a LAN pair is local even when one side saw peer-reflexive', async () => {
+  // The regression this rule exists for. A phone and a laptop on one Wi-Fi
+  // reported different paths to their users: the laptop resolved the phone's
+  // mDNS name and saw host/host, the phone did not and saw host/prflx, so the
+  // phone told its user the transfer was crossing the internet. Same LAN, same
+  // nominated pair, and the difference was visible to two people side by side.
+  assert.equal(await classifyPath(fakePC('host', 'prflx', {
+    localAddress: '192.168.1.42', remoteAddress: '192.168.1.17',
+  })), 'local')
+  assert.equal(await classifyPath(fakePC('prflx', 'host', {
+    localAddress: '10.0.0.8', remoteAddress: '10.0.0.31',
+  })), 'local')
+
+  // Both directions of the same pairing must agree, whichever side is asked.
+  const laptop = await classifyPath(fakePC('host', 'host', {
+    localAddress: '192.168.1.17', remoteAddress: '192.168.1.42',
+  }))
+  const phone = await classifyPath(fakePC('host', 'prflx', {
+    localAddress: '192.168.1.42', remoteAddress: '192.168.1.17',
+  }))
+  assert.equal(laptop, phone)
 })
 
 test('classifyPath: a TURN candidate on either end is a relay', async () => {
@@ -65,6 +100,30 @@ test('classifyPath: NAT-traversed pairs are direct, not local', async () => {
   // mobile plan their transfer is free when it is not.
   assert.equal(await classifyPath(fakePC('host', 'srflx')), 'direct')
   assert.equal(await classifyPath(fakePC('srflx', 'host')), 'direct')
+
+  // A peer-reflexive candidate holding a PUBLIC address is a NAT-traversed
+  // path, and must not be swept up by the private-address rule above.
+  assert.equal(await classifyPath(fakePC('host', 'prflx', {
+    localAddress: '192.168.1.42', remoteAddress: '203.0.113.55',
+  })), 'direct')
+})
+
+test('isPrivateAddress: only addresses that stay off the public internet', () => {
+  for (const addr of ['10.0.0.1', '192.168.1.42', '172.16.0.1', '172.31.255.254',
+    '169.254.1.1', '127.0.0.1', '::1', 'fe80::1', 'fd12:3456::1',
+    'abc-123.local', 'ABC.LOCAL']) {
+    assert.equal(isPrivateAddress(addr), true, addr)
+  }
+
+  // 172.15 and 172.32 sit just outside the /12, and are the boundaries an
+  // off-by-one in that range check would wrongly claim as local.
+  for (const addr of ['203.0.113.7', '8.8.8.8', '172.15.0.1', '172.32.0.1',
+    '2001:db8::1', '', 'not-an-address']) {
+    assert.equal(isPrivateAddress(addr), false, addr)
+  }
+
+  assert.equal(isPrivateAddress(undefined), false)
+  assert.equal(isPrivateAddress(null), false)
 })
 
 test('classifyPath: says unknown rather than guessing', async t => {
