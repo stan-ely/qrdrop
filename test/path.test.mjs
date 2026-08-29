@@ -15,7 +15,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { classifyPath, isPrivateAddress, addressForm, openRoom } from '../src/transport/room.js'
+import { classifyPath, isPrivateAddress, addressForm, addressShape, openRoom } from '../src/transport/room.js'
 import { pathDescription, meteredWarning, METERED_WARN_BYTES } from '../src/core/messages.js'
 import { generateSecret, deriveTopic, derivePassword } from '../src/core/secret.js'
 import { fakeNetwork } from './helpers/fake-network.mjs'
@@ -124,6 +124,12 @@ test('isPrivateAddress: only addresses that stay off the public internet', () =>
 
   assert.equal(isPrivateAddress(undefined), false)
   assert.equal(isPrivateAddress(null), false)
+
+  // An IPv4-mapped IPv6 address is an IPv4 address wearing a hat. Read as
+  // IPv6 it looks globally routable, which would call a LAN address public.
+  assert.equal(isPrivateAddress('::ffff:192.168.1.34'), true)
+  assert.equal(isPrivateAddress('::ffff:10.0.0.1'), true)
+  assert.equal(isPrivateAddress('::ffff:103.74.136.124'), false)
 })
 
 test('classifyPath: says unknown rather than guessing', async t => {
@@ -224,4 +230,17 @@ test('addressForm: categorises without revealing the address', () => {
   assert.equal(addressForm('100.127.255.254'), 'ipv4-cgnat')
   assert.equal(addressForm('100.63.0.1'), 'ipv4-public')
   assert.equal(addressForm('100.128.0.1'), 'ipv4-public')
+
+  assert.equal(addressForm('::ffff:192.168.1.34'), 'ipv4-rfc1918')
+  assert.equal(addressForm('::ffff:103.74.136.124'), 'ipv4-public')
+})
+
+test('addressShape: format without content', () => {
+  // Everything identifying is replaced; punctuation and length survive, which
+  // is all that is needed to recognise a format we do not yet parse.
+  assert.equal(addressShape('192.168.1.34'), '###.###.#.##')
+  assert.equal(addressShape('abc-123.local'), 'aaa-###.aaaaa')
+  assert.equal(addressShape(''), null)
+  assert.equal(addressShape(undefined), null)
+  assert.doesNotMatch(String(addressShape('192.168.1.34')), /[0-9]/)
 })

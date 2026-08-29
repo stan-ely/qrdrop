@@ -232,6 +232,12 @@ export function isPrivateAddress(address) {
   // An mDNS name is a local-network name by definition.
   if (addr.endsWith('.local')) return true
 
+  // An IPv4-mapped IPv6 address (::ffff:192.168.1.5) is an IPv4 address
+  // wearing a hat, and must be judged as one. Read as IPv6 it looks global,
+  // which would call a LAN address public.
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(addr)
+  if (mapped) return isPrivateAddress(mapped[1])
+
   // IPv6. Link-local (fe80::/10) and unique-local (fc00::/7), plus loopback.
   if (addr.includes(':')) {
     return addr === '::1' || /^fe[89ab]/.test(addr) || /^f[cd]/.test(addr)
@@ -358,6 +364,10 @@ export function addressForm(address) {
   // about where the packets actually went.
   if (addr.endsWith('.local')) return 'mdns'
 
+  // See isPrivateAddress: judged by the IPv4 inside, not the IPv6 wrapper.
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(addr)
+  if (mapped) return addressForm(mapped[1])
+
   if (addr.includes(':')) {
     if (addr === '::1') return 'ipv6-loopback'
     if (/^fe[89ab]/.test(addr)) return 'ipv6-linklocal'
@@ -377,6 +387,31 @@ export function addressForm(address) {
   // address either -- a phone on mobile data typically has one.
   if (a === 100 && b >= 64 && b <= 127) return 'ipv4-cgnat'
   return 'ipv4-public'
+}
+
+/**
+ * The SHAPE of an address my categoriser did not recognise, with every
+ * character of content replaced.
+ *
+ * Digits become #, letters become a, punctuation is kept. So 192.168.1.34
+ * reads ###.###.#.## and a UUID mDNS name reads
+ * aaaaaaaa-####-####-... -- which is everything needed to see what format
+ * arrived, and nothing about who it belongs to.
+ *
+ * Only ever produced for the 'unrecognised' category, which by definition
+ * means the value is not one of the forms this code knows how to reason
+ * about. That is exactly the case where the format matters and the value
+ * does not.
+ *
+ * @param {unknown} address
+ * @returns {string | null}
+ */
+export function addressShape(address) {
+  if (typeof address !== 'string' || address === '') return null
+  return address
+    .replace(/[0-9]/g, '#')
+    .replace(/[a-z]/gi, 'a')
+    .slice(0, 80)
 }
 
 /**
@@ -418,6 +453,10 @@ export async function collectPathEvidence(pc) {
   const candidate = c => c && {
     type: c.candidateType,
     addressForm: addressForm(c.address ?? c.ip),
+    // Only when the form was not understood -- see addressShape.
+    addressShape: addressForm(c.address ?? c.ip) === 'unrecognised'
+      ? addressShape(c.address ?? c.ip)
+      : undefined,
     privateByRule: isPrivateAddress(c.address ?? c.ip),
     port: c.port ?? null,
     protocol: c.protocol ?? null,
