@@ -9,10 +9,19 @@ no upload.
 ```bash
 npx qrdrop send report.pdf     # prints a QR code in your terminal
 npx qrdrop receive             # on the other machine
+npx qrdrop web                 # or run the browser UI locally, from this copy
 ```
 
 A file sent from the CLI can be received in a browser, and the other way round.
 That interoperability is the reason this is one package rather than three.
+
+`npx qrdrop web` serves the same browser UI that [share.stan-ely.com](https://share.stan-ely.com)
+deploys, from the package you just installed, on `http://127.0.0.1:4173` — nothing
+is uploaded and no other device can reach it. It is the way to use the browser
+flow while running code you can read first. `--port <n>` changes the port (`0`
+picks a free one); `--no-open` prints the URL instead of opening a browser;
+Ctrl-C stops it. Loopback only, by design: `http://<lan-ip>` is not a secure
+context, so WebCrypto and the camera would fail there.
 
 ---
 

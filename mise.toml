@@ -21,17 +21,23 @@ run = "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit"
 description = "Build the static site"
 run = "node scripts/build-site.mjs"
 
+# The deploy preview: build site/dist/ and serve it flat on :4173, the way a
+# host would. No browser is opened and nothing is rebuilt on change -- this is
+# for checking what ships, not for working on the UI.
 [tasks.start]
-description = "Build and serve the site"
+description = "Build and serve site/dist/ on :4173 (deploy preview)"
 run = "node scripts/build-site.mjs --serve"
 
-# `web` is the same thing under the name people reach for when they want to
-# look at the UI rather than to deploy it. Two names, one task, because
-# "start" says nothing about which of the three faces it starts.
+# `web` is the name people reach for when they want to look at the UI the way a
+# user gets it: it builds, then runs the real `qrdrop web` subcommand, which
+# serves the built bundle on 127.0.0.1 and opens a browser. Args pass through --
+#   mise run web -- --port 5000 --no-open
+# "start" stays separate because it says nothing about which of the three faces
+# it starts, and because it deliberately does not spawn a browser.
 [tasks.web]
-description = "Build and serve the web UI on :4173 (alias of start)"
+description = "Build, then run `qrdrop web` (serves the bundle, opens a browser)"
 alias = "ui"
-run = "node scripts/build-site.mjs --serve"
+run = "node scripts/build-site.mjs && node src/cli.js web"
 
 # Arguments after `--` are appended, so this drives the real CLI rather than a
 # copy of its argument list that would drift:

@@ -14,9 +14,10 @@ npm test                                   # unit suite, offline, ~2s
 npm run typecheck                          # two tsc invocations; see below
 npm run build                              # esbuild -> site/dist/
 
-npm run web                                # build + serve the UI on :4173 (= npm start)
+npm start                                  # build + serve site/dist/ flat on :4173 (deploy preview)
+npm run web                                # build, then `qrdrop web`: serves the bundle, opens a browser
 npm run cli -- send report.pdf             # drive the CLI without installing it
-mise run web                               # same two, under mise
+mise run web                               # same as npm run web, under mise (mise run web -- --no-open to pass args)
 mise run cli -- receive --out ~/Downloads
 
 node --test test/frame.test.mjs                          # one file
@@ -24,7 +25,14 @@ node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
 ```
 
 `localhost` counts as a secure context, so WebCrypto and the camera work against
-`npm start` without a certificate.
+`npm start` without a certificate. The same is true of `127.0.0.1`, which is what
+the `qrdrop web` subcommand (`src/cli.js` → `src/node/serve.js`) binds and prints
+— it serves the prebuilt `site/dist/`, which now ships in the npm tarball
+(`package.json` `files`). `npm run build` regenerates that directory; a stale one
+in a working copy is exactly what `npm run web` (build + `qrdrop web`) or a bare
+`node src/cli.js web` will serve. `prepublishOnly` rebuilds it so a hand-run
+`npm publish` matches what CI ships. esbuild stays a devDependency — the bundle
+is built before packing, never at `npx` time.
 
 The e2e suites need a network and public Nostr relays, so they are out of `npm test`
 and out of CI:
