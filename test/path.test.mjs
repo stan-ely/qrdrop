@@ -253,7 +253,9 @@ test('addressShape: format without content', () => {
  * @param {Record<string, { type: string, address?: string }>} candidates
  */
 function fakeMultiPC(selectedId, pairs, candidates) {
-  const reports = new Map([['T', { type: 'transport', selectedCandidatePairId: selectedId }]])
+  /** @type {Map<string, any>} */
+  const reports = new Map()
+  reports.set('T', { type: 'transport', selectedCandidatePairId: selectedId })
   for (const [id, pair] of pairs) reports.set(id, { type: 'candidate-pair', ...pair })
   for (const [id, c] of Object.entries(candidates)) {
     reports.set(id, { type: 'local-candidate', candidateType: c.type, address: c.address })
