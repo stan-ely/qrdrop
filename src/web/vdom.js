@@ -202,8 +202,25 @@ function create(vnode) {
     ? document.createElementNS(SVG_NS, vnode.tag)
     : document.createElement(vnode.tag)
 
+  // `adopt` is honoured here and not only in patchNode. It used to be handled
+  // on the patch path alone, which worked purely because every screen is in
+  // the tree from the first render, so an adopting element was always created
+  // while its node was still null and only ever *patched* once there was one.
+  // That is a coincidence of the view, not a property of the diff: children
+  // are matched by position, so any conditional sibling appearing before an
+  // adopting element shifts it by one, fails canReuse, and sends it down this
+  // path -- where the node was silently dropped and the element rendered
+  // empty. That is exactly what happened to the beam player's canvas, and the
+  // pairing QR was one conditional node away from the same fault.
+  if (vnode.props.adopt) adoptInto(el, vnode.props.adopt)
+  else for (const child of vnode.children) el.appendChild(create(child))
+
+  // Props AFTER children, which matters for exactly one thing and matters a
+  // lot for it: assigning `value` to a <select> does nothing while it has no
+  // <option>s to match, so a freshly created select silently kept its first
+  // option instead of the state's. Nothing else here depends on the order --
+  // attributes, handlers and styles are all independent of child content.
   applyProps(el, vnode.props, {})
-  for (const child of vnode.children) el.appendChild(create(child))
   return el
 }
 
@@ -221,7 +238,10 @@ const BOOLEAN_PROPS = new Set(['disabled', 'hidden', 'checked', 'muted'])
  */
 function applyProps(el, props, prev) {
   for (const name of new Set([...Object.keys(prev), ...Object.keys(props)])) {
-    if (name === 'key' || name === 'children') continue
+    // `adopt` is consumed by create/patchNode and is a live DOM node, not a
+    // value: left to fall through, it reached setAttribute and stringified to
+    // adopt="[object HTMLCanvasElement]" in the markup.
+    if (name === 'key' || name === 'children' || name === 'adopt') continue
 
     const value = props[name]
     const before = prev[name]
