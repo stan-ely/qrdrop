@@ -244,3 +244,82 @@ test('addressShape: format without content', () => {
   assert.equal(addressShape(undefined), null)
   assert.doesNotMatch(String(addressShape('192.168.1.34')), /[0-9]/)
 })
+
+/**
+ * A connection holding several candidate pairs, only one of which won.
+ *
+ * @param {string} selectedId
+ * @param {Array<[string, any]>} pairs
+ * @param {Record<string, { type: string, address?: string }>} candidates
+ */
+function fakeMultiPC(selectedId, pairs, candidates) {
+  const reports = new Map([['T', { type: 'transport', selectedCandidatePairId: selectedId }]])
+  for (const [id, pair] of pairs) reports.set(id, { type: 'candidate-pair', ...pair })
+  for (const [id, c] of Object.entries(candidates)) {
+    reports.set(id, { type: 'local-candidate', candidateType: c.type, address: c.address })
+  }
+  return /** @type {any} */ ({
+    getStats: async () => ({
+      forEach: (/** @type {(v: any, k: string) => void} */ fn) => reports.forEach((v, k) => fn(v, k)),
+    }),
+  })
+}
+
+test('classifyPath: reads the pair that won, not the first one listed', async () => {
+  // Taken from a real dump. TWO pairs were state 'succeeded' AND
+  // nominated: true -- a host/host pair and a srflx/srflx pair -- describing
+  // one connection at two moments of ICE's work. Only the first was actually
+  // in use.
+  //
+  // The old code returned the first such pair it iterated, so the verdict
+  // depended on the order getStats happened to emit rows in. That made the
+  // badge intermittent and made two peers on one Wi-Fi disagree about their
+  // own connection; it looked for several rounds like a difference between
+  // browsers, and was a coin toss.
+  const pairs = /** @type {Array<[string, any]>} */ ([
+    ['won', { state: 'succeeded', nominated: true, selected: true, localCandidateId: 'Lh', remoteCandidateId: 'Rh' }],
+    ['lost', { state: 'succeeded', nominated: true, selected: false, localCandidateId: 'Ls', remoteCandidateId: 'Rs' }],
+  ])
+  const candidates = {
+    Lh: { type: 'host', address: 'aaa.local' }, Rh: { type: 'host', address: 'bbb.local' },
+    Ls: { type: 'srflx', address: '103.74.136.124' }, Rs: { type: 'srflx', address: '203.0.113.9' },
+  }
+
+  assert.equal(await classifyPath(fakeMultiPC('won', pairs, candidates)), 'local')
+  // Same stats, losing pair emitted first. The answer must not move.
+  assert.equal(await classifyPath(fakeMultiPC('won', [...pairs].reverse(), candidates)), 'local')
+})
+
+test('classifyPath: an address the browser withheld is unknown, not direct', async () => {
+  // Firefox does not expose the address of a peer-reflexive candidate -- it
+  // reports the literal string "(redacted)". So when one peer fails to resolve
+  // the other's mDNS name, this is all the evidence there is, and it supports
+  // no verdict either way.
+  //
+  // It must not be 'direct'. The old code ended in `return 'direct'`, so this
+  // case told people on their own Wi-Fi that the transfer was crossing the
+  // internet, and warned them what it might cost.
+  const pc = fakeMultiPC('sel', [
+    ['sel', { state: 'succeeded', nominated: true, selected: true, localCandidateId: 'Lh', remoteCandidateId: 'Rp' }],
+  ], {
+    Lh: { type: 'host', address: 'ccc.local' },
+    Rp: { type: 'prflx', address: '(redacted)' },
+  })
+  assert.equal(await classifyPath(pc), 'unknown')
+})
+
+test('classifyPath: srflx is direct without needing a readable address', async () => {
+  const pc = fakeMultiPC('sel', [
+    ['sel', { state: 'succeeded', nominated: true, selected: true, localCandidateId: 'L', remoteCandidateId: 'R' }],
+  ], { L: { type: 'host', address: 'ccc.local' }, R: { type: 'srflx', address: '(redacted)' } })
+  assert.equal(await classifyPath(pc), 'direct')
+})
+
+test('classifyPath: carrier-grade NAT counts as crossing the internet', async () => {
+  // Not routable, but a mobile network, and billed like one -- so a warning
+  // about data cost is right here even though the address is not public.
+  const pc = fakeMultiPC('sel', [
+    ['sel', { state: 'succeeded', nominated: true, selected: true, localCandidateId: 'L', remoteCandidateId: 'R' }],
+  ], { L: { type: 'host', address: '192.168.1.5' }, R: { type: 'prflx', address: '100.71.3.9' } })
+  assert.equal(await classifyPath(pc), 'direct')
+})

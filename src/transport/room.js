@@ -256,6 +256,55 @@ export function isPrivateAddress(address) {
 }
 
 /**
+ * The candidate pair the connection actually settled on, or null if it has not
+ * settled yet.
+ *
+ * Asking this properly is the whole point. A connection can hold SEVERAL pairs
+ * that are both `succeeded` and `nominated: true` -- a real dump from two
+ * laptops on one Wi-Fi carried a host/host pair and a srflx/srflx pair, both
+ * marked exactly that way, describing the same connection at two different
+ * moments of ICE's work. Only one of them was the pair in use.
+ *
+ * The previous version of this code scanned for the first pair that was
+ * succeeded and not explicitly `nominated: false`, and returned it. That reads
+ * an arbitrary row: which one comes first is whatever order getStats() happens
+ * to produce. It made the path badge intermittent, and made two peers on one
+ * network disagree about their own connection -- one reading the host pair and
+ * saying "Local network", the other reading the srflx pair and saying "Direct,
+ * over the internet". It looked like a difference between browsers for several
+ * rounds. It was a coin toss.
+ *
+ * So: the transport's selectedCandidatePairId first, which is the spec's answer
+ * to "which pair won". Firefox's non-standard `selected` flag second. The old
+ * scan is kept last, because something is better than nothing on an
+ * implementation that offers neither, but it is now the fallback rather than
+ * the strategy.
+ *
+ * @param {Map<string, any>} byId
+ * @returns {any | null}
+ */
+function selectedPair(byId) {
+  for (const report of byId.values()) {
+    if (report.type !== 'transport' || !report.selectedCandidatePairId) continue
+    const pair = byId.get(report.selectedCandidatePairId)
+    if (pair) return pair
+  }
+
+  for (const report of byId.values()) {
+    if (report.type === 'candidate-pair' && report.selected) return report
+  }
+
+  for (const report of byId.values()) {
+    if (report.type !== 'candidate-pair') continue
+    if (report.state !== 'succeeded') continue
+    if (report.nominated === false) continue
+    return report
+  }
+
+  return null
+}
+
+/**
  * Which route the live connection actually took, read off the nominated ICE
  * candidate pair. Drives both the RELAYED_MAX_BYTES cap and the path badge the
  * user sees.
@@ -288,6 +337,7 @@ export function isPrivateAddress(address) {
  * @param {RTCPeerConnection} pc
  * @returns {Promise<NetworkPath>}
  */
+
 export async function classifyPath(pc) {
   const deadline = Date.now() + 3000
 
@@ -304,41 +354,70 @@ export async function classifyPath(pc) {
     const byId = new Map()
     stats.forEach((report, id) => byId.set(id, report))
 
-    for (const report of byId.values()) {
-      if (report.type !== 'candidate-pair') continue
-      if (report.state !== 'succeeded') continue
-      if (report.nominated === false) continue
-
-      const local = byId.get(report.localCandidateId)
-      const remote = byId.get(report.remoteCandidateId)
-      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return 'relay'
-      if (!local && !remote) continue
-
-      // Two ways to be sure the bytes stayed on the network, because neither
-      // holds on its own.
-      //
-      // Both ends reporting a host candidate is the clean case. It is NOT
-      // sufficient by itself: mDNS makes the two peers disagree about the same
-      // connection, one seeing host/host and the other host/prflx. See
-      // isPrivateAddress above -- that asymmetry was a live bug, with a phone
-      // and a laptop on one Wi-Fi reporting different paths to their users.
-      const bothHost = local?.candidateType === 'host' && remote?.candidateType === 'host'
-
-      // So also accept a pair whose addresses are both demonstrably not
-      // routable over the public internet. This is what catches the
-      // peer-reflexive half of that disagreement. A srflx candidate carries a
-      // public address and fails this, which is the point: reaching a peer
-      // through NAT is an internet path however local the near end looks.
-      const bothPrivate = isPrivateAddress(local?.address ?? local?.ip)
-        && isPrivateAddress(remote?.address ?? remote?.ip)
-
-      if (bothHost || bothPrivate) return 'local'
-      return 'direct'
+    const pair = selectedPair(byId)
+    if (pair) {
+      const local = byId.get(pair.localCandidateId)
+      const remote = byId.get(pair.remoteCandidateId)
+      if (local || remote) return classifyPair(local, remote)
     }
 
     await new Promise(resolve => setTimeout(resolve, 300))
   }
 
+  return 'unknown'
+}
+
+/**
+ * The verdict for one candidate pair, from whatever evidence it carries.
+ *
+ * Ordered by how much each piece of evidence is worth, strongest first, and
+ * ending in 'unknown' rather than in a guess. That last part is the important
+ * one: the previous version finished with `return 'direct'`, so every case it
+ * had no evidence about was reported to the user as a metered internet
+ * connection -- confidently, and sometimes wrongly, complete with a warning
+ * about what it might cost them.
+ *
+ * Evidence is genuinely scarce here, because Firefox does not hand out the
+ * address of a peer-reflexive candidate: it reports the literal string
+ * "(redacted)". So a pairing where one side failed to resolve the other's mDNS
+ * name yields host/prflx with no address at all, which is neither provably
+ * local nor provably remote. It now says so.
+ *
+ * @param {any} local
+ * @param {any} remote
+ * @returns {NetworkPath}
+ */
+function classifyPair(local, remote) {
+  const types = [local?.candidateType, remote?.candidateType]
+  const addresses = [local?.address ?? local?.ip, remote?.address ?? remote?.ip]
+
+  // Through a TURN server, whatever else is true.
+  if (types.includes('relay')) return 'relay'
+
+  // A server-reflexive candidate IS the address STUN observed from outside,
+  // so a pair using one went out through NAT by construction. This needs no
+  // address to be readable, which is what makes it worth checking before any
+  // of the address rules below.
+  if (types.includes('srflx')) return 'direct'
+
+  // Both ends on a host candidate: each side is talking to an address it
+  // found on one of its own interfaces.
+  if (types[0] === 'host' && types[1] === 'host') return 'local'
+
+  // Or both addresses are readable AND not routable on the public internet.
+  if (addresses.every(isPrivateAddress)) return 'local'
+
+  // Positive evidence the other way: an address we can read that is public,
+  // or carrier-grade NAT -- which is not public, but is a mobile network, and
+  // is billed like one.
+  const OUTSIDE = ['ipv4-public', 'ipv6-global', 'ipv4-cgnat']
+  if (addresses.some(a => OUTSIDE.includes(addressForm(a)))) return 'direct'
+
+  // Everything else: a prflx candidate whose address the browser withheld,
+  // most often. Not knowing is a real answer, and much better than the
+  // alternative -- claiming 'local' here would tell someone on a mobile plan
+  // their transfer is free, and claiming 'direct' would nag someone on their
+  // own Wi-Fi about data charges they are not incurring.
   return 'unknown'
 }
 
