@@ -1,12 +1,25 @@
 /**
  * QR generation and scanning.
  *
- * Rendered as SVG rather than a canvas bitmap so it stays sharp on any display
- * and at any size -- a blurry QR is a QR that takes three attempts to scan.
+ * Two renderers, for two different jobs:
  *
- * The code is always drawn dark-on-light regardless of page theme. Scanners
- * cope poorly with inverted codes, and this is the one element on the page
- * whose job is to be read by a camera rather than a person.
+ *  - `renderQR` draws an <svg>, so the pairing code stays sharp on any
+ *    display and at any size -- a blurry QR is a QR that takes three
+ *    attempts to scan, and it renders exactly once.
+ *  - `renderQRToCanvas` draws onto a reused <canvas> the caller keeps
+ *    across calls, for the "beam" file-transfer path, which repaints a new
+ *    code up to ten times a second. See its doc comment for why that rules
+ *    out SVG.
+ *
+ * Both are always drawn dark-on-light regardless of page theme. Scanners
+ * cope poorly with inverted codes, and this is the one kind of element on
+ * the page whose job is to be read by a camera rather than a person.
+ *
+ * Two scan modes, built one on top of the other:
+ *
+ *  - `scanQR` resolves once, with the first code seen -- the pairing path.
+ *  - `scanQRStream` keeps decoding for as long as the caller wants and
+ *    calls back on every value -- the beam receive path.
  */
 
 import qrcode from 'qrcode-generator'
@@ -37,6 +50,57 @@ export function renderQR(text, { cellSize = 6, margin = 3 } = {}) {
   // Non-null: createSvgTag always returns one <svg> root, and the only input
   // to it is the code we generated ourselves.
   return /** @type {Element} */ (template.content.firstElementChild)
+}
+
+/**
+ * Draws a QR code onto a caller-supplied, reused <canvas>, one canvas pixel
+ * per module rather than per on-screen pixel.
+ *
+ * WHY A SECOND RENDERER: `renderQR` above is right for the pairing code,
+ * which renders once and must stay sharp at whatever size the CSS asks for.
+ * The beam player redraws a new code up to ten times a second, and rebuilding
+ * (or, per `patch()` in src/web/vdom.js, re-adopting) several hundred <rect>
+ * elements at that rate is not viable -- filling a canvas with plain
+ * `fillRect` calls is. Sizing the canvas to the module count and leaving the
+ * upscale to CSS (`image-rendering: pixelated` on the caller's side) is also
+ * far cheaper than scaling in JS: the canvas never holds more pixels than
+ * there are modules to draw.
+ *
+ * Beam frames default to error correction L rather than the pairing code's M:
+ * a beam frame is one chunk of a sequence that just loops back and repeats a
+ * missed frame, so there is no lasting harm in a frame that fails to scan,
+ * and L's lower redundancy buys back capacity -- fewer frames per file, and
+ * more headroom before the payload needs a second QR "page" per chunk.
+ *
+ * Always dark-on-light, same reasoning as `renderQR`: this is drawn for a
+ * camera, not a person, and scanners cope poorly with inverted codes.
+ *
+ * @param {string} text
+ * @param {HTMLCanvasElement} canvas
+ * @param {{ ec?: 'L' | 'M' | 'Q' | 'H', margin?: number }} [options]
+ * @returns {void}
+ */
+export function renderQRToCanvas(text, canvas, { ec = 'L', margin = 2 } = {}) {
+  const qr = qrcode(0, ec)
+  qr.addData(text)
+  qr.make()
+
+  const count = qr.getModuleCount()
+  const size = count + margin * 2
+  canvas.width = size
+  canvas.height = size
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Could not open a 2D canvas to draw the code')
+
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, size, size)
+  ctx.fillStyle = '#000'
+  for (let row = 0; row < count; row++) {
+    for (let col = 0; col < count; col++) {
+      if (qr.isDark(row, col)) ctx.fillRect(col + margin, row + margin, 1, 1)
+    }
+  }
 }
 
 /**
@@ -84,18 +148,32 @@ async function createDetector() {
 }
 
 /**
- * Starts the camera and resolves with the first decoded QR value.
+ * Starts the camera and calls `onCode` for every decoded QR value, for as
+ * long as `signal` stays unaborted.
  *
  * Always stops the camera track on the way out, including on error and on
  * cancel. A page that quietly holds the camera open after the user has moved on
  * is both a privacy problem and, on a phone, a battery one.
  *
+ * Unlike the one-shot `scanQR` below, ending via `signal` is the ordinary
+ * way this resolves, not a failure -- there is no "the stream got cancelled"
+ * error to report, so this resolves rather than rejecting on abort.
+ *
  * @param {object} args
  * @param {HTMLVideoElement} args.video
- * @param {AbortSignal} [args.signal]
- * @returns {Promise<string>}
+ * @param {(value: string) => void} args.onCode
+ * @param {AbortSignal} args.signal
+ * @returns {Promise<void>}
  */
-export async function scanQR({ video, signal }) {
+export async function scanQRStream({ video, onCode, signal }) {
+  // Checked before the camera is opened, not after. An AbortSignal that has
+  // already fired never emits the event again, so a listener registered below
+  // would never hear it -- and this would light up the camera and loop on it
+  // forever for a caller that had already given up. The pre-aborted case is
+  // ordinary here: element.js's teardown can fire between a user's tap and
+  // this function getting its turn.
+  if (signal.aborted) return
+
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: 'environment' },
     audio: false,
@@ -112,21 +190,31 @@ export async function scanQR({ video, signal }) {
   }
 
   try {
-    return await new Promise((resolve, reject) => {
+    await new Promise(resolve => {
       let stopped = false
+      // The beam plays codes at roughly 10 fps against a camera sampling at
+      // roughly 30 fps, so the same displayed frame is decoded two or three
+      // times running before the next code appears. Without this guard every
+      // one of those repeats would reach onCode as if it were a new chunk,
+      // and the beam decoder would have to re-derive this same dedup logic
+      // downstream. Comparing only against the immediately-previous value
+      // (not a history set) is deliberate: a sequence that legitimately
+      // repeats a value later on is a new frame arriving late, not a repeat
+      // of this one, and must still be delivered.
+      let last = /** @type {string | null} */ (null)
 
-      signal?.addEventListener('abort', () => {
+      signal.addEventListener('abort', () => {
         stopped = true
-        reject(new DOMException('Scan cancelled', 'AbortError'))
+        resolve(undefined)
       }, { once: true })
 
       const tick = async () => {
         if (stopped) return
         try {
           const value = await detect(video)
-          if (value) {
-            stopped = true
-            return resolve(value)
+          if (value && value !== last) {
+            last = value
+            onCode(value)
           }
         } catch {
           // A single bad frame is not fatal; keep looking.
@@ -138,6 +226,56 @@ export async function scanQR({ video, signal }) {
   } finally {
     stop()
   }
+}
+
+/**
+ * Starts the camera and resolves with the first decoded QR value.
+ *
+ * A thin one-shot wrapper over `scanQRStream`: it derives its own
+ * `AbortController` chained to the caller's `signal`, resolves with the
+ * first value `scanQRStream` reports and aborts the internal loop, but --
+ * unlike `scanQRStream` itself -- rejects with `AbortError` when the
+ * caller's own `signal` fires, since here cancellation before a code is
+ * found is the failure case the caller (the live pairing screen) needs to
+ * distinguish from a successful scan.
+ *
+ * @param {object} args
+ * @param {HTMLVideoElement} args.video
+ * @param {AbortSignal} [args.signal]
+ * @returns {Promise<string>}
+ */
+export async function scanQR({ video, signal }) {
+  const internal = new AbortController()
+  const relay = () => internal.abort()
+  if (signal?.aborted) internal.abort()
+  else signal?.addEventListener('abort', relay, { once: true })
+
+  /** @type {string | null} */
+  let found = null
+
+  try {
+    // Awaited rather than raced against a second promise that resolves on the
+    // first code. scanQRStream only settles after its own `finally` has
+    // stopped the camera track, so awaiting it is what preserves this
+    // function's original guarantee: by the time a caller has the value, the
+    // hardware is already released. Resolving from inside onCode would hand
+    // the caller a code while the camera was still running for another tick,
+    // and the pairing screen navigates away on exactly that resolution.
+    await scanQRStream({
+      video,
+      signal: internal.signal,
+      onCode: value => {
+        if (found !== null) return
+        found = value
+        internal.abort()
+      },
+    })
+  } finally {
+    signal?.removeEventListener('abort', relay)
+  }
+
+  if (found === null) throw new DOMException('Scan cancelled', 'AbortError')
+  return found
 }
 
 export const cameraAvailable = () =>
