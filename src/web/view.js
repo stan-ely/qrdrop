@@ -67,6 +67,10 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   against the input rather than in the page-level banner
  * @property {string} code
  * @property {Element | null} qrNode
+ * @property {boolean} qrIsLink whether the QR on the send screen carries a
+ *   link (the deployed site, which sets base-url) or the bare `qrdrop:`
+ *   code (an embedder that did not). It changes what the other device has
+ *   to do, so the send screen has to say which one it drew.
  * @property {boolean} cameraAvailable
  * @property {string | null} capabilityNote
  * @property {string} sas
@@ -270,6 +274,25 @@ function send(state, dispatch) {
   return [
     h('h2', { tabindex: '-1' }, 'Scan this on the other device'),
     h('div', { id: 'qr', class: 'qr', key: 'qr', adopt: state.qrNode }),
+
+    // The one thing the send screen never said, and the thing a first-time
+    // sender is actually stuck on: who scans this, and with what. "Scan this
+    // on the other device" reads as an instruction to find a scanner, which
+    // sent people hunting for an app to install -- when on the deployed site
+    // the QR is a URL (core/secret.js's encodeSecretURL) and the ordinary
+    // camera app already does the whole job, landing on this page with the
+    // key in the fragment and the receive flow started.
+    //
+    // Conditional on qrIsLink rather than stated unconditionally, because an
+    // embedder without base-url gets the bare `qrdrop:` form, which no camera
+    // app knows how to open. Telling those users "any camera app will do"
+    // would be advice that cannot work, which is worse than the silence this
+    // replaces.
+    h('p', { class: 'note' }, state.qrIsLink
+      ? 'Any camera app will do — this code is a link, and opens qrdrop on the other '
+        + 'device ready to receive. Nothing to install there.'
+      : 'On the other device, open qrdrop, tap “Receive a file”, and point it at this code.'),
+
     h('div', { class: 'code-row' }, [
       h('code', { id: 'manual-code', class: 'code' }, state.code),
       h('button', {

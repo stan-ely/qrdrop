@@ -29,6 +29,21 @@ const SITE = path.join(ROOT, 'site')
 const DIST = path.join(SITE, 'dist')
 
 /**
+ * The deployed origin, in one place.
+ *
+ * It has two consumers that must agree: the CNAME file written below (which
+ * is what actually binds the custom domain on GitHub Pages) and the absolute
+ * URLs in site/index.html's Open Graph tags, which crawlers fetch with no
+ * document to resolve a relative path against. Those tags carry an
+ * __ORIGIN__ placeholder rather than the domain typed out a second time --
+ * the same reasoning as `buildCSP` below and src/web/tokens.js: two copies
+ * of one fact drift the first time only one of them is edited, and here the
+ * drift is silent, because a wrong og:image is invisible until someone else
+ * pastes the link somewhere.
+ */
+const ORIGIN = 'https://share.stan-ely.com'
+
+/**
  * The Content-Security-Policy, as a single generated string.
  *
  * connect-src is built from SIGNALING_URLS -- every URL src/transport/room.js
@@ -204,17 +219,32 @@ async function main() {
   const cssFile = `styles.${createHash('sha256').update(css).digest('hex').slice(0, 8).toUpperCase()}.css`
   await writeFile(path.join(DIST, cssFile), css)
   await copyFile(path.join(SITE, '_headers'), path.join(DIST, '_headers'))
-  await writeFile(path.join(DIST, 'CNAME'), 'share.stan-ely.com\n')
+
+  // The social-preview card. Committed rather than rendered here, because
+  // producing it needs a headless browser (scripts/make-og.mjs, run by hand
+  // when the design changes) and `npm run build` runs in CI and in
+  // prepublishOnly, where a browser download is not a dependency this repo
+  // is willing to take on for an image that changes about never.
+  await copyFile(path.join(SITE, 'og.png'), path.join(DIST, 'og.png'))
+
+  await writeFile(path.join(DIST, 'CNAME'), new URL(ORIGIN).host + '\n')
 
   const csp = buildCSP(SIGNALING_URLS)
   const template = await readFile(path.join(SITE, 'index.html'), 'utf8')
+  // replaceAll, not replace: __ORIGIN__ appears three times (og:url and two
+  // image URLs) and `String.replace` with a string argument substitutes only
+  // the first. The guard below is what turns that class of mistake into a
+  // failed build rather than a page shipped with a literal __ORIGIN__ in an
+  // href, so the two belong together.
   const html = template
-    .replace('__CSP__', csp)
-    .replace('__SCRIPT__', entryFile)
-    .replace('__STYLES__', cssFile)
+    .replaceAll('__CSP__', csp)
+    .replaceAll('__SCRIPT__', entryFile)
+    .replaceAll('__STYLES__', cssFile)
+    .replaceAll('__ORIGIN__', ORIGIN)
 
-  if (html.includes('__CSP__') || html.includes('__SCRIPT__') || html.includes('__STYLES__')) {
-    throw new Error('site/index.html placeholder was not replaced -- check the token still exists in the template')
+  const leftover = ['__CSP__', '__SCRIPT__', '__STYLES__', '__ORIGIN__'].filter(t => html.includes(t))
+  if (leftover.length) {
+    throw new Error(`site/index.html placeholder(s) not replaced: ${leftover.join(', ')} -- check the token still exists in the template`)
   }
 
   await writeFile(path.join(DIST, 'index.html'), html)

@@ -48,6 +48,65 @@ h1 {
   font-size: var(--fs--1);
 }
 
+/*
+ * The three-step orientation strip between the tagline and the transfer UI
+ * (see the comment on the <ol> in site/index.html for why it exists at all).
+ *
+ * One step per line at every width, which is not the first thing tried. A
+ * wrapping row looked right in the abstract and is wrong here: `main` is
+ * capped at 34rem, which is a column narrow enough that the three labels land
+ * two-then-one even on a desktop, and a numbered list whose 3 sits alone
+ * under a full row reads as a layout accident rather than as three steps.
+ * Widening the column for the sake of this row would be the tail wagging the
+ * dog -- 34rem is a measure chosen for reading. Three short lines it is.
+ *
+ * The list markers are switched off and replaced with a CSS counter, so the
+ * numbers can be chips without a second element inside every <li>.
+ *
+ * Deliberately quieter than the card below it and louder than .tagline above:
+ * --text on the step labels (this is instruction, and --muted twice in a row
+ * turns the whole header into grey mush) but at --fs--1, so it never competes
+ * with the buttons, which are the thing the reader is meant to reach.
+ */
+.how {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  counter-reset: step;
+  margin: var(--sp-4) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs--1);
+  color: var(--text);
+}
+
+.how li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  counter-increment: step;
+}
+
+/* --accent-soft rather than --accent: a filled accent chip three times over
+ * reads as three buttons, and there are real buttons a few hundred pixels
+ * below that need to own that colour. The chip is 1.5em square so it tracks
+ * --fs--1 rather than pinning a pixel size that stops matching the day the
+ * type scale moves. */
+.how li::before {
+  content: counter(step);
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.85em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 qr-drop { display: block; }
 
 footer { margin-top: var(--sp-5); }

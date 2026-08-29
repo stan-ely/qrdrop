@@ -195,6 +195,7 @@ export class QRDropElement extends HTMLElement {
       error: /** @type {string | null} */ (null),
       code: '',
       qrNode: /** @type {Element | null} */ (null),
+      qrIsLink: false,
       cameraAvailable: cameraAvailable(),
       capabilityNote: canStreamToDisk() ? null : CAPABILITY_NOTE,
       sas: '',
@@ -452,7 +453,7 @@ export class QRDropElement extends HTMLElement {
     this._onOfferDecline = null
     clearTimeout(this._copyTimer)
     this._setState({
-      screen: 'choose', role: null, status: '', code: '', qrNode: null,
+      screen: 'choose', role: null, status: '', code: '', qrNode: null, qrIsLink: false,
       sas: '', sasWords: [], offer: null, file: null, progress: null,
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
       mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
@@ -605,7 +606,7 @@ export class QRDropElement extends HTMLElement {
     const code = encodeSecret(secret)
 
     this._setState({
-      screen: 'send', role: 'sender', code, qrNode: renderQR(qrText),
+      screen: 'send', role: 'sender', code, qrNode: renderQR(qrText), qrIsLink: Boolean(this._baseURL),
       status: 'Starting…', pairing: true, file: { name: file.name, size: file.size },
     })
 
