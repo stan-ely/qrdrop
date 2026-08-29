@@ -133,6 +133,11 @@ there is no transfer. **Beam** is the answer to that, and it is a separate mode
 rather than a fallback: the sender animates QR codes on screen, the receiver
 points a camera at them, and nothing crosses a wire.
 
+Beam is reached from the browser UI only — `qrdrop web`, then the page's "No
+network? Show it as a QR code" or "Scan a beamed file". There is no `qrdrop
+beam` command, and there will not be one: the mode needs a screen to animate
+and a camera watching it, which a terminal on the receiving end does not have.
+
 ```
   Sender's screen                                    Receiver's camera
     |                                                        |

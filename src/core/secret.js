@@ -160,7 +160,7 @@ export function encodeSecretURL(secret, baseURL) {
  */
 function decodeCode(code) {
   const bytes = fromBase64url(code)
-  if (bytes.length !== SECRET_BYTES) throw new Error('Malformed qrdrop code')
+  if (bytes.length !== SECRET_BYTES) throw new Error('Malformed qrdrop code — expected 32 bytes of key, base64url-encoded')
   return bytes
 }
 
@@ -187,10 +187,10 @@ export function decodeSecret(text) {
   try {
     url = new URL(trimmed)
   } catch {
-    throw new Error('Not a qrdrop code')
+    throw new Error('Not a qrdrop code — expected qrdrop:… or a link with #qrdrop:… in it')
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('Not a qrdrop code')
+    throw new Error('Not a qrdrop code — expected qrdrop:… or a link with #qrdrop:… in it')
   }
 
   // The code must live in the fragment. A fragment is the one part of a URL
@@ -208,5 +208,5 @@ export function decodeSecret(text) {
     throw new Error('qrdrop code must be in the URL fragment (after #), not the query string or path')
   }
 
-  throw new Error('Not a qrdrop code')
+  throw new Error('Not a qrdrop code — expected qrdrop:… or a link with #qrdrop:… in it')
 }

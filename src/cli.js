@@ -21,6 +21,7 @@
 import { parseArgs } from 'node:util'
 import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import process from 'node:process'
 
 import {
@@ -117,13 +118,18 @@ Options:
 ${formatOptions(OPTIONS)}
 
 "qrdrop web" serves this project's browser UI from the copy you installed, on
-http://localhost -- nothing is uploaded, and no other device can reach it. It is
+http://127.0.0.1 — nothing is uploaded, and no other device can reach it. It is
 the way to run a transfer whose code you can read before trusting it with a file.
 
-A transfer that ends up going through a public TURN relay (rare -- only when a
+Beaming — an unencrypted, no-network transfer shown as an animated QR code and
+read back by a camera — is a browser-only mode inside "qrdrop web". There is no
+"qrdrop beam" command: it needs a screen to animate and a camera watching it,
+and a terminal on the receiving end has neither.
+
+A transfer that ends up going through a public TURN relay (rare — only when a
 direct connection cannot be made) is capped at ${Math.round(RELAYED_MAX_BYTES / (1024 * 1024))} MB.
 
-Every transfer -- send or receive -- stops to show four emoji and asks you to
+Every transfer — send or receive — stops to show four emoji and asks you to
 confirm they match on both devices before anything about the file moves. That
 check is what stops a third party from slipping into the exchange; --yes does
 not and cannot skip it.
@@ -345,7 +351,7 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
     const qrText = qrUrl ? encodeSecretURL(secret, qrUrl) : code
     if (showQR) process.stdout.write(`\n${renderQRToTerminal(qrText)}\n\n`)
     if (qrUrl) process.stdout.write(`URL: ${style.accent(qrText)}\n`)
-    process.stdout.write(`Code: ${style.accent(code)}\n`)
+    process.stdout.write(`Transfer code: ${style.accent(code)}\n`)
 
     const sessionEnded = { done: false }
     room = await establish({ secret, role: 'host', relays, strategy, prompter })
@@ -415,9 +421,14 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
  * @param {ReturnType<typeof makePrompter>} args.prompter
  */
 async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter }) {
-  const raw = code ?? await prompter.ask('Code: ')
+  const raw = code ?? await prompter.ask('Code (or paste a shared link): ')
   const secret = decodeSecret(raw)
   const createSink = createFileSink({ outDir })
+  // --out defaults to '.', which says nothing about what that resolves to --
+  // and by the time the success line prints, the file has already landed
+  // wherever it was going to land. Resolved once here and said before the
+  // wait, so it is a question answerable in advance rather than after.
+  const outDirAbs = resolve(outDir)
   const style = styleFor(process.stdout)
 
   /** @type {PairedRoom | undefined} */
@@ -431,7 +442,8 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
     const paired = await establish({ secret, role: 'guest', relays, strategy, prompter })
     room = paired
 
-    process.stdout.write('\nWaiting for the sender to offer a file…\n')
+    process.stdout.write(`\nSaving into ${outDirAbs}\n`)
+    process.stdout.write('Waiting for the sender to offer a file…\n')
     const onProgress = makeProgressReporter({ verb: 'Received' })
 
     /**
@@ -500,7 +512,10 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
       return 0
     }
 
-    process.stdout.write(`${style.ok(`Received ${outcome.file.name}.`)} digest=${outcome.file.digest}\n`)
+    process.stdout.write(
+      `${style.ok(`Received ${outcome.file.name}.`)} Saved to ${resolve(outDirAbs, outcome.file.name)}\n`
+      + `digest=${outcome.file.digest}\n`,
+    )
     return 0
   } finally {
     room?.close()
@@ -593,6 +608,17 @@ function parseCliArgs(argv) {
   }
   if (command === '--version') {
     return { command: 'version' }
+  }
+  // A tailored miss rather than the generic one below. Someone typing this
+  // has read about beaming and wants it; "Unknown command" followed by a dump
+  // of every flag answers a question they did not ask, and leaves them no
+  // better off than before.
+  if (command === 'beam') {
+    throw new UsageError(
+      'There is no "qrdrop beam" command. Beaming — an unencrypted, no-network transfer\n'
+      + 'read by a camera — is a browser-only mode: run "qrdrop web" and choose it on\n'
+      + 'the page.\n',
+    )
   }
   if (command !== 'send' && command !== 'receive' && command !== 'web') {
     throw new UsageError(`Unknown command: ${command}\n\n${USAGE}`)
