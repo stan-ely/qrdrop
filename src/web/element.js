@@ -43,7 +43,7 @@ import { openRoom, RELAYED_MAX_BYTES } from '../transport/room.js'
 import { createControlStream } from '../core/control.js'
 import { createReceiver } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
-import { relayCapMessage, relayCapDeclineMessage, PEER_DISCONNECTED } from '../core/messages.js'
+import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED } from '../core/messages.js'
 import { bytes } from '../core/format.js'
 import { createSink, canStreamToDisk } from './sink.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
@@ -186,6 +186,34 @@ export class QRDropElement extends HTMLElement {
     this._prev = null
   }
 
+  /**
+   * Publishes which route the connection took into state, for the badge.
+   *
+   * Awaited only when the transfer is big enough for the answer to change what
+   * someone would do -- classifyPath polls for up to three seconds, and paying
+   * that on every pairing would delay the verify screen, and so the SAS
+   * gesture, including for a 40 KB photo nobody is reading the badge for.
+   * Below the threshold it resolves in the background and the badge arrives a
+   * moment late, which costs nothing.
+   *
+   * The wait deliberately happens HERE, before the offer or verify screen is
+   * drawn -- never inside the Accept handler. That handler's user activation is
+   * what permits showSaveFilePicker to open, and an await in front of
+   * createSink spends an activation that has already expired.
+   *
+   * @param {PairedRoom} room
+   * @param {number} size
+   */
+  async _publishPath(room, size) {
+    if (size > METERED_WARN_BYTES) {
+      this._setState({ path: await room.path() })
+      return
+    }
+    room.path().then(/** @param {NetworkPath} path */ path => {
+      if (!this._sessionEnded) this._setState({ path })
+    }, () => {})
+  }
+
   /** @returns {import('./view.js').State} */
   _initialState() {
     return {
@@ -196,6 +224,7 @@ export class QRDropElement extends HTMLElement {
       code: '',
       qrNode: /** @type {Element | null} */ (null),
       qrIsLink: false,
+      path: /** @type {NetworkPath | null} */ (null),
       cameraAvailable: cameraAvailable(),
       capabilityNote: canStreamToDisk() ? null : CAPABILITY_NOTE,
       sas: '',
@@ -623,6 +652,8 @@ export class QRDropElement extends HTMLElement {
 
     const { control, nextControlIndex } = this._attachReceiver({ room })
 
+    await this._publishPath(room, file.size)
+
     // Verify before anything about the file leaves this device -- the
     // manifest alone would disclose its name and size.
     this._setState({ screen: 'verify', sas: room.session.sas, sasWords: room.session.sasWords })
@@ -719,6 +750,8 @@ export class QRDropElement extends HTMLElement {
               progress: { moved: 0, total: manifest.size },
             })
           }
+
+          await this._publishPath(room, manifest.size)
 
           this._setState({ offer: { name: manifest.name, size: manifest.size } })
         })().catch(e => this._fail(e))

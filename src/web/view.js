@@ -40,6 +40,7 @@
 
 import { h } from './vdom.js'
 import { bytes, duration } from '../core/format.js'
+import { pathDescription, meteredWarning } from '../core/messages.js'
 // A value import, not just a type -- checked once against beam.js's own
 // module top level before relying on it here: it defines constants and
 // exported functions and touches neither `document` nor a camera at import
@@ -71,6 +72,9 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   link (the deployed site, which sets base-url) or the bare `qrdrop:`
  *   code (an embedder that did not). It changes what the other device has
  *   to do, so the send screen has to say which one it drew.
+ * @property {NetworkPath | null} path which route
+ *   the connection took, or null before classification resolves -- and always
+ *   null in beam mode, which has no connection to classify.
  * @property {boolean} cameraAvailable
  * @property {string | null} capabilityNote
  * @property {string} sas
@@ -107,6 +111,42 @@ const STEP_INDEX = { send: 0, receive: 0, verify: 1, transfer: 2, done: 2 }
 const STEP_LABELS = ['Connect', 'Verify', 'Transfer']
 
 const SUCCESS_OUTCOMES = new Set(['sent', 'received'])
+
+/**
+ * The network-path badge, plus the metered warning when there is one.
+ *
+ * Returns null rather than a placeholder while `path` is still null: the
+ * classification resolves a beat after pairing, and a badge that reads "Path
+ * unknown" for two seconds before correcting itself to "Local network" is worse
+ * than one that simply arrives. Also null in beam mode -- beam has no peer
+ * connection, and a badge there would be describing nothing.
+ *
+ * `aria-live="polite"` because it does arrive late: without it a screen-reader
+ * user is never told the path at all, having already been read the screen.
+ *
+ * Passive text by construction -- no button, no dismiss, nothing focusable.
+ * The two safety gestures are the SAS confirm and Accept, and this renders
+ * beside them without becoming a third thing to click past.
+ *
+ * @param {State} state
+ */
+function pathBadge(state) {
+  if (!state.path || state.mode === 'beam') return null
+
+  const { label, detail } = pathDescription(state.path)
+  // The sender knows the file, the receiver knows the offer; whichever this
+  // side has is the size the warning should be about.
+  const subject = state.file ?? state.offer
+  const warning = subject
+    ? meteredWarning({ name: subject.name, size: subject.size, path: state.path })
+    : null
+
+  return h('div', { class: 'path-info', 'aria-live': 'polite' }, [
+    h('p', { class: `path-badge ${state.path}` }, label),
+    h('p', { class: 'note' }, detail),
+    warning ? h('p', { class: 'path-warning' }, warning) : null,
+  ])
+}
 
 /**
  * The label for one of the two Copy buttons.
@@ -413,6 +453,13 @@ function verify(state, dispatch) {
     h('p', { class: 'note' },
       'If these differ, someone is between you. Stop, and start over with a fresh code.'),
 
+    // Sender only. The receiver's copy lives inside verifyStatus instead, so
+    // it can sit BELOW the line naming the incoming file: rendered here it
+    // warned that "holiday-video.mov is 900 MB" several lines above the only
+    // place the reader had been told a holiday-video.mov existed.
+    // Both placements are still above the gesture, which is the point.
+    state.role === 'sender' ? pathBadge(state) : null,
+
     h('div', { id: 'verify-status', 'aria-live': 'polite' }, verifyStatus(state, dispatch)),
 
     h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
@@ -454,6 +501,7 @@ function verifyStatus(state, dispatch) {
   // fires once); it is being made to admit that it heard.
   return [
     h('p', { class: 'status' }, `${state.offer.name} (${bytes(state.offer.size)})`),
+    pathBadge(state),
     h('button', {
       class: 'btn primary', type: 'button', disabled: state.busy,
       onclick: () => dispatch('offer:accept'),
@@ -477,6 +525,7 @@ function transfer(state, dispatch) {
   return [
     h('h2', { tabindex: '-1' }, state.role === 'receiver' ? 'Receiving' : 'Sending'),
     state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
+    pathBadge(state),
     h('div', {
       class: 'bar', role: 'progressbar',
       'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(moved),
@@ -543,6 +592,7 @@ function done(state, dispatch) {
     state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '')
       ? h('p', { class: 'filename' }, state.file.name)
       : null,
+    pathBadge(state),
     // Only when there is one. A failed or declined transfer never computes a
     // digest, and an outcome screen offering to reveal "Verification digest"
     // that opens onto nothing reads as a second, smaller failure.

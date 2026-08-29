@@ -30,7 +30,10 @@ import {
 } from './index.js'
 import { encodeSecretURL } from './core/secret.js'
 import { bytes as formatBytes } from './core/format.js'
-import { relayCapMessage, relayCapDeclineMessage, PEER_DISCONNECTED } from './core/messages.js'
+import {
+  relayCapMessage, relayCapDeclineMessage, pathDescription, meteredWarning,
+  METERED_WARN_BYTES, PEER_DISCONNECTED,
+} from './core/messages.js'
 import { createFileSink, fromPath, renderQRToTerminal, loadRTCPolyfill, serveStatic } from './node/index.js'
 import { openURL } from './node/open-url.js'
 import { styleFor } from './cli/style.js'
@@ -160,6 +163,47 @@ function makePrompter(rl) {
       return /^y(es)?$/i.test(answer.trim())
     },
   }
+}
+
+/**
+ * Tells the user which route the connection took, and warns when a transfer
+ * big enough to matter is about to cross the internet.
+ *
+ * To stderr, not stdout: e2e/interop.e2e.mjs parses stdout, and pairing
+ * chatter already goes to stderr. A new stdout line would be a compatibility
+ * break for no benefit -- this is commentary, not output.
+ *
+ * 'unknown' is the ordinary answer here rather than an anomaly: the
+ * node-datachannel builds this CLI runs on report nothing useful from
+ * getStats(). It is still printed, because silently claiming one of the other
+ * three would be a lie told by default on every CLI transfer.
+ *
+ * Awaited only above the warning threshold, so the up-to-three-second poll
+ * never delays a small send. --yes does not suppress any of this: it skips the
+ * accept prompt, and this is text rather than a prompt.
+ *
+ * @param {PairedRoom} room
+ * @param {{ name: string, size: number }} file
+ * @returns {Promise<void>}
+ */
+async function reportPath(room, file) {
+  const style = styleFor(process.stderr)
+  /** @type {Record<NetworkPath, (s: string) => string>} */
+  const paint = { local: style.ok, direct: style.accent, relay: style.warn, unknown: style.dim }
+
+  /** @param {NetworkPath} path */
+  const announce = path => {
+    const { label, detail } = pathDescription(path)
+    process.stderr.write(`${paint[path](label)} — ${detail}\n`)
+    const warning = meteredWarning({ name: file.name, size: file.size, path })
+    if (warning) process.stderr.write(`${style.warn(warning)}\n`)
+  }
+
+  if (file.size > METERED_WARN_BYTES) {
+    announce(await room.path())
+    return
+  }
+  room.path().then(announce, () => {})
 }
 
 /**
@@ -381,6 +425,8 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
       if (!sessionEnded.done) control.fail(new Error(PEER_DISCONNECTED))
     })
 
+    await reportPath(room, { name: source.name, size: source.size })
+
     process.stdout.write(`\nSending ${source.name} (${formatBytes(source.size)})…\n`)
     const onProgress = makeProgressReporter({ verb: 'Sent' })
 
@@ -489,6 +535,8 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
                 resolve({ kind: 'declined' })
                 return
               }
+              await reportPath(paired, { name: manifest.name, size: manifest.size })
+
               const ok = assumeYes || await prompter.confirm(`\nIncoming: ${describe}. Accept?`)
               if (!ok) {
                 await decline()

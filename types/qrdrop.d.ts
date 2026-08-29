@@ -128,6 +128,21 @@ interface SessionKeys {
   sasWords: string[]
 }
 
+/**
+ * Which route a paired connection actually took, read off the nominated ICE
+ * candidate pair.
+ *
+ * 'local' means both ends nominated a host candidate: the file's bytes stay on
+ * the network and never reach an ISP. It is not a promise of "free" -- a host
+ * candidate can also belong to a VPN or Tailscale interface -- which is why the
+ * copy in core/messages.js hedges rather than talking about data charges.
+ *
+ * 'unknown' is a real answer, not a failure: node-datachannel builds report
+ * nothing useful from getStats(). Consumers must render it rather than
+ * defaulting it to one of the other three.
+ */
+type NetworkPath = 'local' | 'direct' | 'relay' | 'unknown'
+
 /** What transport/room.js resolves with once a peer is paired. */
 interface PairedRoom {
   session: SessionKeys
@@ -138,8 +153,14 @@ interface PairedRoom {
   /** Fires only for the paired peer, not for anyone else in the room. */
   onPeerLeave(callback: () => void): void
   /**
+   * Which route the connection took. Memoised, so repeated calls are free
+   * after the first. Drives both the path badge and isRelayed below.
+   */
+  path(): Promise<NetworkPath>
+  /**
    * Whether the connection runs through a TURN relay rather than a direct
-   * path. Fails open (resolves false) when it cannot tell -- see
+   * path. Derived from path(), so the cap and the path shown to the user
+   * cannot disagree. Fails open (resolves false) when it cannot tell -- see
    * RELAYED_MAX_BYTES, which callers gate on this.
    */
   isRelayed(): Promise<boolean>

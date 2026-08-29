@@ -103,7 +103,13 @@ const shots = [
       // beneath are the content, and are what a person reads aloud.
       sas: SAS.map(e => e[0]).join(' '),
       sasWords: SAS.map(e => e[1]),
-      file: { name: 'report.pdf', size: 2_384_912 }
+      file: { name: 'report.pdf', size: 2_384_912 },
+      // The path badge is part of this screen now, so the picture of it shows
+      // one. 'local' rather than a metered path because the warning that comes
+      // with those is size-triggered, and report.pdf is under the threshold --
+      // a shot pairing a 2 MB file with a data-cost warning would be showing a
+      // combination the app never produces.
+      path: 'local'
     }
   },
   {

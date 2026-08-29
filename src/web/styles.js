@@ -411,6 +411,39 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 .outcome.bad { background: var(--bad-soft); color: var(--bad); }
 .outcome.warn { background: var(--warn-soft); color: var(--warn); }
 
+/* ---- network path: which route the bytes actually took ----
+   A pill plus one explanatory line, sitting next to the SAS confirm and the
+   Accept button. Styled flat and unclickable on purpose: it is the answer to
+   "is this costing me data", not a control, and anything button-shaped beside
+   a safety gesture is something people learn to click through. Same reasoning
+   as .warn-banner above -- a permanent property of the connection, not a
+   fault. */
+.path-info { margin: var(--sp-3) 0; }
+
+.path-badge {
+  display: inline-block;
+  margin: 0 0 var(--sp-1);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
+  font-size: var(--fs--1);
+  font-weight: 600;
+}
+
+.path-badge.local { background: var(--ok-soft); color: var(--ok); }
+.path-badge.direct { background: var(--accent-soft); color: var(--accent); }
+.path-badge.relay { background: var(--warn-soft); color: var(--warn); }
+.path-badge.unknown { background: var(--surface-raised); color: var(--muted); }
+
+/* The metered heads-up. Subordinate to the badge -- no background fill, so it
+   reads as a sentence attached to the pill rather than a second banner
+   competing with the gesture underneath it. */
+.path-warning {
+  margin: var(--sp-2) 0 0;
+  color: var(--warn);
+  font-size: var(--fs--1);
+  font-weight: 600;
+}
+
 .status { color: var(--muted); font-size: var(--fs--1); margin: var(--sp-2) 0 0; }
 .note { color: var(--muted); font-size: var(--fs--1); }
 .filename { font-weight: 600; margin: 0; word-break: break-all; }

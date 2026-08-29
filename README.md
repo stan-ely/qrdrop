@@ -317,6 +317,16 @@ in a browser with no install on either side.
   connection that falls back to TURN hides each IP from the other but shows both
   to the relay operator; forcing that path for everyone would need
   `iceTransportPolicy: 'relay'`, left opt-in.
+- **Which route the bytes took is now shown, with a caveat.** Both surfaces
+  report the path read off the nominated ICE candidate pair: *Local network*
+  (both ends on a host candidate), *Direct, over the internet* (reached through
+  NAT), *Through a public relay* (TURN), or *Path unknown*. Treat "Local
+  network" as evidence, not proof — a host candidate can also belong to a VPN,
+  Tailscale, or container interface, which is a local *interface* rather than a
+  local *network*, so the copy never promises the transfer is free. "Local"
+  describes the file bytes only: pairing always crossed the internet, over a
+  public signalling network. "Path unknown" means this device could not read
+  the stats — the ordinary answer under `node-datachannel`, and not a fault.
 - **Relays and trackers see metadata**: that two throwaway keys met on a room,
   when, and roughly how much moved.
 - **Beam transfers are in the clear.** No handshake means no key agreement and
@@ -492,6 +502,15 @@ site answer the question out loud is what stopped it.
   that ends up relayed is capped at 100 MB — the sender refuses and the receiver
   auto-declines a larger file. A direct connection has no such limit. There is
   no resume yet, so an interrupted transfer restarts from zero.
+- **The metered warning and the TURN cap are different numbers on purpose.**
+  Above 25 MB (`METERED_WARN_BYTES`) on a *direct* or *relay* path, both
+  surfaces say so before the transfer starts — that threshold protects the
+  user's data allowance, where the 100 MB cap protects free infrastructure.
+  Collapsing them into one constant looks tidy and would let a 90 MB transfer
+  over mobile data go out in silence. The warning is deliberately silent on a
+  *local* path, and on *unknown*: warning about a route we've just said we can't
+  identify would fire on every large CLI send and train the message into
+  wallpaper. It is text beside the existing gestures, never a second click.
 - **One file at a time.** The framing supports a file sequence; neither the UI
   nor the CLI exposes it yet.
 

@@ -193,19 +193,39 @@ const tryLeave = room => {
 }
 
 /**
- * True when the live connection runs through a TURN relay rather than a direct
- * path. Drives the RELAYED_MAX_BYTES cap.
+ * Which route the live connection actually took, read off the nominated ICE
+ * candidate pair. Drives both the RELAYED_MAX_BYTES cap and the path badge the
+ * user sees.
+ *
+ *   'local'   both ends nominated a host candidate -- the bytes are staying on
+ *             this network and never reach an ISP.
+ *   'direct'  a direct peer connection, but reached through NAT (srflx/prflx),
+ *             so every byte crosses the internet.
+ *   'relay'   through a third-party TURN server: across the internet twice.
+ *   'unknown' this build cannot tell.
+ *
+ * This used to return a bare boolean -- relayed or not -- which threw away the
+ * host/srflx distinction it was already reading. That collapse is why a
+ * same-Wi-Fi transfer and a transfer billed against a mobile plan looked
+ * identical to the user.
  *
  * Polls briefly: the nominated candidate pair is not always in getStats() the
  * instant the connection opens. If it never resolves -- including
  * node-datachannel builds where getStats() reports nothing useful -- this
- * returns false. The cap is a courtesy to free infrastructure, not a security
- * boundary, so "cannot tell" fails open.
+ * answers 'unknown' rather than guessing. Callers must keep 'unknown' failing
+ * OPEN for the cap (see isRelayed below): the cap is a courtesy to free
+ * infrastructure, not a security boundary, and treating "cannot tell" as
+ * "relayed" would refuse every Node send over 100 MiB.
+ *
+ * Not defeated by mDNS: browsers replace the address of a host candidate with a
+ * random `.local` name, but `candidateType` still reads 'host'. Classify off
+ * that field, never by parsing the address -- an address-based check would see
+ * an opaque hostname and silently downgrade every LAN transfer to 'direct'.
  *
  * @param {RTCPeerConnection} pc
- * @returns {Promise<boolean>}
+ * @returns {Promise<NetworkPath>}
  */
-async function connectionIsRelayed(pc) {
+export async function classifyPath(pc) {
   const deadline = Date.now() + 3000
 
   while (Date.now() < deadline) {
@@ -214,7 +234,7 @@ async function connectionIsRelayed(pc) {
     try {
       stats = await pc.getStats()
     } catch {
-      return false
+      return 'unknown'
     }
 
     /** @type {Map<string, any>} */
@@ -228,14 +248,19 @@ async function connectionIsRelayed(pc) {
 
       const local = byId.get(report.localCandidateId)
       const remote = byId.get(report.remoteCandidateId)
-      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return true
-      if (local || remote) return false
+      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return 'relay'
+
+      // Both ends must be host before claiming the bytes stayed local. A
+      // host/srflx pair means one side reached the other through NAT, which is
+      // an internet path however local the near end looks.
+      if (local?.candidateType === 'host' && remote?.candidateType === 'host') return 'local'
+      if (local || remote) return 'direct'
     }
 
     await new Promise(resolve => setTimeout(resolve, 300))
   }
 
-  return false
+  return 'unknown'
 }
 
 /**
@@ -443,6 +468,24 @@ export async function openRoom({
 
   const { session, peerId, room, frameAction, setFrameHandler } = winner
 
+  /**
+   * Memoised: classifyPath polls for up to three seconds, and there are now
+   * several callers (the cap check, the badge, the metered warning) where there
+   * used to be one -- unmemoised, each would re-pay that wait.
+   *
+   * @type {Promise<NetworkPath> | null}
+   */
+  let pathOnce = null
+
+  /** @returns {Promise<NetworkPath>} */
+  const resolvePath = () => {
+    if (pathOnce) return pathOnce
+    const pc = room.getPeers()[peerId]
+    if (!pc) return Promise.resolve(/** @type {NetworkPath} */ ('unknown'))
+    pathOnce = classifyPath(pc)
+    return pathOnce
+  }
+
   return {
     session,
     peerId,
@@ -474,14 +517,23 @@ export async function openRoom({
     },
 
     /**
+     * Which route this connection took. Drives the path badge the user sees.
+     * @returns {Promise<NetworkPath>}
+     */
+    path: resolvePath,
+
+    /**
      * Whether the paired connection is going through a TURN relay. Callers use
      * this to enforce RELAYED_MAX_BYTES before a large file starts moving.
+     *
+     * Derived from path() rather than asking its own question, so the cap and
+     * the path shown to the user can never disagree. Note 'unknown' is false
+     * here: "cannot tell" must not refuse a send. See classifyPath.
+     *
      * @returns {Promise<boolean>}
      */
     async isRelayed() {
-      const pc = room.getPeers()[peerId]
-      if (!pc) return false
-      return connectionIsRelayed(pc)
+      return (await resolvePath()) === 'relay'
     },
 
     close() {
