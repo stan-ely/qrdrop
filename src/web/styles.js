@@ -148,6 +148,44 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 .choices { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
 .choices .btn { flex: 1 1 12rem; }
 
+/* The beam entry point on the choose screen: deliberately smaller and looser
+ * than .choices above it, so the eye lands on "Send a file" / "Receive a
+ * file" first. A subordinate row, not a third equally-weighted button --
+ * the network path is strictly better whenever there is a network. */
+.beam-entry { margin-top: var(--sp-5); }
+.choices.secondary { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+/* Bordered, unlike every other .ghost in the component. Ghost means "the way
+ * out" elsewhere -- Cancel, Decline -- and a borderless control is legible
+ * enough when the user already knows they want it. These two are the opposite:
+ * an entry point into a mode nobody is looking for yet, and without an edge
+ * they read as centred body text rather than as something clickable, which is
+ * how they first rendered. Subordinate by size and colour, not by being
+ * invisible. */
+.choices.secondary .btn {
+  flex: 1 1 12rem;
+  font-size: var(--fs--1);
+  border-color: var(--line);
+}
+.choices.secondary .btn:hover { border-color: var(--line-strong); }
+
+/* ---- unmissable "this is not encrypted" banner, both beam screens ----
+ * Reuses --warn/--warn-soft rather than a new colour: those tokens are
+ * already the "heed this" pair everywhere else in the component (the
+ * too-large outcome), and a second warning colour would just make the
+ * palette bigger without making this one easier to notice. A left border
+ * rather than a full outline keeps it from reading as an error box (--bad),
+ * which this is not -- it is a permanent property of the mode, not a fault. */
+.warn-banner {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 600;
+  font-size: var(--fs--1);
+}
+
 /* ---- drop zone: drag-and-drop / paste entry point for a send ---- */
 .dropzone {
   border: 2px dashed var(--line-strong);
@@ -173,6 +211,45 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   margin: 0 auto var(--sp-5);
 }
 .qr svg { display: block; width: 100%; height: auto; }
+
+/* Same "always light" reasoning as .qr above, and the same quiet-zone padding
+ * -- a beam frame is read by the exact same class of scanner as the pairing
+ * QR, so it needs the same white margin around the modules to lock on. */
+.beam-stage {
+  background: #ffffff;
+  border-radius: var(--r-sm);
+  padding: var(--sp-3);
+  width: min(16rem, 100%);
+  margin: 0 auto var(--sp-4);
+}
+
+/* web/beam.js paints one canvas pixel per QR module and leaves the CSS to
+ * blow it up to display size (see startBeamSend's canvas). image-rendering:
+ * pixelated is not decorative here -- the default smoothing algorithm blurs
+ * those hard module edges into a soft gradient a scanner cannot binarize, so
+ * an un-pixelated beam looks fine to a person and is unreadable to a camera. */
+.beam-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.beam-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.beam-controls select {
+  font: inherit;
+  font-size: var(--fs--1);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--text);
+}
 
 /* ---- camera scanner + corner-bracket viewfinder ----
  * .scanner-frame is a plain positioned box; .viewfinder draws its four

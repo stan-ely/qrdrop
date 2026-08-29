@@ -47,6 +47,7 @@ import { relayCapMessage, relayCapDeclineMessage, PEER_DISCONNECTED } from '../c
 import { bytes } from '../core/format.js'
 import { createSink, canStreamToDisk } from './sink.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
+import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
 import { patch } from './vdom.js'
 import { render } from './view.js'
@@ -161,6 +162,16 @@ export class QRDropElement extends HTMLElement {
     /** @type {number | undefined} */
     this._copyTimer = undefined
 
+    /**
+     * The running beam player, kept only so the fps control can reach it.
+     *
+     * Stopping it goes through `_teardown` like every other live thing, so
+     * this is deliberately NOT a second teardown path -- one place that ends a
+     * session is the whole reason _teardown exists.
+     * @type {{ setFps: (fps: number) => void } | null}
+     */
+    this._beam = null
+
     this._dispatch = this._dispatch.bind(this)
 
     this._state = this._initialState()
@@ -190,6 +201,9 @@ export class QRDropElement extends HTMLElement {
       dragging: false,
       copied: /** @type {'code' | 'digest' | null} */ (null),
       pairing: false,
+      mode: /** @type {'p2p' | 'beam'} */ ('p2p'),
+      beamNode: /** @type {Element | null} */ (null),
+      beam: /** @type {{ fps: number, loops: number, solved: number, blocks: number } | null} */ (null),
     }
   }
 
@@ -324,6 +338,9 @@ export class QRDropElement extends HTMLElement {
     switch (intent) {
       case 'send:pick': return this._pickFile()
       case 'receive:scan': return void this._beginScan().catch(e => this._fail(e))
+      case 'beam:pick': return this._pickFile(file => this._startBeamSend(file))
+      case 'beam:scan': return void this._startBeamReceive()
+      case 'beam:fps': return this._setBeamFps(payload)
       case 'manual:submit': return this._submitManualCode(payload)
       case 'verify:confirm': return this._onVerifyConfirm?.()
       case 'offer:accept': return this._onOfferAccept?.()
@@ -409,6 +426,7 @@ export class QRDropElement extends HTMLElement {
   _reset() {
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
+    this._beam = null
     this._onVerifyConfirm = null
     this._onOfferAccept = null
     this._onOfferDecline = null
@@ -417,6 +435,7 @@ export class QRDropElement extends HTMLElement {
       screen: 'choose', role: null, status: '', code: '', qrNode: null,
       sas: '', sasWords: [], offer: null, file: null, progress: null,
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
+      mode: 'p2p', beamNode: null, beam: null,
     })
   }
 
@@ -681,13 +700,199 @@ export class QRDropElement extends HTMLElement {
     this._setState({ screen: 'verify', sas: room.session.sas, sasWords: room.session.sasWords })
   }
 
-  _pickFile() {
+  /**
+   * @param {(file: File) => Promise<void>} [start] Which send this picker
+   *   feeds. Defaults to the network path, so the existing 'send:pick' intent
+   *   reads exactly as it did.
+   */
+  _pickFile(start) {
+    const begin = start ?? (/** @param {File} f */ f => this._startSend(f))
     const input = Object.assign(document.createElement('input'), { type: 'file' })
     input.addEventListener('change', () => {
       const file = input.files?.[0]
-      if (file) this._startSend(file).catch(e => this._fail(e))
+      if (file) begin(file).catch(e => this._fail(e))
     }, { once: true })
     input.click()
+  }
+
+  /**
+   * Beam: animate the file as QR codes for another device's camera.
+   *
+   * NOTE WHAT IS ABSENT. There is no _establish, no SAS, and no verify screen,
+   * and that is structural rather than an omission. A one-way channel has no
+   * handshake, so there is no peer to authenticate and nothing a SAS could
+   * compare. Fabricating a decorative one would be worse than having none: it
+   * would teach that the gesture is theatre, on a codebase where the real one
+   * is the entire man-in-the-middle defence. view.js says plainly on-screen
+   * that this mode is unencrypted; that honesty is the substitute.
+   *
+   * @param {File} file
+   */
+  async _startBeamSend(file) {
+    this._setState({
+      screen: 'beam-send', mode: 'beam', role: 'sender',
+      file: { name: file.name, size: file.size },
+      status: 'Preparing the code…',
+      beam: { fps: DEFAULT_FPS, loops: 0, solved: 0, blocks: 0 },
+    })
+
+    const player = await startBeamSend({
+      source: fromFile(file),
+      fps: DEFAULT_FPS,
+      onTick: ({ loops }) => {
+        // Re-rendered once per LOOP, not once per frame. onTick fires ten
+        // times a second, and _setState renders synchronously -- so calling it
+        // per frame would run the whole view, every screen in it, ten times a
+        // second, for a number that changes every few minutes. The canvas
+        // repaints itself outside the vdom precisely so this does not have to
+        // (see beam.js's header), and this guard is the other half of that.
+        const beam = this._state.beam
+        if (!beam || beam.loops === loops) return
+        this._setState({ beam: { ...beam, loops } })
+      },
+    })
+
+    // Cancelling must stop the animation, exactly as it closes a room on the
+    // network path.
+    this._beam = player
+    this._teardown = () => player.stop()
+
+    const { manifest } = player
+    this._setState({
+      beamNode: player.canvas,
+      beam: { fps: DEFAULT_FPS, loops: 0, solved: 0, blocks: player.frameCount },
+      // The compression figure is worth showing rather than hiding: it is the
+      // difference between a transfer that takes one minute and one that takes
+      // six, and it is the only lever a sender has (send the CSV, not the zip
+      // of the CSV).
+      status: manifest.encoding === 'gzip'
+        ? `Compressed to ${bytes(manifest.encodedSize)} from ${bytes(manifest.size)}.`
+        : `${bytes(manifest.encodedSize)} to send.`,
+    })
+  }
+
+  /** @param {number} fps */
+  _setBeamFps(fps) {
+    this._beam?.setFps(fps)
+    const beam = this._state.beam
+    if (beam) this._setState({ beam: { ...beam, fps } })
+  }
+
+  /**
+   * Beam: collect a file from another device's screen through this camera.
+   */
+  async _startBeamReceive() {
+    this._setState({
+      screen: 'beam-receive', mode: 'beam', role: 'receiver',
+      status: cameraAvailable()
+        ? 'Point the camera at the other screen.'
+        : 'No camera available, so there is no way to read the code.',
+      beam: { fps: 0, loops: 0, solved: 0, blocks: 0 },
+    })
+    if (!cameraAvailable()) return
+
+    // _setState renders synchronously, so the <video> the view just described
+    // is already in the shadow root. Reaching for it by id afterwards is the
+    // same shape as _beginScan's, and for the same reason: a MediaStream is a
+    // real DOM attachment the pure view cannot own.
+    const video = /** @type {HTMLVideoElement} */ (this._root.getElementById('beam-scanner'))
+
+    /** @type {Sink | null} */
+    let sink = null
+    /** @type {(() => Promise<Bytes>) | null} */
+    let assemble = null
+    /** @type {import('../core/beam.js').BeamManifest | null} */
+    let manifest = null
+
+    // Accepting and completing race, and either can land first: the user may
+    // still be reading the prompt when the last frame arrives, or may accept
+    // within seconds and then wait minutes. So both paths call this, and it
+    // does nothing until it has both halves.
+    const finish = async () => {
+      if (!sink || !assemble || !manifest) return
+      const received = manifest
+      const produce = assemble
+      assemble = null // one-shot: never write the same file twice
+
+      try {
+        // assemble() inflates and verifies the SHA-256 before a byte is
+        // written, so a corrupt transfer never reaches the user's disk as a
+        // plausible-looking partial file.
+        await sink.write(await produce())
+        await sink.close()
+      } catch (error) {
+        await sink.abort()
+        return this._failTransfer(error)
+      }
+
+      this._sessionEnded = true
+      this._setState({
+        screen: 'done', outcome: 'received',
+        file: { name: sink.name, size: received.size },
+        // The manifest's own hash, which assemble() has just checked the bytes
+        // against. On the network path this field holds a chained digest both
+        // peers computed independently; here there is only one computation and
+        // no peer to agree with, so it is a checksum rather than a mutual
+        // confirmation. The copy in view.js must not overstate it.
+        digest: received.sha256,
+      })
+    }
+
+    const session = startBeamReceive({
+      video,
+
+      onManifest: incoming => {
+        manifest = incoming
+
+        this._onOfferDecline = () => {
+          this._onOfferDecline = null
+          this._onOfferAccept = null
+          this._reset()
+        }
+
+        // The receiver's half of the two safety gestures, and it fires HERE --
+        // seconds in, the moment the manifest decodes -- rather than when the
+        // file is complete. That is not an optimisation. This click is the
+        // user activation that permits showSaveFilePicker to open (see
+        // web/sink.js), and the transfer runs for minutes afterwards; asking
+        // at the end would spend an activation that expired long before.
+        // Nothing is awaited ahead of createSink for the same reason.
+        this._onOfferAccept = async () => {
+          this._onOfferAccept = null
+          this._onOfferDecline = null
+
+          sink = await createSink({
+            t: 'manifest', seq: 0, chunks: incoming.blocks,
+            name: incoming.name, size: incoming.size, mime: incoming.mime,
+          })
+          if (!sink) return this._reset() // the save dialog was dismissed
+
+          this._setState({ offer: null, status: 'Keep the camera steady.' })
+          await finish()
+        }
+
+        this._setState({ offer: { name: incoming.name, size: incoming.size } })
+      },
+
+      onProgress: ({ solved, blocks }) => {
+        const beam = this._state.beam
+        if (!beam || beam.solved === solved) return
+        this._setState({
+          beam: { ...beam, solved, blocks },
+          progress: { moved: solved, total: blocks },
+        })
+      },
+
+      onComplete: produce => {
+        assemble = produce
+        this._setState({ status: 'Got the whole file. Saving…' })
+        finish().catch(e => this._failTransfer(e))
+      },
+
+      onError: e => this._failTransfer(e),
+    })
+
+    this._teardown = () => session.stop()
   }
 
   async _beginScan() {

@@ -17,13 +17,18 @@
  * `dispatch(intent, payload)` is the only way a rendered element talks back.
  * The intents are: 'send:pick', 'receive:scan', 'manual:submit' (payload:
  * the raw text typed or pasted), 'verify:confirm', 'offer:accept',
- * 'offer:decline', 'cancel', 'restart', 'copy' (payload: 'code' | 'digest').
- * Drag-and-drop and paste are deliberately NOT among them -- element.js
- * wires those on the host element itself (see its class comment), because
- * "drop anywhere on the component" is a property of the whole custom
- * element, not of any one vnode this file describes.
+ * 'offer:decline', 'cancel', 'restart', 'copy' (payload: 'code' | 'digest'),
+ * 'beam:pick', 'beam:scan', 'beam:fps' (payload: the chosen number). The
+ * beam intents are the no-network path's equivalents of 'send:pick' /
+ * 'receive:scan' -- a separate pair rather than overloading the originals,
+ * because element.js needs to know at the moment of the click which of two
+ * entirely different subsystems (WebRTC pairing vs. web/beam.js's player or
+ * camera collector) to spin up. Drag-and-drop and paste are deliberately NOT
+ * among them -- element.js wires those on the host element itself (see its
+ * class comment), because "drop anywhere on the component" is a property of
+ * the whole custom element, not of any one vnode this file describes.
  *
- * ALL SIX SCREENS ARE ALWAYS PRESENT IN THE TREE, toggled with the `hidden`
+ * ALL EIGHT SCREENS ARE ALWAYS PRESENT IN THE TREE, toggled with the `hidden`
  * boolean prop rather than being added and removed. Three things depend on
  * that: e2e/transfer.e2e.mjs asserts on `#screen-X:not([hidden])`, the vdom's
  * node-reuse-by-key needs stable positions to keep `<video id="scanner">`'s
@@ -35,6 +40,16 @@
 
 import { h } from './vdom.js'
 import { bytes } from '../core/format.js'
+// A value import, not just a type -- checked once against beam.js's own
+// module top level before relying on it here: it defines constants and
+// exported functions and touches neither `document` nor a camera at import
+// time (the DOM work only happens inside startBeamSend/startBeamReceive,
+// which this file never calls). That makes it safe for a PURE file to import
+// without smuggling a side effect in behind it. FPS_CHOICES is also exactly
+// the "one source of truth" src/web/tokens.js already models for the design
+// tokens -- duplicating the array here would drift the day someone tunes the
+// range in beam.js and forgets this copy.
+import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
 
 /**
  * The shape element.js's `_state` always is -- mirrors its `_initialState()`
@@ -43,8 +58,9 @@ import { bytes } from '../core/format.js'
  * element.js references it back via `import('./view.js').State`.
  *
  * @typedef {object} State
- * @property {'choose' | 'send' | 'receive' | 'verify' | 'transfer' | 'done'} screen
+ * @property {'choose' | 'send' | 'receive' | 'verify' | 'transfer' | 'done' | 'beam-send' | 'beam-receive'} screen
  * @property {'sender' | 'receiver' | null} role
+ * @property {'p2p' | 'beam'} mode
  * @property {string} status
  * @property {string | null} error
  * @property {string} code
@@ -62,11 +78,15 @@ import { bytes } from '../core/format.js'
  * @property {boolean} dragging
  * @property {'code' | 'digest' | null} copied
  * @property {boolean} pairing
+ * @property {Element | null} beamNode the adopted <canvas> the player owns
+ * @property {{ fps: number, loops: number, solved: number, blocks: number } | null} beam
  */
 
 /** @typedef {(intent: string, payload?: any) => void} Dispatch */
 
-const SCREENS = /** @type {const} */ (['choose', 'send', 'receive', 'verify', 'transfer', 'done'])
+const SCREENS = /** @type {const} */ ([
+  'choose', 'send', 'receive', 'verify', 'transfer', 'done', 'beam-send', 'beam-receive',
+])
 
 // The three-step rail's labels, indexed by the screen that step covers.
 // 'choose' has no entry -- the rail is hidden there, because there is
@@ -137,7 +157,14 @@ export function render(state, dispatch) {
 
 /** @param {State} state */
 function stepRail(state) {
-  if (state.screen === 'choose') return null
+  // Beam has no Connect/Verify handshake to show progress through -- it is a
+  // single unbroken "camera pointed at screen" step, and there is no SAS to
+  // land the rail's "Verify" label on. Folding it into STEP_INDEX would mean
+  // inventing a fake middle step for a mode whose entire point is that it has
+  // none, which is exactly the kind of dishonesty core/beam.js's header warns
+  // against for the encryption claim -- the same principle applies to the UI
+  // implying a verification step that cannot happen.
+  if (state.screen === 'choose' || state.screen === 'beam-send' || state.screen === 'beam-receive') return null
 
   const doneAll = state.screen === 'done' && SUCCESS_OUTCOMES.has(state.outcome ?? '')
   const current = STEP_INDEX[state.screen]
@@ -154,7 +181,10 @@ function stepRail(state) {
  * @param {Dispatch} dispatch
  */
 function screen(name, state, dispatch) {
-  const builders = { choose, send, receive, verify, transfer, done }
+  const builders = {
+    choose, send, receive, verify, transfer, done,
+    'beam-send': beamSend, 'beam-receive': beamReceive,
+  }
   return h('section', { id: `screen-${name}`, class: 'card', hidden: state.screen !== name },
     builders[name](state, dispatch))
 }
@@ -177,6 +207,25 @@ function choose(state, dispatch) {
     // Shown only when this browser cannot stream a download to disk (see
     // web/sink.js's canStreamToDisk) -- everyone else never sees this note.
     state.capabilityNote ? h('p', { class: 'note' }, state.capabilityNote) : null,
+
+    // A deliberately quieter, third row rather than a third .choices button:
+    // the network path above is better in every measurable way when a
+    // network exists (encrypted, faster, no camera needed), so beam is an
+    // escape hatch for when there genuinely is no network, not an equal
+    // alternative. `.btn.ghost` and its own row keep it from competing for
+    // the eye with "Send a file" / "Receive a file" above.
+    h('div', { class: 'beam-entry' }, [
+      h('div', { class: 'choices secondary' }, [
+        h('button', { id: 'btn-beam', class: 'btn ghost', onclick: () => dispatch('beam:pick') },
+          'No network? Show it as a QR code'),
+        h('button', { id: 'btn-beam-receive', class: 'btn ghost', onclick: () => dispatch('beam:scan') },
+          'Scan a beamed file'),
+      ]),
+      h('p', { class: 'note' },
+        'Beaming needs no network at all: the file is shown as an animated QR code and read back by a '
+        + 'camera, at about 6 kB/s. It is not encrypted, and the cap is smaller -- 1 MiB after '
+        + 'compression, so most text and code but few photos.'),
+    ]),
   ]
 }
 
@@ -421,5 +470,124 @@ function done(state, dispatch) {
       h('p', { class: 'note' }, 'Both devices computed this independently from the file contents.'),
     ]) : null,
     h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
+  ]
+}
+
+/**
+ * The one warning both beam screens must carry, word for word. A single
+ * source rather than two hand-written copies for the same reason
+ * src/web/tokens.js gives the palette exactly one home: two copies of a
+ * safety-critical sentence drift the first time someone edits one of them,
+ * and this particular sentence is the entire reason a receiver is allowed to
+ * skip the SAS screen at all. See core/beam.js's header for why beam cannot
+ * be encrypted (no handshake, so no ECDH, no forward secrecy, no SAS) --
+ * this is that fact's UI half, and it must never be softened into something
+ * that reads as "still somewhat protected."
+ */
+const BEAM_WARNING = 'This is not encrypted, and cannot be -- there is no handshake, so nothing here to '
+  + 'verify. Anyone who can see this screen while it plays can read the file.'
+
+/**
+ * @param {State} state
+ * @param {Dispatch} dispatch
+ */
+function beamSend(state, dispatch) {
+  const fps = state.beam?.fps ?? DEFAULT_FPS
+  const loops = state.beam?.loops ?? 0
+
+  return [
+    h('h2', { tabindex: '-1' }, 'Show this to the other device'),
+    h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
+    state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
+
+    // `adopt` and `key` are both load-bearing, not stylistic. The canvas is a
+    // real DOM node web/beam.js's player repaints in place up to ten times a
+    // second (see its header comment on why the QR is not described in
+    // vnodes at all) -- describing its pixels here would mean a full render
+    // of every screen on every repaint, and reconciling several hundred
+    // <rect>s the vdom did not draw is not a thing it can do anyway. `key`
+    // pins this <div>'s position across re-renders so vdom.js's canReuse
+    // never decides to rebuild it: a rebuilt element would call adoptInto
+    // again, which is a harmless no-op for the *same* node, but the player
+    // holds no other reference to its canvas than the one this prop hands
+    // back, so any path that let the wrapper be thrown away and recreated
+    // would silently orphan the canvas the player is still painting to.
+    h('div', { id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', adopt: state.beamNode }),
+
+    h('div', { class: 'beam-controls' }, [
+      h('label', { for: 'beam-fps' }, 'Speed'),
+      h('select', {
+        id: 'beam-fps',
+        value: String(fps),
+        onchange: /** @param {Event} ev */ ev =>
+          dispatch('beam:fps', Number(/** @type {HTMLSelectElement} */ (ev.target).value)),
+      }, FPS_CHOICES.map(choice => h('option', { key: String(choice), value: String(choice) }, `${choice} fps`))),
+    ]),
+
+    // Loops, not percent: a sender has no back channel at all (see
+    // core/beam.js's header), so "how far along is the other device" is a
+    // question this screen structurally cannot answer. The one honest signal
+    // is how many times the whole file has already gone by, plus telling the
+    // truth that the only way to know when to stop is to look at the other
+    // screen -- not this one.
+    h('p', { class: 'status', 'aria-live': 'polite' },
+      `Shown in full ${loops} time${loops === 1 ? '' : 's'}. Keep this on screen until the other `
+      + "device's own screen says it is done -- there is no signal back to this one that says so."),
+
+    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+  ]
+}
+
+/**
+ * @param {State} state
+ * @param {Dispatch} dispatch
+ */
+function beamReceive(state, dispatch) {
+  const solved = state.beam?.solved ?? 0
+  const blocks = state.beam?.blocks ?? 0
+  const pct = blocks > 0 ? Math.min(100, (solved / blocks) * 100) : 0
+
+  return [
+    h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
+    h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
+
+    // Unlike receive()'s scanner, there is no manual-entry fallback to fall
+    // back to here -- a beam code is thousands of frames, not one string a
+    // person could read aloud or paste. So a missing camera is said outright
+    // instead of the silent omission receive() uses (see its comment): there
+    // the fallback is right there below; here there genuinely is none.
+    state.cameraAvailable
+      ? h('div', { class: 'scanner-frame' }, [
+        h('video', { id: 'beam-scanner', key: 'beam-scanner', class: 'scanner', muted: true, playsinline: '' }),
+        h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
+      ])
+      : h('p', { class: 'note' }, 'This device has no usable camera, so it cannot receive a beamed file.'),
+
+    state.offer ? [
+      h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`),
+      // Accept is offered the instant the manifest decodes -- a second or two
+      // into pointing the camera -- rather than after the transfer finishes
+      // minutes later, because this click IS the user activation
+      // showSaveFilePicker needs, and by the time a beam transfer completes
+      // there is no activation left to spend. Same rule as the WebRTC path's
+      // verify screen; see web/beam.js's startBeamReceive doc comment for the
+      // beam-specific version of it.
+      h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('offer:accept') }, 'Accept'),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('offer:decline') }, 'Decline'),
+    ] : h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
+
+    // Solving proceeds from the moment frames arrive, whether or not Accept
+    // has been clicked yet (core/beam.js absorbs blocks eagerly; only the
+    // final decompress-and-verify waits on the user's decision) -- so this
+    // can and does progress while the Accept/Decline buttons above are still
+    // sitting there unanswered. `state.beam` is null until the first block
+    // arrives, which is what keeps this from claiming 0% before there is
+    // anything to report at all.
+    state.beam ? h('div', {
+      id: 'beam-progress', class: 'bar', role: 'progressbar',
+      'aria-valuemin': '0', 'aria-valuemax': String(blocks), 'aria-valuenow': String(solved),
+    }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]) : null,
+
+    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
   ]
 }
