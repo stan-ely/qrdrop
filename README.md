@@ -117,7 +117,79 @@ Both survive into the CLI as stdin prompts. `--yes` skips the accept prompt and
 defence, so a flag that skipped it would be a vulnerability wearing a
 convenience's clothes.
 
+## No network at all
+
+Everything above assumes a network. On an air-gapped machine there is none, so
+there is no transfer. **Beam** is the answer to that, and it is a separate mode
+rather than a fallback: the sender animates QR codes on screen, the receiver
+points a camera at them, and nothing crosses a wire.
+
+```
+  Sender's screen                                    Receiver's camera
+    |                                                        |
+    |--  ~10 QR frames/second, each ~600 bytes  ------------>|
+    |    manifest woven in every 20 frames                   |
+    |                                                        |
+    |    no back channel. none. the sender cannot tell        |
+    |    how the receiver is doing except by looking at it.  |
+```
+
+**It is not encrypted, and it cannot be.** There is no handshake, so there is no
+ECDH, no forward secrecy, and no SAS — there is no peer to authenticate, only
+photons. The only adversary is someone who can see the screen, and a key shown
+on that same screen does not stop them. The UI says so on both beam screens.
+Everything the rest of this document claims about confidentiality applies to the
+WebRTC path and not to this one.
+
+### Why a fountain code
+
+The obvious design is to number the chunks and loop them forever. That is a
+coupon-collector problem: gathering the last few of N chunks means re-watching
+the whole loop repeatedly, so completion costs about `N·ln(N)` frames. Frames
+*are* dropped — jsQR needs 50–100 ms per frame, so a Firefox phone manages about
+ten decodes a second against a display emitting exactly that.
+
+The transfer is an [LT code](https://en.wikipedia.org/wiki/Luby_transform_code)
+instead, so a frame does not care *which* frames were missed, only how many
+arrived. Measured over 1748 blocks (a 1 MiB payload), frames the sender must
+emit before the receiver has the file:
+
+| frame loss | this codec | numbered chunks on a loop |
+| --- | --- | --- |
+| 0% | 1.05 × N | 1.00 × N |
+| 10% | 1.48 × N | 8.3 × N |
+| 30% | 2.08 × N | 10.7 × N |
+| 50% | 2.81 × N | 14.9 × N |
+
+The first N frames are the source blocks sent plain, and only then does the
+fountain start. That costs a little — the decoder needs ~1.3 distinct frames per
+block under loss rather than the ~1.05 a textbook LT code reaches, because most
+blocks are already solved by the time the fountain begins — and it buys the
+common case: a clean capture costs exactly N frames.
+
+### What to expect
+
+About **6 kB/s**, and a **1 MiB cap** applied after compression. Files are gzipped
+first and the result kept only if it actually shrank, so text, CSV, JSON and
+source typically compress 3–10× and a several-megabyte log file is fine, while a
+900 KB JPEG is refused. `test/beam.test.mjs` pins the loss behaviour, including
+the case where a manifest under-declares its own decompressed size.
+
+gzip rather than brotli, though brotli is smaller and is now in the WHATWG
+Compression Standard: a one-way channel cannot negotiate. The sender picks blind
+and the receiver either can inflate it or cannot, and brotli is Safari 18.4+ and
+Firefox 147+ with Chrome behind. Twenty-five seconds off a three-minute transfer
+is not worth a failure whose only remedy is "try a different browser".
+
+A fountain code has no ordering, so the decoder holds every block in memory
+until peeling completes — the second reason for the cap. Raising it wants
+independent ~256 KiB windows so memory stays bounded and each can be flushed as
+it solves; that is not built.
+
 ## Threat model
+
+Everything below describes the **WebRTC path**. The beam mode above shares none
+of it — see that section.
 
 **Protected**
 
@@ -141,6 +213,10 @@ convenience's clothes.
   `iceTransportPolicy: 'relay'`, left opt-in.
 - **Relays and trackers see metadata**: that two throwaway keys met on a room,
   when, and roughly how much moved.
+- **Beam transfers are in the clear.** No handshake means no key agreement and
+  no SAS. Anyone who can see the sender's screen — or a photograph of it, or a
+  camera in the room — has the file. It is offered for air-gapped machines,
+  where the alternative is a USB stick, not as a private channel.
 
 The CLI avoids the browser-delivery problem entirely: it is a versioned tarball
 you can pin, audit, and check the provenance of. Releases are published with

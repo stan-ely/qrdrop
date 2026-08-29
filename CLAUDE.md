@@ -63,6 +63,24 @@ forever — CLI↔browser interop depends on it.
 `NO_COLOR` is set. `e2e/interop.e2e.mjs` parses stdout with it redirected. stdout and
 stderr have independent `isTTY`; `src/cli/style.js` decides per stream.
 
+**The beam player's canvas is never described in vnodes.** `src/web/beam.js`
+creates one `<canvas>` and repaints it in place ~10 times a second; the view
+`adopt`s it, exactly like the pairing QR's `<svg>` and the scanner's `<video>`.
+Describing it in vnodes, or letting `patch()` rebuild it, means a full render of
+every screen ten times a second and a canvas that loses its context. For the
+same reason `onTick` only calls `_setState` when the *loop counter* changes, not
+on every frame — a per-frame `_setState` renders the whole UI at 10 Hz and looks
+fine right up until the QR starts stuttering on a slow phone.
+
+**Beam's Accept fires when the manifest decodes, not when the file completes.**
+Seconds in, not minutes. The click is the user activation that permits
+`showSaveFilePicker`, and a beam transfer runs for minutes afterwards — asking
+at the end spends an activation that expired long ago, and the picker silently
+refuses to open. Nothing may be `await`ed ahead of `createSink` in that handler.
+Beam has no SAS and must not grow a decorative one: there is no peer to
+authenticate, and a fake gesture teaches that the real one on the network path
+is theatre.
+
 **No new runtime dependencies.** Four, plus one optional. The stated position
 (`src/cli.js` header) is that every dependency is one more thing between `npm install`
 and a working transfer. The virtual DOM in `src/web/vdom.js` is hand-rolled for this
