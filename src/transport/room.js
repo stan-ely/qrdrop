@@ -337,6 +337,73 @@ export async function classifyPath(pc) {
 }
 
 /**
+ * Every candidate pair the connection knows about, for diagnosing a
+ * disagreement between two peers about one connection.
+ *
+ * TEMPORARY, and deliberately not wired into classifyPath. It exists because a
+ * phone and a laptop on one Wi-Fi reported different paths, the disagreement
+ * survived a first fix, and which side was wrong REVERSED when the browser
+ * pairing changed -- so the next change should be driven by what the browsers
+ * actually report rather than by a third theory about it. Delete this and its
+ * `?debug=path` surface once the classification is settled.
+ *
+ * Dumps ALL pairs, not just the one classifyPath picks, plus the transport's
+ * selectedCandidatePairId. That last field is the point of the exercise:
+ * classifyPath scans for the first succeeded, non-`nominated: false` pair,
+ * while the spec's answer to "which pair actually won" is this id. If browsers
+ * disagree about `nominated`, or keep several succeeded pairs, the two peers
+ * would be reading different rows of the same table -- which would explain a
+ * disagreement that flips depending on which browsers are involved.
+ *
+ * @param {RTCPeerConnection} pc
+ * @returns {Promise<object>}
+ */
+export async function collectPathEvidence(pc) {
+  /** @type {Map<string, any>} */
+  const byId = new Map()
+  try {
+    ;(await pc.getStats()).forEach((report, id) => byId.set(id, report))
+  } catch (error) {
+    return { error: String(error) }
+  }
+
+  /** @param {any} c */
+  const candidate = c => c && {
+    type: c.candidateType,
+    address: c.address ?? c.ip ?? null,
+    port: c.port ?? null,
+    protocol: c.protocol ?? null,
+    network: c.networkType ?? null,
+  }
+
+  /** @type {string[]} */
+  const selectedIds = []
+  for (const report of byId.values()) {
+    if (report.type === 'transport' && report.selectedCandidatePairId) {
+      selectedIds.push(report.selectedCandidatePairId)
+    }
+  }
+
+  const pairs = []
+  for (const [id, report] of byId) {
+    if (report.type !== 'candidate-pair') continue
+    pairs.push({
+      id,
+      state: report.state,
+      nominated: report.nominated,
+      // Firefox's non-standard marker for the winning pair; included because
+      // its absence or presence is itself evidence about the two browsers.
+      selectedFlag: report.selected,
+      isSelectedByTransport: selectedIds.includes(id),
+      local: candidate(byId.get(report.localCandidateId)),
+      remote: candidate(byId.get(report.remoteCandidateId)),
+    })
+  }
+
+  return { selectedIds, pairs, classified: await classifyPath(pc) }
+}
+
+/**
  * Brings up one signalling strategy and resolves once a peer is connected over
  * it and session keys are agreed. Rejects if this strategy errors, if the peer
  * sends a malformed key, or if `signal` aborts (another strategy won, or the
@@ -594,6 +661,17 @@ export async function openRoom({
      * @returns {Promise<NetworkPath>}
      */
     path: resolvePath,
+
+    /**
+     * TEMPORARY diagnostic -- see collectPathEvidence. Surfaced by the web
+     * component only under `?debug=path`.
+     * @returns {Promise<object | null>}
+     */
+    async pathEvidence() {
+      const pc = room.getPeers()[peerId]
+      if (!pc) return null
+      return collectPathEvidence(pc)
+    },
 
     /**
      * Whether the paired connection is going through a TURN relay. Callers use

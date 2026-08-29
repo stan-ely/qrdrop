@@ -187,6 +187,25 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
+   * TEMPORARY: whether to show the raw candidate-pair dump under the badge.
+   *
+   * Read from the QUERY STRING on purpose. The fragment is where a transfer
+   * secret lives and is the one part of a URL never sent to a server -- adding
+   * unrelated flags to it invites exactly the confusion that invariant exists
+   * to prevent. A debug flag is not a secret and belongs in the query, which
+   * is also why decodeSecret still refuses to read a code from there.
+   *
+   * @returns {boolean}
+   */
+  _pathDebugEnabled() {
+    try {
+      return new URLSearchParams(location.search).get('debug') === 'path'
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Publishes which route the connection took into state, for the badge.
    *
    * Awaited only when the transfer is big enough for the answer to change what
@@ -205,12 +224,27 @@ export class QRDropElement extends HTMLElement {
    * @param {number} size
    */
   async _publishPath(room, size) {
+    this._publishPathDebug(room)
     if (size > METERED_WARN_BYTES) {
       this._setState({ path: await room.path() })
       return
     }
     room.path().then(/** @param {NetworkPath} path */ path => {
       if (!this._sessionEnded) this._setState({ path })
+    }, () => {})
+  }
+
+  /**
+   * TEMPORARY: stashes the candidate-pair dump into state under `?debug=path`.
+   * Never awaited by anything -- a diagnostic must not be able to delay or
+   * fail a transfer.
+   *
+   * @param {PairedRoom} room
+   */
+  _publishPathDebug(room) {
+    if (!this._pathDebugEnabled()) return
+    room.pathEvidence().then(evidence => {
+      if (!this._sessionEnded) this._setState({ pathDebug: JSON.stringify(evidence, null, 2) })
     }, () => {})
   }
 
@@ -225,6 +259,7 @@ export class QRDropElement extends HTMLElement {
       qrNode: /** @type {Element | null} */ (null),
       qrIsLink: false,
       path: /** @type {NetworkPath | null} */ (null),
+      pathDebug: /** @type {string | null} */ (null),
       cameraAvailable: cameraAvailable(),
       capabilityNote: canStreamToDisk() ? null : CAPABILITY_NOTE,
       sas: '',

@@ -434,6 +434,22 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 .path-badge.relay { background: var(--warn-soft); color: var(--warn); }
 .path-badge.unknown { background: var(--surface-raised); color: var(--muted); }
 
+/* TEMPORARY, ?debug=path only -- the raw candidate-pair dump. Scrolls in its
+   own box so a long dump cannot make the page scroll sideways. Remove along
+   with collectPathEvidence. */
+.path-debug {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre;
+}
+
 /* The metered heads-up. Subordinate to the badge -- no background fill, so it
    reads as a sentence attached to the pill rather than a second banner
    competing with the gesture underneath it. */

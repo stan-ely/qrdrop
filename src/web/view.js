@@ -75,6 +75,8 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {NetworkPath | null} path which route
  *   the connection took, or null before classification resolves -- and always
  *   null in beam mode, which has no connection to classify.
+ * @property {string | null} pathDebug TEMPORARY: the raw candidate-pair dump,
+ *   populated only under `?debug=path`. Remove with collectPathEvidence.
  * @property {boolean} cameraAvailable
  * @property {string | null} capabilityNote
  * @property {string} sas
@@ -145,6 +147,10 @@ function pathBadge(state) {
     h('p', { class: `path-badge ${state.path}` }, label),
     h('p', { class: 'note' }, detail),
     warning ? h('p', { class: 'path-warning' }, warning) : null,
+    // TEMPORARY, `?debug=path` only. Text content via h(), never innerHTML --
+    // this is peer-influenced data (addresses the other device chose to send)
+    // and the no-innerHTML rule is what keeps it inert.
+    state.pathDebug ? h('pre', { class: 'path-debug' }, state.pathDebug) : null,
   ])
 }
 

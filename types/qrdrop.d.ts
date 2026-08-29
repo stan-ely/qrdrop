@@ -158,6 +158,12 @@ interface PairedRoom {
    */
   path(): Promise<NetworkPath>
   /**
+   * TEMPORARY diagnostic: every candidate pair, for working out why two peers
+   * on one network can disagree about the path. Shown only under
+   * `?debug=path`; remove with collectPathEvidence.
+   */
+  pathEvidence(): Promise<object | null>
+  /**
    * Whether the connection runs through a TURN relay rather than a direct
    * path. Derived from path(), so the cap and the path shown to the user
    * cannot disagree. Fails open (resolves false) when it cannot tell -- see
