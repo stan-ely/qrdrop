@@ -67,6 +67,45 @@ main {
   gap: var(--sp-4);
 }
 
+/*
+ * Wide and short: the reading column gives way so the component can use two.
+ *
+ * 34rem is a measure chosen for reading prose, and it is right for almost every
+ * window. It is wrong for a laptop in landscape, where the constraint is
+ * vertical and there are several hundred horizontal pixels going spare — the
+ * card ends up with an inner scrollbar beside an empty margin, which is the
+ * worst of both.
+ *
+ * THIS QUERY MUST MATCH the one in src/web/styles.js exactly. A media query
+ * cannot read a custom property, so the two conditions cannot be derived from a
+ * shared token the way every other shared value in this project is; they are
+ * two copies, and if they disagree the component lays out in two columns inside
+ * a column too narrow to hold them.
+ */
+@media (min-width: 60rem) and (max-height: 62rem) {
+  main { max-inline-size: 62rem; }
+}
+
+/*
+ * Short window: the page chrome gets out of the way.
+ *
+ * On a 1280x620 laptop the header and footer were spending about 190px of 620
+ * on a title, a tagline and two links, leaving the transfer UI to scroll
+ * inside what was left. The tagline is the first thing to go -- it sells the
+ * app to someone deciding whether to use it, and by the time the window is
+ * this shape they are using it. The h1 stays, because a page with no name is
+ * disorienting in a way a page with no strapline is not.
+ */
+@media (max-height: 46rem) {
+  .tagline { display: none; }
+  main {
+    padding-block: calc(var(--sp-3) + env(safe-area-inset-top))
+      calc(var(--sp-3) + env(safe-area-inset-bottom));
+    gap: var(--sp-3);
+  }
+  footer { font-size: var(--fs--1); }
+}
+
 header { min-inline-size: 0; }
 
 h1 {

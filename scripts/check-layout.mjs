@@ -136,7 +136,16 @@ for (const vp of VIEWPORTS) {
         ...(sheet ? sheet.querySelectorAll('button') : []),
       ]
 
+      // The card body's own scrollbar. This check did not exist at first, and
+      // its absence produced a wrong conclusion: every combination passed, so
+      // the wide-and-short layout was declared unnecessary -- while the send
+      // screen was scrolling 303px internally on exactly that viewport. A
+      // window with hundreds of unused horizontal pixels and a vertical
+      // scrollbar is not a layout that fits, whatever the buttons are doing.
+      const body = screen ? screen.querySelector('.card-copy') : null
+
       return {
+        bodyOverflow: body ? body.scrollHeight - body.clientHeight : 0,
         pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
         offscreen: buttons
           .map(b => ({ label: (b.textContent || '').trim().slice(0, 40), box: b.getBoundingClientRect() }))
@@ -151,6 +160,7 @@ for (const vp of VIEWPORTS) {
     const id = `${fixture.name}.${vp.name}`
     const problems = []
     if (report.pageOverflow > 1) problems.push(`page scrolls by ${report.pageOverflow}px`)
+    if (report.bodyOverflow > 1) problems.push(`card copy scrolls by ${report.bodyOverflow}px`)
     for (const b of report.offscreen) problems.push(`button out of view: ${b}`)
 
     if (problems.length === 0) {

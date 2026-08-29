@@ -153,19 +153,33 @@ ${tokensCSS(':host')}
  */
 .card[hidden] { display: none; }
 
-/*
- * overflow-y: auto is a safety valve, not the layout.
- *
- * At the three sizes scripts/check-layout.mjs walks, every screen is designed
- * to fit without it -- long prose lives in dialogs and the camera gives up
- * space. But a layout that only fits at sizes someone thought to test is the
- * previous bug wearing a different hat, and the two cases nobody tests are a
- * browser at 200% zoom and a phone held sideways. Clipping there would make
- * content unreachable with no scrollbar and no hint, which is strictly worse
- * than the overflow it replaces. So the body may scroll as a last resort; the
- * page still may not, and the action bar below is outside this box either way.
- */
+/* The card body: the media slot and the copy slot, stacked. */
 .card-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* The two halves of a card body. .card-media holds the screen's one visual
+ * thing -- QR, camera, SAS tiles -- and .card-copy everything else. They stack
+ * at most sizes and sit side by side on a wide, short window; see the media
+ * query further down. The slot exists in the markup at every size so that the
+ * switch is a change of direction and nothing else.
+ *
+ * The scroll lives on .card-copy rather than on .card-body, or the two columns
+ * would scroll as one and take the camera with them. */
+/* flex-shrink: 4, so the media gives up space roughly four times as readily as
+ * the words beside it. Equal shrink is the default and is wrong here: the two
+ * had similar natural heights, so both gave up the same amount, and since the
+ * copy is the half that can scroll it was the half that ended up scrolling --
+ * a camera holding its full size above a clipped sentence. The media has a
+ * floor it cannot pass (a QR below ~7rem stops being scannable, a viewfinder
+ * below 8rem stops being aimable), so letting it yield first costs nothing
+ * until that floor and buys the copy every pixel up to it. */
+.card-media { display: flex; flex-direction: column; min-block-size: 0; flex: 0 4 auto; }
+.card-copy {
   flex: 1 1 auto;
   min-block-size: 0;
   overflow-y: auto;
@@ -772,7 +786,9 @@ input[type="text"] {
 input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 @media (max-width: 30rem) {
-  .card { padding: var(--sp-4); }
+  .card { padding: var(--sp-4); gap: var(--sp-3); }
+  .card-body, .card-copy { gap: var(--sp-3); }
+  .card-actions { padding-block-start: var(--sp-3); }
   .steps { gap: var(--sp-1); }
   .step { padding: var(--sp-1) var(--sp-2); font-size: 0.7rem; }
   .sas-grid { gap: var(--sp-2); }
@@ -793,11 +809,44 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
  */
 @media (max-height: 46rem) {
   .card { padding: var(--sp-4); gap: var(--sp-3); }
+  /* The rail is "a sense of place, not a wizard nav" (see its own comment), and
+   * on a 620px window it was spending ~50px of a 258px content box on that
+   * sense. The screen heading says where you are; the rail only said it more
+   * decoratively. It is the most expendable thing on a short screen, so it is
+   * the first to go. */
+  .steps { display: none; }
+  /* Same trade as the narrow-width rule below: the route is stated by the
+   * toast and named by the badge, so the sentence explaining it is the third
+   * telling and the one that can go when height is scarce. */
+  .path-info .note { display: none; }
   .card-body { gap: var(--sp-3); }
   .card-actions { padding-block-start: var(--sp-3); }
   .steps { margin-bottom: var(--sp-3); }
   .outcome { padding: var(--sp-3); }
   .qr, .beam-stage { block-size: min(12rem, 100%); }
+}
+
+/*
+ * Wide and short: media beside the words instead of above them.
+ *
+ * A laptop in landscape is short of height with several hundred horizontal
+ * pixels to spare, so a single column scrolls next to an empty margin -- the
+ * layout refusing to use the axis it has plenty of. The send screen scrolled
+ * 303px internally in exactly that window.
+ *
+ * THIS QUERY MUST MATCH the one in site/styles.css, which widens the page
+ * column so these two have somewhere to go. A media query cannot read a custom
+ * property, so unlike every other shared value here these are two copies that
+ * have to agree.
+ */
+@media (min-width: 60rem) and (max-height: 62rem) {
+  .card-body.has-media { flex-direction: row; align-items: stretch; gap: var(--sp-5); }
+  .card-media { flex: 0 1 22rem; align-items: center; }
+  .card-copy { flex: 1 1 20rem; }
+
+  /* Height stops being the scarce axis in two columns, so the QR goes back to
+   * filling the width it is given. */
+  .qr, .beam-stage { block-size: auto; inline-size: 100%; margin-inline: 0; }
 }
 
 /*

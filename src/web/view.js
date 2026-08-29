@@ -389,10 +389,21 @@ function screen(name, state, dispatch) {
   // The split is enforced here rather than left as a convention, so a new
   // screen cannot accidentally opt out of it: there is nowhere else for a
   // button to go.
-  const { body, actions } = builders[name](state, dispatch)
+  // `media` is the screen's one visual thing -- the QR, the camera, the SAS
+  // tiles. It is a slot of its own rather than the first entry in `body`
+  // because on a wide, short window the card lays out in two columns with the
+  // media beside the words, and "beside" is not something CSS can express
+  // about one child among many siblings. Grid spanning was tried first and is
+  // the wrong tool: an item spanning an unknown number of rows has to name a
+  // count, and every row it names past the real ones still contributes a gap.
+  // A span of 99 added 1584px of empty gaps to the send screen.
+  const { media, body, actions } = builders[name](state, dispatch)
 
   return h('section', { id: `screen-${name}`, class: 'card', hidden: state.screen !== name }, [
-    h('div', { class: 'card-body' }, body),
+    h('div', { class: `card-body${media ? ' has-media' : ''}` }, [
+      media ? h('div', { class: 'card-media' }, media) : null,
+      h('div', { class: 'card-copy' }, body),
+    ].filter(Boolean)),
     h('div', { class: 'card-actions' }, actions),
   ])
 }
@@ -403,15 +414,16 @@ function screen(name, state, dispatch) {
  */
 function choose(state, dispatch) {
   return {
+    // The dropzone keeps the prose and the drag target; the two buttons that
+    // used to sit inside it moved to the action bar. They read no differently
+    // -- they are still the first thing the eye lands on, because the bar is
+    // where every screen's primary action now is -- and the box goes back to
+    // being what its name says it is. As this screen's one visual block it
+    // also takes the left column on a wide, short window.
+    media: h('div', { class: `dropzone${state.dragging ? ' is-dragging' : ''}` }, [
+      h('p', {}, 'Drop a file here, or choose one below.'),
+    ]),
     body: [
-      // The dropzone keeps the prose and the drag target; the two buttons that
-      // used to sit inside it moved to the action bar. They read no differently
-      // -- they are still the first thing the eye lands on, because the bar is
-      // where every screen's primary action now is -- and the box goes back to
-      // being what its name says it is.
-      h('div', { class: `dropzone${state.dragging ? ' is-dragging' : ''}` }, [
-        h('p', {}, 'Drop a file here, or choose one below.'),
-      ]),
       // Shown only when this browser cannot stream a download to disk (see
       // web/sink.js's canStreamToDisk) -- everyone else never sees this note.
       state.capabilityNote ? h('p', { class: 'note' }, state.capabilityNote) : null,
@@ -431,9 +443,8 @@ function choose(state, dispatch) {
             'Scan a beamed file'),
         ]),
         h('p', { class: 'note' },
-          'Beaming needs no network at all: the file is shown as an animated QR code and read back by a '
-          + 'camera, at about 6 kB/s. It is not encrypted, and the cap is smaller — 1 MiB after '
-          + 'compression, so most text and code but few photos.'),
+          'No network needed: the file plays as an animated QR code and is read back by a camera, at '
+          + 'about 6 kB/s. Not encrypted, and capped at 1 MiB compressed — text and code, rarely photos.'),
       ]),
     ],
     actions: [
@@ -451,9 +462,9 @@ function choose(state, dispatch) {
  */
 function send(state, dispatch) {
   return {
+    media: h('div', { id: 'qr', class: 'qr', key: 'qr', adopt: state.qrNode }),
     body: [
     h('h2', { tabindex: '-1' }, 'Scan this on the other device'),
-    h('div', { id: 'qr', class: 'qr', key: 'qr', adopt: state.qrNode }),
 
     // The one thing the send screen never said, and the thing a first-time
     // sender is actually stuck on: who scans this, and with what. "Scan this
@@ -469,8 +480,7 @@ function send(state, dispatch) {
     // would be advice that cannot work, which is worse than the silence this
     // replaces.
     h('p', { class: 'note' }, state.qrIsLink
-      ? 'Any camera app will do — this code is a link, and opens qrdrop on the other '
-        + 'device ready to receive. Nothing to install there.'
+      ? 'Any camera app will do — this code is a link that opens qrdrop, ready to receive.'
       : 'On the other device, open qrdrop, tap “Receive a file”, and point it at this code.'),
 
     h('div', { class: 'code-row' }, [
@@ -481,8 +491,7 @@ function send(state, dispatch) {
       }, copyLabel(state, 'code')),
     ]),
     h('p', { class: 'note' },
-      'Read this out, or let the other device scan the code above. Anyone who learns it '
-      + 'can join this transfer, so treat it like a password.'),
+      'Read it out if scanning fails. Anyone who learns it can join — treat it like a password.'),
     state.pairing
       ? h('div', {
         class: 'bar indeterminate', role: 'progressbar', 'aria-label': 'Connecting', 'aria-valuetext': state.status,
@@ -502,19 +511,15 @@ function send(state, dispatch) {
  */
 function receive(state, dispatch) {
   return {
+    media: state.cameraAvailable
+        ? h('div', { class: 'scanner-frame' }, [
+          h('video', { id: 'scanner', key: 'scanner', class: 'scanner', muted: true, playsinline: '' }),
+          h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
+        ])
+      : null,
     body: [
     h('h2', { tabindex: '-1' }, "Scan the sender's code"),
 
-    // Hidden entirely rather than shown black -- a <video> with no stream
-    // used to render as a plain black square above a message saying there
-    // was no camera, which reads as broken rather than as "there is no
-    // camera here, use the code instead".
-    state.cameraAvailable
-      ? h('div', { class: 'scanner-frame' }, [
-        h('video', { id: 'scanner', key: 'scanner', class: 'scanner', muted: true, playsinline: '' }),
-        h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
-      ])
-      : null,
 
     // A plain, always-visible label rather than a collapsed <details> --
     // manual entry is the fallback everyone needs when the camera fails or
@@ -527,7 +532,6 @@ function receive(state, dispatch) {
     // never require an extra click to reach.
     h('div', { class: 'manual' }, [
       h('summary', {}, 'Enter the code by hand'),
-      h('p', { class: 'note' }, 'Paste a qrdrop code or a shared link.'),
       h('form', {
         id: 'manual-form',
         onsubmit: /** @param {SubmitEvent} ev */ ev => {
@@ -577,15 +581,7 @@ function verify(state, dispatch) {
   const emoji = state.sas ? state.sas.split(' ') : []
 
   return {
-    body: [
-    h('h2', { tabindex: '-1' }, 'Check both devices show the same symbols'),
-
-    // The exact-string element the e2e suite and CLI interop depend on --
-    // see SR_ONLY_STYLE's comment above for why this is separate from the
-    // tile grid rather than being the tile grid's container.
-    h('span', { id: 'sas', style: SR_ONLY_STYLE, 'aria-hidden': 'true' }, state.sas),
-
-    h('div', {
+    media: h('div', {
       class: 'sas-grid',
       role: 'group',
       'aria-label': `Verification code: ${state.sasWords.join(', ')}`,
@@ -597,17 +593,23 @@ function verify(state, dispatch) {
         h('span', { class: 'sas-emoji', 'aria-hidden': 'true' }, emoji[i] ?? ''),
         h('span', { class: 'sas-word' }, word),
       ]))),
+    body: [
+      h('h2', { tabindex: '-1' }, 'Check both devices show the same symbols'),
 
-    h('p', { class: 'note' },
-      'If these differ, someone is between you. Stop, and start over with a fresh code.'),
+      // The exact-string element the e2e suite and CLI interop depend on --
+      // see SR_ONLY_STYLE's comment above for why this is separate from the
+      // tile grid rather than being the tile grid's container.
+      h('span', { id: 'sas', style: SR_ONLY_STYLE, 'aria-hidden': 'true' }, state.sas),
 
-    // Sender only. The receiver's copy lives inside verifyStatus instead, so
-    // it can sit BELOW the line naming the incoming file: rendered here it
-    // warned that "holiday-video.mov is 900 MB" several lines above the only
-    // place the reader had been told a holiday-video.mov existed.
-    // Both placements are still above the gesture, which is the point.
-    state.role === 'sender' ? pathBadge(state) : null,
+      h('p', { class: 'note' },
+        'If these differ, someone is between you. Stop, and start over with a fresh code.'),
 
+      // Sender only. The receiver's copy lives inside verifyStatus instead, so
+      // it can sit BELOW the line naming the incoming file: rendered here it
+      // warned that "holiday-video.mov is 900 MB" several lines above the only
+      // place the reader had been told a holiday-video.mov existed.
+      // Both placements are still above the gesture, which is the point.
+      state.role === 'sender' ? pathBadge(state) : null,
     ],
     actions: [
       // #verify-status moves into the bar whole rather than having its buttons
@@ -679,6 +681,8 @@ function transfer(state, dispatch) {
   const pct = total > 0 ? Math.min(100, (moved / total) * 100) : 0
 
   return {
+    // Nothing visual to put beside the words; see screen().
+    media: null,
     body: [
     h('h2', { tabindex: '-1' }, state.role === 'receiver' ? 'Receiving' : 'Sending'),
     state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
@@ -744,12 +748,14 @@ function done(state, dispatch) {
   const info = (state.outcome && OUTCOME_INFO[state.outcome]) || OUTCOME_INFO.failed
 
   return {
-    body: [
-    h('h2', { tabindex: '-1' }, info.title),
-    h('div', { class: `outcome ${info.variant}` }, [
+    // The outcome banner is this screen's visual block, so it takes the left
+    // column on a wide, short window the way the QR and the camera do.
+    media: h('div', { class: `outcome ${info.variant}` }, [
       h('span', { class: 'glyph', 'aria-hidden': 'true' }, info.glyph),
       h('p', {}, outcomeMessage(state)),
     ]),
+    body: [
+    h('h2', { tabindex: '-1' }, info.title),
     state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '')
       ? h('p', { class: 'filename' }, state.file.name)
       : null,
@@ -835,6 +841,7 @@ function beamSend(state, dispatch) {
   const eta = state.beam?.eta ?? 0
 
   return {
+    media: h('div', { id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', adopt: state.beamNode }),
     body: [
     h('h2', { tabindex: '-1' }, 'Show this to the other device'),
     h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
@@ -852,8 +859,6 @@ function beamSend(state, dispatch) {
     // holds no other reference to its canvas than the one this prop hands
     // back, so any path that let the wrapper be thrown away and recreated
     // would silently orphan the canvas the player is still painting to.
-    h('div', { id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', adopt: state.beamNode }),
-
     h('div', { class: 'beam-controls' }, [
       h('label', { for: 'beam-fps' }, 'Speed'),
       h('select', {
@@ -880,9 +885,8 @@ function beamSend(state, dispatch) {
     // single pass takes -- which at least turns "keep it up indefinitely" into
     // a number someone can plan around.
     h('p', { class: 'status', 'aria-live': 'polite' },
-      `Shown in full ${loops} time${loops === 1 ? '' : 's'}. One pass takes ${duration(eta)}, and a `
-      + 'few passes are normal — the other device only needs to catch enough of the frames, not '
-      + 'all of them. Nothing is sent back to this screen, so it cannot tell you when to stop.'),
+      `Shown in full ${loops} time${loops === 1 ? '' : 's'}, ${duration(eta)} per pass. Several passes are `
+      + 'normal. Nothing comes back here, so stop only when the other device says so.'),
     ],
     actions: [
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
@@ -900,6 +904,12 @@ function beamReceive(state, dispatch) {
   const pct = blocks > 0 ? Math.min(100, (solved / blocks) * 100) : 0
 
   return {
+    media: state.cameraAvailable
+      ? h('div', { class: 'scanner-frame' }, [
+        h('video', { id: 'beam-scanner', key: 'beam-scanner', class: 'scanner', muted: true, playsinline: '' }),
+        h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
+      ])
+      : null,
     body: [
       h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
       h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
@@ -909,12 +919,7 @@ function beamReceive(state, dispatch) {
       // person could read aloud or paste. So a missing camera is said outright
       // instead of the silent omission receive() uses (see its comment): there
       // the fallback is right there below; here there genuinely is none.
-      state.cameraAvailable
-        ? h('div', { class: 'scanner-frame' }, [
-          h('video', { id: 'beam-scanner', key: 'beam-scanner', class: 'scanner', muted: true, playsinline: '' }),
-          h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
-        ])
-        : h('p', { class: 'note' }, NO_CAMERA_BEAM),
+      state.cameraAvailable ? null : h('p', { class: 'note' }, NO_CAMERA_BEAM),
 
       state.offer
         ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`)
