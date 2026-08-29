@@ -1,8 +1,15 @@
 # Publishes to npm when a v* tag is pushed.
 #
-# Requires a repository secret NPM_TOKEN (an npm automation token). Publishing
-# is gated on the full check suite: a broken release cannot be unpublished
-# after 72 hours, so the tag is the wrong place to find out.
+# Uses npm Trusted Publishing (OIDC): the job asserts its own identity to
+# npm via GitHub's short-lived id-token, and npm hands back a publish
+# credential that is scoped to this one run and expires with it. No
+# NPM_TOKEN secret exists for this repo, which means there is nothing here
+# an attacker can steal to publish outside of a real workflow run, and
+# nothing for anyone to remember to rotate. The npm side of the trust (which
+# repo/workflow is allowed) is configured once on npmjs.com, not in this
+# file. Publishing is gated on the full check suite: a broken release
+# cannot be unpublished after 72 hours, so the tag is the wrong place to
+# find out.
 name: publish
 
 on:
@@ -11,7 +18,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # required for OIDC: both npm provenance and trusted publishing use it
 
 jobs:
   publish:
@@ -24,6 +31,14 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
+
+      # Trusted publishing needs npm >=11.5.1. setup-node's bundled npm
+      # tracks the Node release, not npm's, so it can lag behind that
+      # floor; pin the upgrade explicitly rather than finding out on a
+      # release day that the runner's npm quietly fell back to wanting a
+      # token that no longer exists.
+      - run: npm install -g npm@latest
+      - run: npm --version
 
       - run: npm ci
       - run: npm test
@@ -45,10 +60,10 @@ jobs:
             exit 1
           fi
 
-      # --provenance ties the published tarball to this workflow run, so a
-      # consumer can verify the package was built from this repo at this commit.
-      # That matters more than usual here: the whole point of self-hosting the
-      # bundle was to remove a third party who could substitute code.
+      # No NODE_AUTH_TOKEN here on purpose: with trusted publishing configured
+      # for this package on npmjs.com, npm CLI >=11.5.1 detects the CI OIDC
+      # environment on its own and exchanges it for a publish token, then
+      # discards it. --provenance still ties the published tarball to this
+      # workflow run, so a consumer can verify the package was built from
+      # this repo at this commit.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
