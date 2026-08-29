@@ -127,7 +127,18 @@ footer strong { color: var(--text); font-weight: 600; }
  * the icon is decoration and a screen reader announcing it would be reading
  * the same word twice. Sized in em so it tracks --fs--1, and drawn in
  * currentColor so the hover and focus rules above only ever have to name one
- * colour. */
+ * colour.
+ *
+ * The width, height, fill and stroke here are also spelled out as attributes
+ * on each <svg> in the markup, which is duplication on purpose. Presentation
+ * attributes lose to any rule in a stylesheet, so these lines still decide
+ * what is drawn; the attributes only matter when this file has not arrived,
+ * and an inline <svg> with no size falls back to 300x150 filled black. That
+ * is not a degraded footer, it is three enormous black shapes down the page,
+ * and it happened -- see the note on the hashed filename in
+ * scripts/build-site.mjs for how the stylesheet went missing in the first
+ * place. Belt and braces, because only one of the two can be fixed by a
+ * deploy. */
 .meta svg {
   flex: none;
   width: 1.15em;

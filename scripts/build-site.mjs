@@ -14,6 +14,7 @@
  */
 
 import * as esbuild from 'esbuild'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
 import { readFile, writeFile, copyFile, rm, mkdir, stat } from 'node:fs/promises'
@@ -188,7 +189,20 @@ async function main() {
   // `buildCSP` above avoids for the CSP allowlist: one generator, read from
   // two places, instead of a second list someone has to remember to update.
   const siteCSS = await readFile(path.join(SITE, 'styles.css'), 'utf8')
-  await writeFile(path.join(DIST, 'styles.css'), tokensCSS(':root') + siteCSS)
+  const css = tokensCSS(':root') + siteCSS
+
+  // Content-hashed exactly like the JS bundles, and for a reason that cost a
+  // live deploy to learn: GitHub Pages serves everything with max-age=600 and
+  // ignores site/_headers, so for ten minutes after a push a returning
+  // visitor can hold a cached styles.css against freshly fetched HTML. New
+  // markup with the previous stylesheet is not "slightly stale" -- an inline
+  // <svg> the CSS was going to size renders at its 300x150 default in solid
+  // black, which is what a phone showed. A hashed name makes that pairing
+  // impossible: HTML that names styles.<hash>.css can only ever be served the
+  // stylesheet it was built against, and an old cache entry is simply a file
+  // nothing asks for any more.
+  const cssFile = `styles.${createHash('sha256').update(css).digest('hex').slice(0, 8).toUpperCase()}.css`
+  await writeFile(path.join(DIST, cssFile), css)
   await copyFile(path.join(SITE, '_headers'), path.join(DIST, '_headers'))
   await writeFile(path.join(DIST, 'CNAME'), 'share.stan-ely.com\n')
 
@@ -197,8 +211,9 @@ async function main() {
   const html = template
     .replace('__CSP__', csp)
     .replace('__SCRIPT__', entryFile)
+    .replace('__STYLES__', cssFile)
 
-  if (html.includes('__CSP__') || html.includes('__SCRIPT__')) {
+  if (html.includes('__CSP__') || html.includes('__SCRIPT__') || html.includes('__STYLES__')) {
     throw new Error('site/index.html placeholder was not replaced -- check the token still exists in the template')
   }
 
