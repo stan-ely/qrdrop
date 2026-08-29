@@ -141,18 +141,44 @@ on that same screen does not stop them. The UI says so on both beam screens.
 Everything the rest of this document claims about confidentiality applies to the
 WebRTC path and not to this one.
 
+### Prior art, and what is actually ours
+
+Neither the idea nor the design is original here, and it would be tidier but
+dishonest to present them that way.
+
+The prompt was **[qrbeam](https://www.npmjs.com/package/qrbeam)**, which sends a
+file offline as animated QR codes to an iOS receiver. That is where the idea of
+adding this to qrdrop came from. Its wire format numbers the chunks and loops
+them, which is what the table below compares against — named, because a
+benchmark against an unnamed strawman is worth less to a reader and is unfair to
+the party being measured.
+
+**[txqr](https://github.com/divan/txqr)** by Ivan Daniluk got to the fountain
+code first, and it is the closest prior art to what is built here: animated QR
+frames carrying [LT-coded](https://en.wikipedia.org/wiki/Luby_transform_code)
+blocks, so the receiver needs *enough* frames rather than *particular* ones. The
+[write-up on fountain codes and animated QR](https://divan.dev/posts/fountaincodes/)
+is the better explanation of why this works and is worth reading before this
+section. The reasoning below was arrived at independently, which makes it
+convergent rather than novel — no code was taken from either project.
+
+What differs here is small and worth stating plainly rather than dressing up:
+the first N frames are systematic (below), compression is decided by
+measurement, the manifest is interleaved so a receiver can join mid-stream, and
+both halves run in a browser with no install on either side.
+
 ### Why a fountain code
 
-The obvious design is to number the chunks and loop them forever. That is a
-coupon-collector problem: gathering the last few of N chunks means re-watching
-the whole loop repeatedly, so completion costs about `N·ln(N)` frames. Frames
-*are* dropped — jsQR needs 50–100 ms per frame, so a Firefox phone manages about
-ten decodes a second against a display emitting exactly that.
+The obvious design is to number the chunks and loop them forever, as qrbeam
+does. That is a coupon-collector problem: gathering the last few of N chunks
+means re-watching the whole loop repeatedly, so completion costs about `N·ln(N)`
+frames. Frames *are* dropped — jsQR needs 50–100 ms per frame, so a Firefox
+phone manages about ten decodes a second against a display emitting exactly
+that.
 
-The transfer is an [LT code](https://en.wikipedia.org/wiki/Luby_transform_code)
-instead, so a frame does not care *which* frames were missed, only how many
-arrived. Measured over 1748 blocks (a 1 MiB payload), frames the sender must
-emit before the receiver has the file:
+The transfer is an LT code instead, so a frame does not care *which* frames were
+missed, only how many arrived. Measured over 1748 blocks (a 1 MiB payload),
+frames the sender must emit before the receiver has the file:
 
 | frame loss | this codec | numbered chunks on a loop |
 | --- | --- | --- |
@@ -162,10 +188,13 @@ emit before the receiver has the file:
 | 50% | 2.81 × N | 14.9 × N |
 
 The first N frames are the source blocks sent plain, and only then does the
-fountain start. That costs a little — the decoder needs ~1.3 distinct frames per
-block under loss rather than the ~1.05 a textbook LT code reaches, because most
-blocks are already solved by the time the fountain begins — and it buys the
-common case: a clean capture costs exactly N frames.
+fountain start. txqr does not do this, and the trade is real rather than a free
+win: the decoder then needs ~1.3 distinct frames per block under loss, against
+the ~1.15 a pure LT code reaches, because most blocks are already solved by the
+time the fountain begins and a degree-d frame therefore carries fewer unknowns
+than its degree suggests. What it buys is the common case — a clean capture
+costs exactly N frames and nothing more. Which side of that is right depends on
+how good you expect the camera to be, and this bets on it being good.
 
 ### What to expect
 

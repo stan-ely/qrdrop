@@ -15,8 +15,21 @@
  * mode *look* as protected as the WebRTC path while not being so, which is
  * worse than having no offline mode at all.
  *
+ * WHERE THIS CAME FROM. The idea arrived via qrbeam
+ * (https://www.npmjs.com/package/qrbeam), which beams a file to an iOS app as
+ * animated QR codes; its wire format is the numbered-chunk loop this file
+ * measures itself against below. The fountain-coded version of the same idea
+ * is txqr (https://github.com/divan/txqr) by Ivan Daniluk, which predates this
+ * by years and whose write-up (https://divan.dev/posts/fountaincodes/) is the
+ * better explanation of why LT codes suit animated QR at all. The design here
+ * was reached independently and no code was taken from either, but "arrived at
+ * the same answer separately" is convergence, not invention, and the comment
+ * below should not be read as claiming otherwise. What is actually different
+ * here is the systematic prefix, gzip-by-measurement, and the interleaved
+ * manifest -- each noted where it happens.
+ *
  * WHY A FOUNTAIN CODE. The obvious design -- number the chunks and loop them
- * forever -- is what the prior art does, and it is a coupon-collector problem:
+ * forever, as qrbeam does -- is a coupon-collector problem:
  * to gather the last few of N chunks you re-watch the whole loop many times
  * over, so completion costs about N*ln(N) frames rather than N. At N=1500 that
  * is a twelve-minute transfer instead of a two-minute one, and every dropped
@@ -48,7 +61,10 @@
  * paying, because the prefix is what makes the COMMON case -- a clean capture
  * -- cost exactly N and nothing more.
  *
- * WHY THE FIRST N FRAMES ARE SYSTEMATIC. A pure fountain pays its overhead
+ * WHY THE FIRST N FRAMES ARE SYSTEMATIC. This is the main departure from txqr,
+ * and it is a trade rather than an improvement -- see the table below, where
+ * the cost is a decoder overhead of ~1.3x under loss against the ~1.15x a pure
+ * LT code reaches. A pure fountain pays its overhead
  * even when nothing is lost, and for small N a robust soliton distribution is
  * genuinely bad at it -- 1.3-1.5x for a handful of blocks. Sending the N
  * source blocks plain first, and only then fountaining, makes a clean capture
