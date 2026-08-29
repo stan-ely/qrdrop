@@ -262,6 +262,17 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
   // peer can join unobserved -- and that is the normal case here, not a rare
   // one: the host is already sitting in the room when the guest scans, so the
   // guest's very first discovery can land inside that gap and be lost.
+  //
+  // Generated PER CALL, equally deliberately, and this is the forward-secrecy
+  // boundary. openRoom races every strategy at once, so one pairing pays for
+  // two generateKey calls and only one of them is ever used -- which makes
+  // hoisting this to module scope look like free money. It is not: the whole
+  // reason for doing ECDH on top of a secret both sides already hold is that a
+  // code photographed off a screen must not open transfers made before it
+  // leaked, and a cached keypair means every session that process ever ran
+  // shares one shared secret. test/room.test.mjs pairs twice over one secret
+  // and asserts the second session cannot decrypt the first's traffic, which
+  // is what fails if this line moves.
   const keypair = await createEphemeralKeypair()
   const myPublic = toBase64url(await exportPublicKey(keypair))
 

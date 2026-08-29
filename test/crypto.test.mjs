@@ -116,6 +116,16 @@ test('a wrong QR secret yields a different session even with valid ECDH', async 
   assert.equal(await decrypts(attacker.recvKey, iv, ct), false)
 })
 
+test('createEphemeralKeypair never hands back the same keypair twice', async () => {
+  // The layer test/room.test.mjs cannot see. That file proves the *call site*
+  // asks for a new keypair every pairing; this one proves the answer is a new
+  // keypair, which memoising anything inside session.js would quietly undo
+  // while both this suite's other tests and room.test.mjs kept passing.
+  const keys = await Promise.all([1, 2, 3].map(async () =>
+    toBase64url(await exportPublicKey(await createEphemeralKeypair()))))
+  assert.equal(new Set(keys).size, 3)
+})
+
 test('session keys are unique per session (forward secrecy)', async () => {
   const secret = generateSecret()
   const iv = new Uint8Array(12).fill(1)

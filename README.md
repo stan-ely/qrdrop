@@ -97,6 +97,16 @@ happened — and it uses the QR secret as its HKDF salt, so even if Trystero's
 signalling encryption were broken outright an attacker would still need the code
 to derive the session key.
 
+"Per session" is the load-bearing word, and it rests on one line: the keypair is
+generated inside `joinVia`, per call, and thrown away with the room. Since
+`openRoom` races two signalling networks at once, one pairing generates two
+keypairs and discards one — which makes lifting that line to module scope look
+like an easy saving and would quietly turn every transfer a process ever made
+into one long session. `test/room.test.mjs` pairs twice over the same secret
+against an in-memory signalling strategy and asserts the second session cannot
+decrypt the first's traffic, so that edit fails a test in two seconds rather than
+surviving to a release.
+
 DTLS also terminates at the peer's browser, and when NAT traversal fails packets
 pass through a third-party TURN relay. Sealing each chunk ourselves means a
 relay operator sees ciphertext and byte counts, never contents.

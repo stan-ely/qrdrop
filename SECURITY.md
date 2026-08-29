@@ -28,7 +28,10 @@ model](README.md#threat-model) makes. Concretely:
   could have.
 - Making the receiver accept a file that was truncated, reordered, or altered.
 - Decrypting a past transfer given the code afterwards. Each session uses
-  ephemeral ECDH precisely so this fails.
+  ephemeral ECDH precisely so this fails. The keypair being genuinely fresh per
+  pairing is enforced by `test/room.test.mjs`, which pairs twice over one secret
+  and checks the sessions cannot open each other; a way to make two pairings
+  share key material is a finding.
 - Reading anything but ciphertext, timing, and volume as a relay or TURN
   operator.
 - Anything in `src/core/` reaching a DOM or an `fs`. It is enforced by two

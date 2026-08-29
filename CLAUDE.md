@@ -77,6 +77,14 @@ auto-advance past either, never auto-focus either button, and keep Accept's hand
 losing its user activation behind an `await`. `--yes` skips the accept prompt and must
 never skip the SAS.
 
+**The ECDH keypair is generated per `joinVia` call and never cached.** `src/transport/room.js`
+is the only place `createEphemeralKeypair()` is called, and its result must stay a local.
+`openRoom` races two strategies, so one pairing generates two keypairs and discards one —
+hoisting the call to module scope to save that looks like an obvious win and silently
+costs forward secrecy, which is the only reason there is an ECDH at all. `test/room.test.mjs`
+pairs twice over one secret against an in-memory fake strategy and asserts the sessions
+cannot open each other; nothing else in the suite notices.
+
 **`decodeSecret` accepts the code only from a URL fragment, never the query string.** A
 fragment is the one part of a URL never sent to the server, which is the entire reason a
 link may carry a decryption key. Accepting `?code=` would silently start leaking secrets
