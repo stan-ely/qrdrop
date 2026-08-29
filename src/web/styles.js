@@ -60,8 +60,8 @@ ${tokensCSS(':host')}
 
 .step::before {
   content: '';
-  width: 0.5rem;
-  height: 0.5rem;
+  width: var(--sp-2);
+  height: var(--sp-2);
   border-radius: var(--r-full);
   background: var(--line-strong);
   flex: none;
@@ -118,7 +118,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, transform 0.05s;
+  transition: border-color var(--dur-base), background var(--dur-base), transform var(--dur-fast);
 }
 
 .btn:hover { border-color: var(--muted); background: var(--surface-raised); }
@@ -193,7 +193,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   padding: var(--sp-7) var(--sp-4);
   text-align: center;
   color: var(--muted);
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--dur-base), background var(--dur-base);
 }
 
 .dropzone.is-dragging {
@@ -204,7 +204,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 
 /* Always light, whatever the page theme: scanners read dark-on-light best. */
 .qr {
-  background: #ffffff;
+  background: var(--qr-quiet-zone);
   border-radius: var(--r-sm);
   padding: var(--sp-3);
   width: min(16rem, 100%);
@@ -216,7 +216,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
  * -- a beam frame is read by the exact same class of scanner as the pairing
  * QR, so it needs the same white margin around the modules to lock on. */
 .beam-stage {
-  background: #ffffff;
+  background: var(--qr-quiet-zone);
   border-radius: var(--r-sm);
   padding: var(--sp-3);
   width: min(16rem, 100%);
@@ -283,7 +283,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   height: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  background: #000;
+  background: var(--scan-bg);
   border-radius: var(--r-sm);
   display: block;
 }
@@ -298,9 +298,9 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 .viewfinder > span::before, .viewfinder > span::after {
   content: '';
   position: absolute;
-  width: 1.5rem;
-  height: 1.5rem;
-  border: 3px solid #fff;
+  width: var(--sp-5);
+  height: var(--sp-5);
+  border: 3px solid var(--scan-line);
 }
 .viewfinder::before { top: 0; left: 0; border-right: none; border-bottom: none; }
 .viewfinder::after { top: 0; right: 0; border-left: none; border-bottom: none; }
@@ -380,14 +380,14 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   width: var(--progress, 0%);
   background: var(--accent);
   border-radius: var(--r-full);
-  transition: width 0.2s ease-out;
+  transition: width var(--dur-slow) ease-out;
 }
 
 /* Indeterminate: pairing has no percentage to report, so a shimmering fixed
  * segment reads as "working" instead of the old static "Starting…" text. */
 .bar.indeterminate .bar-fill {
   width: 40%;
-  animation: qrdrop-shimmer 1.4s ease-in-out infinite;
+  animation: qrdrop-shimmer var(--dur-shimmer) ease-in-out infinite;
 }
 
 @keyframes qrdrop-shimmer {

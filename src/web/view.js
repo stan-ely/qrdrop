@@ -63,6 +63,8 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {'p2p' | 'beam'} mode
  * @property {string} status
  * @property {string | null} error
+ * @property {string | null} manualError a rejected hand-entered code, shown
+ *   against the input rather than in the page-level banner
  * @property {string} code
  * @property {Element | null} qrNode
  * @property {boolean} cameraAvailable
@@ -76,8 +78,10 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {string | null} message
  * @property {string} digest
  * @property {boolean} dragging
- * @property {'code' | 'digest' | null} copied
+ * @property {'code' | 'digest' | 'code-failed' | 'digest-failed' | null} copied
  * @property {boolean} pairing
+ * @property {boolean} busy true between the receiver's Accept click and the
+ *   save destination coming back -- see element.js's onOfferAccept handlers
  * @property {Element | null} beamNode the adopted <canvas> the player owns
  * @property {{ fps: number, loops: number, solved: number, blocks: number, eta: number | null } | null} beam
  *   `eta` is seconds: one full pass on the sending screen, and the measured
@@ -99,6 +103,25 @@ const STEP_INDEX = { send: 0, receive: 0, verify: 1, transfer: 2, done: 2 }
 const STEP_LABELS = ['Connect', 'Verify', 'Transfer']
 
 const SUCCESS_OUTCOMES = new Set(['sent', 'received'])
+
+/**
+ * The label for one of the two Copy buttons.
+ *
+ * Three states, not two. copyText can genuinely fail -- no clipboard API, a
+ * denied permission, a sandboxed frame -- and until now that failure was
+ * swallowed: the button went on saying "Copy" exactly as it had before the
+ * click, which is the same thing it says when nothing has happened at all.
+ * Someone in that position has no way to tell a failed copy from a missed
+ * click, and pastes whatever was on the clipboard already.
+ *
+ * @param {State} state
+ * @param {'code' | 'digest'} target
+ */
+function copyLabel(state, target) {
+  if (state.copied === target) return 'Copied'
+  if (state.copied === `${target}-failed`) return 'Couldn’t copy'
+  return 'Copy'
+}
 
 /**
  * Visually hides an element while keeping it in the accessibility tree and
@@ -174,7 +197,14 @@ function stepRail(state) {
 
   return h('ul', { class: 'steps' }, STEP_LABELS.map((label, i) => {
     const status = doneAll || i < current ? 'is-done' : i === current ? 'is-active' : ''
-    return h('li', { class: `step ${status}`.trim(), key: label }, label)
+    // The active step was distinguished by colour and a filled dot alone,
+    // which is nothing at all to a screen reader -- it read as three plain
+    // list items in every state. aria-current is the one attribute that says
+    // which of a set is the current one.
+    return h('li', {
+      class: `step ${status}`.trim(), key: label,
+      'aria-current': status === 'is-active' ? 'step' : undefined,
+    }, label)
   }))
 }
 
@@ -226,7 +256,7 @@ function choose(state, dispatch) {
       ]),
       h('p', { class: 'note' },
         'Beaming needs no network at all: the file is shown as an animated QR code and read back by a '
-        + 'camera, at about 6 kB/s. It is not encrypted, and the cap is smaller -- 1 MiB after '
+        + 'camera, at about 6 kB/s. It is not encrypted, and the cap is smaller — 1 MiB after '
         + 'compression, so most text and code but few photos.'),
     ]),
   ]
@@ -245,7 +275,7 @@ function send(state, dispatch) {
       h('button', {
         class: 'btn small', type: 'button', onclick: () => dispatch('copy', 'code'),
         'aria-label': 'Copy the transfer code',
-      }, state.copied === 'code' ? 'Copied' : 'Copy'),
+      }, copyLabel(state, 'code')),
     ]),
     h('p', { class: 'note' },
       'Read this out, or let the other device scan the code above. Anyone who learns it '
@@ -304,9 +334,24 @@ function receive(state, dispatch) {
         h('input', {
           id: 'manual-input', key: 'manual-input', type: 'text', placeholder: 'qrdrop:… or a link',
           autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Transfer code, or a shared link',
+          'aria-invalid': state.manualError ? 'true' : undefined,
+          'aria-describedby': state.manualError ? 'manual-error' : undefined,
         }),
         h('button', { class: 'btn', type: 'submit' }, 'Join'),
       ]),
+
+      // The one error with somewhere better to be than the page-level banner
+      // at the bottom of the card. Everything else that fails here -- a peer
+      // vanishing, a relay refusing -- is about the session, and the banner
+      // is the right home for it. A rejected code is about the twenty
+      // characters still sitting in the field a few pixels above this line,
+      // and an error that far from the thing it is describing is one the
+      // reader has to go looking for. aria-invalid/aria-describedby on the
+      // input are the same statement made to assistive tech, which otherwise
+      // had no way at all to connect the two.
+      state.manualError
+        ? h('p', { id: 'manual-error', class: 'error', role: 'alert' }, state.manualError)
+        : null,
     ]),
 
     h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
@@ -377,10 +422,23 @@ function verifyStatus(state, dispatch) {
     ]
   }
 
+  // `disabled` while busy, which is the window between the click and the
+  // native save dialog handing a destination back. That dialog is a separate
+  // OS window and can sit there for seconds, during which this screen used to
+  // look exactly as it did before the click -- so the click read as having
+  // missed, and the natural response was to click again. The button is not
+  // being made safer here (the one-shot closure above already guarantees it
+  // fires once); it is being made to admit that it heard.
   return [
     h('p', { class: 'status' }, `${state.offer.name} (${bytes(state.offer.size)})`),
-    h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('offer:accept') }, 'Accept'),
-    h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('offer:decline') }, 'Decline'),
+    h('button', {
+      class: 'btn primary', type: 'button', disabled: state.busy,
+      onclick: () => dispatch('offer:accept'),
+    }, 'Accept'),
+    h('button', {
+      class: 'btn ghost', type: 'button', disabled: state.busy,
+      onclick: () => dispatch('offer:decline'),
+    }, 'Decline'),
   ]
 }
 
@@ -410,9 +468,13 @@ function transfer(state, dispatch) {
  * @type {Record<'sent' | 'received' | 'declined' | 'too-large' | 'failed', { variant: string, glyph: string, title: string }>}
  */
 const OUTCOME_INFO = {
-  sent: { variant: 'ok', glyph: '✓', title: 'Sent' },
-  received: { variant: 'ok', glyph: '✓', title: 'Received' },
-  declined: { variant: 'warn', glyph: '⚠', title: 'Declined' },
+  // All five are noun phrases naming what happened to the file. They used to
+  // be three bare participles and two phrases, which read as two different
+  // screens depending on the outcome -- and the two phrases are the ones that
+  // cannot shorten without losing their meaning, so the short ones grew.
+  sent: { variant: 'ok', glyph: '✓', title: 'File sent' },
+  received: { variant: 'ok', glyph: '✓', title: 'File received' },
+  declined: { variant: 'warn', glyph: '⚠', title: 'File declined' },
   'too-large': { variant: 'warn', glyph: '⚠', title: 'Too large for this connection' },
   failed: { variant: 'bad', glyph: '✕', title: 'Transfer failed' },
 }
@@ -468,13 +530,32 @@ function done(state, dispatch) {
         h('button', {
           class: 'btn small', type: 'button', onclick: () => dispatch('copy', 'digest'),
           'aria-label': 'Copy the verification digest',
-        }, state.copied === 'digest' ? 'Copied' : 'Copy'),
+        }, copyLabel(state, 'digest')),
       ]),
       h('p', { class: 'note' }, 'Both devices computed this independently from the file contents.'),
     ]) : null,
     h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
   ]
 }
+
+/**
+ * The two ways to say "this device has no camera", each said once.
+ *
+ * There used to be three sentences for this one fact -- two typed into
+ * element.js and one here -- and they had already drifted into three
+ * different registers. They live here, next to the rest of the copy, and
+ * element.js imports the string rather than retyping it.
+ *
+ * They are two constants and not one because the two screens are in
+ * genuinely different situations, and flattening them would make one of them
+ * a lie. receive() has the manual-entry form sitting directly below, so a
+ * missing camera is an inconvenience and the sentence points at the way
+ * round it. beamReceive() has no fallback at all and cannot have one -- a
+ * beam code is thousands of frames, not a string a person could type -- so
+ * there the sentence has to say the mode is simply unavailable here.
+ */
+export const NO_CAMERA_SCAN = 'No camera available — enter the code by hand.'
+export const NO_CAMERA_BEAM = 'This device has no usable camera, so it cannot receive a beamed file.'
 
 /**
  * The one warning both beam screens must carry, word for word. A single
@@ -487,7 +568,7 @@ function done(state, dispatch) {
  * this is that fact's UI half, and it must never be softened into something
  * that reads as "still somewhat protected."
  */
-const BEAM_WARNING = 'This is not encrypted, and cannot be -- there is no handshake, so nothing here to '
+const BEAM_WARNING = 'This is not encrypted, and cannot be — there is no handshake, so nothing here to '
   + 'verify. Anyone who can see this screen while it plays can read the file.'
 
 /**
@@ -562,7 +643,7 @@ function beamSend(state, dispatch) {
     // a number someone can plan around.
     h('p', { class: 'status', 'aria-live': 'polite' },
       `Shown in full ${loops} time${loops === 1 ? '' : 's'}. One pass takes ${duration(eta)}, and a `
-      + 'few passes are normal -- the other device only needs to catch enough of the frames, not '
+      + 'few passes are normal — the other device only needs to catch enough of the frames, not '
       + 'all of them. Nothing is sent back to this screen, so it cannot tell you when to stop.'),
 
     h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
@@ -592,7 +673,7 @@ function beamReceive(state, dispatch) {
         h('video', { id: 'beam-scanner', key: 'beam-scanner', class: 'scanner', muted: true, playsinline: '' }),
         h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
       ])
-      : h('p', { class: 'note' }, 'This device has no usable camera, so it cannot receive a beamed file.'),
+      : h('p', { class: 'note' }, NO_CAMERA_BEAM),
 
     state.offer ? [
       h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`),
@@ -618,8 +699,14 @@ function beamReceive(state, dispatch) {
       // there is no activation left to spend. Same rule as the WebRTC path's
       // verify screen; see web/beam.js's startBeamReceive doc comment for the
       // beam-specific version of it.
-      h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('offer:accept') }, 'Accept'),
-      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('offer:decline') }, 'Decline'),
+      h('button', {
+        class: 'btn primary', type: 'button', disabled: state.busy,
+        onclick: () => dispatch('offer:accept'),
+      }, 'Accept'),
+      h('button', {
+        class: 'btn ghost', type: 'button', disabled: state.busy,
+        onclick: () => dispatch('offer:decline'),
+      }, 'Decline'),
     ] : [
       // Post-Accept. This is the state the first tester was in when they put
       // the sending laptop down, so the instruction is promoted to the loudest

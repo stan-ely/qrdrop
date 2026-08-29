@@ -50,7 +50,7 @@ import { renderQR, scanQR, cameraAvailable } from './qr.js'
 import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
 import { patch } from './vdom.js'
-import { render } from './view.js'
+import { render, NO_CAMERA_SCAN } from './view.js'
 import { copyText } from './copy.js'
 import { STYLES } from './styles.js'
 
@@ -208,6 +208,8 @@ export class QRDropElement extends HTMLElement {
       dragging: false,
       copied: /** @type {'code' | 'digest' | null} */ (null),
       pairing: false,
+      busy: false,
+      manualError: /** @type {string | null} */ (null),
       mode: /** @type {'p2p' | 'beam'} */ ('p2p'),
       beamNode: /** @type {Element | null} */ (null),
       beam: /** @type {import('./view.js').State['beam']} */ (null),
@@ -430,7 +432,17 @@ export class QRDropElement extends HTMLElement {
     this._fail(error)
   }
 
-  _reset() {
+  /**
+   * Tear the session down and go back to the choose screen.
+   *
+   * @param {string} [message] Shown in the error banner on the way out. Most
+   *   resets need none -- Cancel and Restart are the user's own doing, and
+   *   explaining them back would be noise. It exists for the resets the user
+   *   did NOT ask for and cannot otherwise account for: dismissing the save
+   *   dialog tears down a live, already-accepted transfer, and landing back
+   *   on a blank choose screen with no word about it reads as a crash.
+   */
+  _reset(message) {
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
     this._beam = null
@@ -443,7 +455,11 @@ export class QRDropElement extends HTMLElement {
       screen: 'choose', role: null, status: '', code: '', qrNode: null,
       sas: '', sasWords: [], offer: null, file: null, progress: null,
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
-      mode: 'p2p', beamNode: null, beam: null,
+      mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
+      // Last key wins over the `error: null` _setState injects for any
+      // update carrying a screen change, which is what lets this one reset
+      // set an error while every other one still clears the stale one.
+      error: message ?? null,
     })
   }
 
@@ -454,9 +470,11 @@ export class QRDropElement extends HTMLElement {
     const text = target === 'code' ? this._state.code : this._state.digest
     if (!text) return
     const ok = await copyText(text)
-    if (!ok) return
     clearTimeout(this._copyTimer)
-    this._setState({ copied: target })
+    // A failed copy gets a state of its own rather than the early return it
+    // used to get -- see view.js's copyLabel for why silence was the wrong
+    // answer. It reverts on the same timer as the success case.
+    this._setState({ copied: ok ? target : /** @type {const} */ (`${target}-failed`) })
     // Transient confirmation, not a permanent state -- it reverts on its own
     // rather than waiting for the next unrelated re-render to clear it.
     this._copyTimer = setTimeout(() => this._setState({ copied: null }), 1500)
@@ -467,9 +485,16 @@ export class QRDropElement extends HTMLElement {
     try {
       const secret = decodeSecret(raw)
       this._teardown?.()
+      this._setState({ manualError: null })
       this._startReceive(secret).catch(e => this._fail(e))
     } catch (error) {
-      this._fail(error)
+      // Not _fail: decodeSecret rejecting is a complaint about the text in
+      // the field, so it is shown against the field (see view.js's receive()).
+      // Everything downstream of a code that DID parse still goes to the
+      // page-level banner, because by then the problem is the session's, not
+      // the input's.
+      console.error(error)
+      this._setState({ manualError: error instanceof Error ? error.message : String(error) })
     }
   }
 
@@ -677,12 +702,17 @@ export class QRDropElement extends HTMLElement {
           this._onOfferAccept = async () => {
             this._onOfferAccept = null
             this._onOfferDecline = null
+            this._setState({ busy: true })
 
             const sink = await accept()
-            if (!sink) return this._reset() // the save dialog was dismissed
+            // The save dialog was dismissed. This is a full teardown of a
+            // transfer the user had already accepted, so it says so rather
+            // than dropping them on a blank choose screen.
+            if (!sink) return this._reset('The save dialog was closed without choosing a location, so nothing was saved.')
 
             this._setState({
               screen: 'transfer',
+              busy: false,
               file: { name: manifest.name, size: manifest.size },
               status: sink.streaming ? '' : 'This browser buffers the file in memory before saving it.',
               progress: { moved: 0, total: manifest.size },
@@ -801,9 +831,7 @@ export class QRDropElement extends HTMLElement {
   async _startBeamReceive() {
     this._setState({
       screen: 'beam-receive', mode: 'beam', role: 'receiver',
-      status: cameraAvailable()
-        ? 'Point the camera at the other screen.'
-        : 'No camera available, so there is no way to read the code.',
+      status: cameraAvailable() ? 'Point the camera at the other screen.' : '',
       beam: { fps: 0, loops: 0, solved: 0, blocks: 0, eta: null },
     })
     if (!cameraAvailable()) return
@@ -882,13 +910,15 @@ export class QRDropElement extends HTMLElement {
           this._onOfferAccept = null
           this._onOfferDecline = null
 
+          this._setState({ busy: true })
+
           sink = await createSink({
             t: 'manifest', seq: 0, chunks: incoming.blocks,
             name: incoming.name, size: incoming.size, mime: incoming.mime,
           })
-          if (!sink) return this._reset() // the save dialog was dismissed
+          if (!sink) return this._reset('The save dialog was closed without choosing a location, so nothing was saved.')
 
-          this._setState({ offer: null, status: '' })
+          this._setState({ offer: null, status: '', busy: false })
           await finish()
         }
 
@@ -942,9 +972,7 @@ export class QRDropElement extends HTMLElement {
   async _beginScan() {
     this._setState({
       screen: 'receive', role: 'receiver',
-      status: cameraAvailable()
-        ? 'Point the camera at the code.'
-        : 'No camera available — enter the code by hand.',
+      status: cameraAvailable() ? 'Point the camera at the code.' : NO_CAMERA_SCAN,
     })
 
     if (!cameraAvailable()) return

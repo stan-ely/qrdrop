@@ -76,10 +76,11 @@ ${selector} {
   --muted: #5f5d57;
   --line: #e3e1db;
   --line-strong: #8f8d85;
-  --accent: #a8462d;
+  --accent-rgb: 168, 70, 45;
+  --accent: rgb(var(--accent-rgb));
   --accent-hover: #8f3a24;
   --accent-text: #ffffff;
-  --accent-soft: rgba(168, 70, 45, 0.12);
+  --accent-soft: rgba(var(--accent-rgb), 0.12);
   --ok: #1f6e46;
   --ok-soft: rgba(31, 110, 70, 0.12);
   --bad: #a33328;
@@ -87,12 +88,46 @@ ${selector} {
   --warn: #8a5a00;
   --warn-soft: rgba(138, 90, 0, 0.12);
 
+  /* ---- camera and QR surfaces: deliberately NOT themed ----
+   *
+   * These three are the only colours here that must stay the same in light
+   * and dark, so they sit outside the palette above and are never restated
+   * in the dark block below. A QR is read by a camera, not by a person: a
+   * scanner binarizes what it sees and needs dark modules on a light quiet
+   * zone whatever the page around them is doing, and the viewfinder's
+   * brackets have to stay legible over an arbitrary camera image. Wiring
+   * any of them to --surface/--text would make dark mode quietly unreadable
+   * to a scanner while looking perfectly fine to whoever changed it.
+   *
+   * They are tokens rather than the literals they replaced in styles.js for
+   * the same reason as everything else in this file: --qr-quiet-zone alone
+   * had two hand-kept copies (.qr and .beam-stage). */
+  --qr-quiet-zone: #ffffff;
+  --scan-bg: #000000;
+  --scan-line: #ffffff;
+
   /* ---- elevation ---- */
   --shadow-1: 0 1px 2px rgba(20, 18, 14, 0.06), 0 1px 1px rgba(20, 18, 14, 0.04);
   --shadow-2: 0 8px 24px rgba(20, 18, 14, 0.10), 0 2px 6px rgba(20, 18, 14, 0.06);
 
+  /* ---- motion ----
+   *
+   * The last axis that was still magic numbers scattered through styles.js.
+   * Unlike colour and shadow, motion does not retheme -- a transition is the
+   * same length on a dark background as on a light one -- so these are
+   * declared once here and never restated in the dark block, which also
+   * keeps that block honest about what actually changes with the theme.
+   *
+   * The reduced-motion query in styles.js overrides all of them at once with
+   * transition-duration: 0s, so these are the "motion is wanted" values
+   * only; do not try to encode the reduced case here. */
+  --dur-fast: 0.05s;    /* .btn:active nudge -- must feel instant */
+  --dur-base: 0.15s;    /* border and background on hover */
+  --dur-slow: 0.2s;     /* the progress bar's fill, which is being watched */
+  --dur-shimmer: 1.4s;  /* one pass of the indeterminate bar */
+
   /* ---- focus ---- */
-  --focus-ring: 0 0 0 3px rgba(168, 70, 45, 0.35);
+  --focus-ring: 0 0 0 3px rgba(var(--accent-rgb), 0.35);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -112,10 +147,11 @@ ${selector} {
     --muted: #b1b0aa;
     --line: #33333a;
     --line-strong: #77747c;
-    --accent: #e08662;
+    --accent-rgb: 224, 134, 98;
+    --accent: rgb(var(--accent-rgb));
     --accent-hover: #e89a7c;
     --accent-text: #17171a;
-    --accent-soft: rgba(224, 134, 98, 0.18);
+    --accent-soft: rgba(var(--accent-rgb), 0.18);
     --ok: #7fc39b;
     --ok-soft: rgba(127, 195, 155, 0.16);
     --bad: #f0968a;
@@ -132,7 +168,7 @@ ${selector} {
     --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.2);
     --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.35);
 
-    --focus-ring: 0 0 0 3px rgba(224, 134, 98, 0.45);
+    --focus-ring: 0 0 0 3px rgba(var(--accent-rgb), 0.45);
   }
 }
 `
