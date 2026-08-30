@@ -84,6 +84,45 @@ npm run test:e2e:interop  # two Node processes driving the CLI
 
 `mise.toml` mirrors every npm script as a task; either runner works.
 
+## Releasing
+
+A `v*` tag runs `.github/workflows/publish.yml`, which is three jobs in a chain:
+`publish` (suite, typecheck, build, tag-matches-`package.json`, `npm publish` over OIDC),
+then `release` (a GitHub Release whose body is the CHANGELOG section for that version,
+carrying the npm tarball, `qrdrop-site-<version>.zip`, `SHA256SUMS`, and a build
+provenance attestation), then `tap` (rewrites `Formula/qrdrop.rb` in `stan-ely/homebrew-tap`
+from a template in that file).
+
+**Never rename `publish.yml`.** npm Trusted Publishing is configured on npmjs.com against a
+repository *and a workflow filename*. The file has long since grown past what its name says
+— renaming it to `release.yml` typechecks, tests clean, and then fails the next publish
+asking for a token this repo deliberately does not have. For the same reason the release
+and tap steps are jobs in that one file rather than a second workflow on the same tag: two
+runs would both `npm ci`, both run the suite, and race the version check.
+
+The one secret is `HOMEBREW_TAP_TOKEN`, a fine-grained PAT with `contents: write` scoped to
+the tap and nothing else. `GITHUB_TOKEN` cannot stand in — it is scoped to this repository,
+and a cross-repository write is what it is not allowed to do. The tap already serves another
+project under a secret of the same name; secrets are per-repository, so that one is invisible
+here.
+
+Release notes are extracted, not generated: `scripts/release-notes.mjs <version>` prints the
+matching `## <version>` section of `CHANGELOG.md` and exits non-zero if there is none. The
+`publish` job runs it before publishing, so a tag with no changelog entry fails while the
+release can still be re-run — after publishing, the only fix is a hand-edited Release body.
+Run it locally before tagging to see exactly what the Release will say.
+
+The formula's `sha256` is taken from the *registry's* tarball, not a local `npm pack`, since
+the registry URL is what the formula points at. That step retries: the CDN takes a few
+seconds to serve a version published one job earlier, and a cold 404 there would fail an
+otherwise fine release.
+
+No winget. It has no npm step and its `PackageDependencies` field is only partly honoured by
+the client, so a real Windows package means shipping a self-contained ~58 MB bundle (Node
+runtime, `src/`, `site/dist`, platform-correct `node_modules`) plus a launcher shim, per
+target. Windows users get `npx`, `npm i -g`, or the deployed site. If that changes, it is one
+more job in the same file, not a rewrite.
+
 ## Invariants
 
 Each of these has already been broken once, and most were caught late or by accident.

@@ -1,15 +1,27 @@
-# Publishes to npm when a v* tag is pushed.
+# Everything that happens when a v* tag is pushed: npm, the GitHub Release, and
+# the Homebrew tap. Three jobs, in that order, each gating the next.
 #
-# Uses npm Trusted Publishing (OIDC): the job asserts its own identity to
-# npm via GitHub's short-lived id-token, and npm hands back a publish
-# credential that is scoped to this one run and expires with it. No
-# NPM_TOKEN secret exists for this repo, which means there is nothing here
-# an attacker can steal to publish outside of a real workflow run, and
-# nothing for anyone to remember to rotate. The npm side of the trust (which
-# repo/workflow is allowed) is configured once on npmjs.com, not in this
-# file. Publishing is gated on the full check suite: a broken release
-# cannot be unpublished after 72 hours, so the tag is the wrong place to
-# find out.
+# DO NOT RENAME THIS FILE. npm Trusted Publishing is configured on npmjs.com
+# against a specific repository *and workflow filename*. Renaming this to
+# release.yml -- which is what it has grown into -- would typecheck, test clean,
+# and then fail the next publish with a demand for a token that does not exist.
+# The name is a contract with a setting held somewhere else. For the same reason
+# the release and tap steps are jobs here rather than a second workflow on the
+# same tag: two runs would both npm ci, both run the suite, and race the
+# version check.
+#
+# Uses OIDC throughout: the publish job asserts its own identity to npm via
+# GitHub's short-lived id-token and npm hands back a publish credential scoped
+# to this one run, and the release job attests the artifacts it uploads the same
+# way. No NPM_TOKEN secret exists for this repo, which means there is nothing
+# here an attacker can steal to publish outside a real workflow run, and nothing
+# for anyone to remember to rotate.
+#
+# The one secret this workflow does need is HOMEBREW_TAP_TOKEN -- see the tap
+# job at the bottom.
+#
+# Publishing is gated on the full check suite: a broken release cannot be
+# unpublished after 72 hours, so the tag is the wrong place to find out.
 name: publish
 
 on:
@@ -17,12 +29,15 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
-  id-token: write # required for OIDC: both npm provenance and trusted publishing use it
+  contents: write # the release job creates a Release and uploads to it
+  id-token: write # OIDC: npm trusted publishing, npm provenance, and artifact attestation
+  attestations: write # build provenance for the files attached to the Release
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -50,8 +65,10 @@ jobs:
 
       # Refuse to publish a tag that disagrees with package.json. Getting these
       # out of step produces a release whose version means nothing, and it is
-      # a one-line check.
+      # a one-line check. The version is an output because the two jobs below
+      # need it, and re-deriving it in each is one more place to get it wrong.
       - name: Tag must match package.json version
+        id: version
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
@@ -59,6 +76,14 @@ jobs:
             echo "Tag v$tag does not match package.json $pkg" >&2
             exit 1
           fi
+          echo "version=$pkg" >> "$GITHUB_OUTPUT"
+
+      # The release notes come from CHANGELOG.md, so a tag with no entry should
+      # fail here, before anything is published, rather than after -- at which
+      # point the only fix is a hand-edited Release body. Cheap, and it runs
+      # against the same checkout the notes are later read from.
+      - name: CHANGELOG must have an entry for this version
+        run: node scripts/release-notes.mjs "${{ steps.version.outputs.version }}" > /dev/null
 
       # No NODE_AUTH_TOKEN here on purpose: with trusted publishing configured
       # for this package on npmjs.com, npm CLI >=11.5.1 detects the CI OIDC
@@ -67,3 +92,178 @@ jobs:
       # workflow run, so a consumer can verify the package was built from
       # this repo at this commit.
       - run: npm publish --provenance --access public
+
+  # The Release is the page people land on from the repo, and until now there
+  # was nothing behind any tag -- v0.2.0 and v0.3.0 have no notes and no files.
+  # It also answers a concrete problem the 0.3.1 entry created: that entry tells
+  # self-hosters to redeploy the browser bundle, and there was nowhere to
+  # download one from short of unpacking the npm tarball by hand.
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      # Built again rather than passed between jobs: prepublishOnly built it in
+      # the publish job, on a different runner, and an artifact upload/download
+      # round trip to move a directory this small is more machinery than the
+      # rebuild it would replace.
+      - run: npm run build
+
+      - name: Assemble the artifacts
+        run: |
+          mkdir -p dist-release
+
+          # The same tarball npm serves, so the sha256 the tap job takes below
+          # is a hash of bytes a user can verify against the registry.
+          npm pack --pack-destination dist-release
+
+          # site/dist/ flat, as it is deployed. `cd` because zip records paths
+          # relative to where it runs, and nobody unpacking this into a webroot
+          # wants site/dist/ prefixed onto every entry.
+          (cd site/dist && zip -qr "$GITHUB_WORKSPACE/dist-release/qrdrop-site-$VERSION.zip" .)
+
+          (cd dist-release && sha256sum ./*.tgz ./*.zip > SHA256SUMS)
+          cat dist-release/SHA256SUMS
+
+      # Matches the posture `npm publish --provenance` already establishes for
+      # the tarball: a consumer can check these files were produced by this
+      # workflow, at this commit, rather than uploaded by hand. SHA256SUMS is
+      # deliberately not attested -- it is a manifest of the two files that are,
+      # and attesting a list of hashes adds nothing over attesting the things
+      # hashed.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist-release/*.tgz
+            dist-release/*.zip
+
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release-notes.mjs "$VERSION" > notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            --verify-tag \
+            dist-release/*
+
+  # Homebrew is the install path for everyone on macOS and Linux who does not
+  # want a global npm package. The formula lives in stan-ely/homebrew-tap and
+  # points at the npm registry tarball, so this job's whole job is to move the
+  # new version and its hash into it.
+  #
+  # HOMEBREW_TAP_TOKEN is a fine-grained PAT with contents:write scoped to the
+  # tap repository and nothing else. GITHUB_TOKEN cannot stand in for it: that
+  # token is scoped to this repository, and a cross-repository write is exactly
+  # what it is not allowed to do. Note the tap already serves another project
+  # with a secret of the same name -- secrets are per-repository, so that one is
+  # not visible here and this repo needs its own.
+  tap:
+    needs: [publish, release]
+    runs-on: ubuntu-latest
+    # A prerelease should still reach npm, but it must not move the formula that
+    # `brew install qrdrop` resolves to.
+    if: ${{ !contains(needs.publish.outputs.version, '-') }}
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+    steps:
+      # Hash the registry's copy, not a local `npm pack`. The formula's url
+      # points at the registry, so the registry's bytes are the ones whose hash
+      # has to be right -- and if the two ever disagree, this is where it should
+      # be found out, not in someone's `brew install`.
+      #
+      # The retry loop is not defensive padding: the registry CDN takes a few
+      # seconds to serve a version published one job ago, and a cold 404 here
+      # would fail a release that is otherwise entirely fine.
+      - name: Resolve the published tarball
+        id: tarball
+        run: |
+          url="https://registry.npmjs.org/qrdrop/-/qrdrop-$VERSION.tgz"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsSL "$url" -o tarball.tgz; then
+              sha="$(sha256sum tarball.tgz | cut -d' ' -f1)"
+              echo "url=$url" >> "$GITHUB_OUTPUT"
+              echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+              echo "Resolved on attempt $attempt: $sha"
+              exit 0
+            fi
+            echo "Attempt $attempt: not on the registry CDN yet; waiting."
+            sleep 15
+          done
+          echo "qrdrop@$VERSION never became fetchable at $url" >&2
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          repository: stan-ely/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      # The formula is rewritten from this template rather than patched in
+      # place, so what lands in the tap is always exactly what this workflow
+      # believes it should be. A regex substitution would leave any hand edit
+      # standing and silently keep it forever.
+      - name: Update the formula
+        env:
+          TARBALL_URL: ${{ steps.tarball.outputs.url }}
+          TARBALL_SHA: ${{ steps.tarball.outputs.sha256 }}
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/qrdrop.rb <<RUBY
+          # Generated by .github/workflows/publish.yml in stan-ely/qrdrop.
+          # Hand edits here are overwritten on the next release; change the
+          # template in that workflow instead.
+          class Qrdrop < Formula
+            desc "Send a file straight from one device to another, end-to-end encrypted"
+            homepage "https://github.com/stan-ely/qrdrop"
+            url "$TARBALL_URL"
+            sha256 "$TARBALL_SHA"
+            license "MIT"
+
+            # Rather than vendoring a runtime: brew's node is well past the
+            # engines floor of 22, and a bundled Node is ~58 MB against a
+            # published tarball of about 660 kB.
+            depends_on "node"
+
+            def install
+              # std_npm_args passes --ignore-scripts, which is safe here for a
+              # specific reason worth writing down: node-datachannel ships its
+              # native binary as eight per-platform npm packages that npm picks
+              # between using os/cpu, not as a postinstall that downloads one.
+              # If it ever goes back to prebuild-install, this formula breaks
+              # into a CLI that pairs and then cannot open a peer connection --
+              # the failure src/node/rtc.js writes its long error message for.
+              system "npm", "install", *std_npm_args
+              bin.install_symlink Dir["#{libexec}/bin/*"]
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/qrdrop --version")
+            end
+          end
+          RUBY
+          cat tap/Formula/qrdrop.rb
+
+      - name: Commit and push
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- Formula/qrdrop.rb; then
+            echo "Formula already at $VERSION; nothing to push."
+            exit 0
+          fi
+          git add Formula/qrdrop.rb
+          git commit -m "qrdrop $VERSION"
+          git push

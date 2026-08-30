@@ -33,6 +33,16 @@ a code pinned to the corner.
 asserts the QR and beam boxes are actually square — the check that caught the above. It
 needs `npx playwright install firefox` once.
 
+**Distribution.** `brew install stan-ely/tap/qrdrop` installs the CLI on macOS and Linux;
+the formula is rewritten from the release workflow, so it cannot drift from what was
+published. Tags now produce a GitHub Release as well as an npm publish, with notes taken
+from this file rather than generated from commit subjects. Each release carries the npm
+tarball, `qrdrop-site-<version>.zip` — the built browser bundle, for self-hosting, which is
+what the redeploy note above was asking for and previously had nowhere to point — a
+`SHA256SUMS` file, and a build provenance attestation over both archives. No winget: it
+cannot install a Node CLI without a bundled runtime, and Windows already has `npx`, `npm i
+-g`, and the deployed site.
+
 ## 0.3.0 — 2026-08-30
 
 **Web UI overhaul.** Screens now animate on entrance and as you step through the transfer.

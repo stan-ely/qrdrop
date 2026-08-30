@@ -33,6 +33,10 @@ npx qrdrop receive             # on the other machine
 npx qrdrop web                 # or run the browser UI locally, from this copy
 ```
 
+`npx` stays the headline because it installs nothing. If you would rather have it
+on `PATH`: `brew install stan-ely/tap/qrdrop` on macOS and Linux, `npm i -g qrdrop`
+anywhere with Node 22 or newer.
+
 A file sent from the CLI can be received in a browser, and the other way round.
 That interoperability is the reason this is one package rather than three.
 
@@ -197,6 +201,12 @@ flow while running code you can read first.
 
 Loopback only, by design: `http://<lan-ip>` is not a secure context, so
 WebCrypto and the camera would fail there.
+
+To host it somewhere of your own instead, every [release](https://github.com/stan-ely/qrdrop/releases)
+carries `qrdrop-site-<version>.zip` — the built bundle exactly as it is deployed,
+ready to unpack into a webroot — alongside the npm tarball, a `SHA256SUMS` file and
+a build provenance attestation for both. `npm run build` from a clone produces the
+same directory.
 
 ## No network at all
 
