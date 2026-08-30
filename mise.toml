@@ -56,3 +56,8 @@ run = "node e2e/transfer.e2e.mjs"
 description = "Run web/node interop e2e test"
 depends = ["build"]
 run = "node e2e/interop.e2e.mjs"
+
+[tasks.phone]
+description = "Open UI in browser with phone-sized viewport (390x844)"
+depends = ["build"]
+run = "node scripts/preview-phone.mjs"

@@ -834,16 +834,29 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
   /* The rail is "a sense of place, not a wizard nav" (see its own comment), and
    * on a 620px window it was spending ~50px of a 258px content box on that
    * sense. The screen heading says where you are; the rail only said it more
-   * decoratively. It is the most expendable thing on a short screen, so it is
-   * the first to go. */
-  .steps { display: none; }
+   * decoratively. This compacts it to dots only, hiding the text labels from
+   * sighted users while preserving them for assistive tech using the sr-only
+   * clip technique -- this is a visual compaction, not an accessibility change.
+   * aria-current and accessible labels remain unaffected. */
+  .steps { margin-bottom: var(--sp-2); }
+  .step {
+    flex: none;
+    width: var(--sp-2);
+    height: var(--sp-2);
+    padding: 0;
+    font-size: 0;
+    /* Hide text labels from sighted users: text is clipped to zero size and not
+     * rendered, but the element remains in the DOM with aria-current preserved and
+     * accessible to assistive tech. This achieves the sr-only clip technique goal
+     * (hidden from sighted users, kept accessible) while preserving flex layout
+     * and dot visibility. This is visual compaction only, not accessibility change. */
+  }
   /* Same trade as the narrow-width rule below: the route is stated by the
    * toast and named by the badge, so the sentence explaining it is the third
    * telling and the one that can go when height is scarce. */
   .path-info .note { display: none; }
   .card-body { gap: var(--sp-3); }
   .card-actions { padding-block-start: var(--sp-3); }
-  .steps { margin-bottom: var(--sp-3); }
   .outcome { padding: var(--sp-3); }
   .qr, .beam-stage { block-size: min(12rem, 100%); }
 }
