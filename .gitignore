@@ -7,11 +7,19 @@ site/dist/
 
 # The demo loop's raw capture tracks -- the scripted sender walkthrough
 # (record-walkthrough.mjs) and the live session's laptop side
-# (demo-session.mjs). Both are intermediates fed to the HyperFrames compose
-# step in docs/demo/loop/README.md; only the finished loop outputs are
-# committed (site/loop.mp4, site/loop.webm, docs/loop.poster.png).
+# (demo-session.mjs) -- plus the trimmed/cropped intermediates and the
+# side-by-side sync preview fed to the HyperFrames compose step in
+# docs/demo/loop/README.md. Only the finished loop outputs are committed
+# (site/loop.mp4, site/loop.webm, docs/loop.poster.png).
 docs/demo/loop/*.webm
+docs/demo/loop/*-trim.mp4
+docs/demo/loop/preview-sbs.mp4
 docs/demo/loop/.frames/
+
+# The HyperFrames compose project for the loop (scaffolded by /general-video).
+# Its assets/ are copies of the gitignored trims above and its output is the
+# three committed files; the project itself is a scratch build, not an artefact.
+videos/
 
 # scripts/check-layout.mjs writes a picture of every failing screen/viewport
 # combination here and clears the directory on each run. They are a debugging
