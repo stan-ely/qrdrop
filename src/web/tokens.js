@@ -1,4 +1,15 @@
 /**
+ * Breakpoint strings used in media queries across the codebase.
+ *
+ * These are exported so they can be interpolated at build time into both
+ * stylesheets' media queries, since CSS cannot read a custom property in
+ * a media query itself. This is the single-home solution to the problem of
+ * two hardcoded copies that have to agree.
+ */
+export const BREAKPOINT_WIDE = '(min-width: 60rem) and (max-height: 62rem)'
+export const BREAKPOINT_SHORT = '(max-height: 46rem)'
+
+/**
  * The design token set: every colour, space, radius, type, and shadow value
  * the UI uses, in one place.
  *

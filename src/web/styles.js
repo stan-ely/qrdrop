@@ -18,7 +18,63 @@
  * stay the e2e contract described in element.js; classes are free to be
  * whatever reads best, since nothing outside this component depends on them.
  */
-import { tokensCSS } from './tokens.js'
+import { tokensCSS, BREAKPOINT_WIDE, BREAKPOINT_SHORT } from './tokens.js'
+
+/**
+ * Core `.sheet` (dialog) CSS rules, extracted from src/web/styles.js and
+ * site/styles.css so there is one definition, not two hand-kept copies.
+ *
+ * Used by both the component's shadow-DOM stylesheet and the site's main
+ * stylesheet (injected at build time by scripts/build-site.mjs).
+ *
+ * @param {string} maxInlineSize The max-inline-size value; component uses
+ *   '30rem' while the site uses 'var(--col)' for wider dialogs.
+ * @returns {string}
+ */
+export function sheetCSS(maxInlineSize = '30rem') {
+  return `
+.sheet {
+  max-inline-size: min(${maxInlineSize}, calc(100vw - var(--sp-6)));
+  max-block-size: min(80dvh, calc(100dvh - var(--sp-6)));
+  inline-size: 100%;
+  margin: auto;
+  padding: var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  flex-direction: column;
+  gap: var(--sp-4);
+  font: var(--fs-0)/var(--lh-body) var(--font-sans);
+}
+
+.sheet[open] { display: flex; }
+
+.sheet::backdrop { background: rgb(0 0 0 / 0.45); }
+`
+}
+
+/**
+ * Button ghost variant CSS rules, extracted so there is one definition for
+ * both the component's buttons and the site's .chip element.
+ *
+ * Used by both the component's shadow-DOM stylesheet and the site's main
+ * stylesheet (injected at build time by scripts/build-site.mjs).
+ *
+ * @returns {string}
+ */
+export function buttonCSS() {
+  return `
+.btn.ghost {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+.btn.ghost:hover { background: var(--surface-raised); color: var(--text); }
+`
+}
 
 export const STYLES = `
 /*
@@ -243,26 +299,7 @@ ${tokensCSS(':host')}
  */
 .dialog-host { display: contents; }
 
-.sheet {
-  max-inline-size: min(30rem, calc(100vw - var(--sp-6)));
-  max-block-size: min(80dvh, calc(100dvh - var(--sp-6)));
-  inline-size: 100%;
-  margin: auto;
-  padding: var(--sp-5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
-  flex-direction: column;
-  gap: var(--sp-4);
-  font: var(--fs-0)/var(--lh-body) var(--font-sans);
-}
-
-.sheet[open] { display: flex; }
-
-.sheet::backdrop { background: rgb(0 0 0 / 0.45); }
+${sheetCSS()}
 
 .sheet-title {
   margin: 0;
@@ -394,12 +431,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 }
 .btn.primary:hover { background: var(--accent-hover); }
 
-.btn.ghost {
-  border-color: transparent;
-  background: none;
-  color: var(--muted);
-}
-.btn.ghost:hover { background: var(--surface-raised); color: var(--text); }
+${buttonCSS()}
 
 .btn.small {
   padding: var(--sp-1) var(--sp-2);
@@ -829,7 +861,7 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
  * for a screen that fits is the right way round: the padding is a comfort and
  * the content is the point.
  */
-@media (max-height: 46rem) {
+@media ${BREAKPOINT_SHORT} {
   .card { padding: var(--sp-4); gap: var(--sp-3); }
   /* The rail is "a sense of place, not a wizard nav" (see its own comment), and
    * on a 620px window it was spending ~50px of a 258px content box on that
@@ -869,12 +901,12 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
  * layout refusing to use the axis it has plenty of. The send screen scrolled
  * 303px internally in exactly that window.
  *
- * THIS QUERY MUST MATCH the one in site/styles.css, which widens the page
- * column so these two have somewhere to go. A media query cannot read a custom
- * property, so unlike every other shared value here these are two copies that
- * have to agree.
+ * The media query is interpolated from src/web/tokens.js at build time,
+ * so there is one definition shared with site/styles.css. CSS cannot read
+ * a custom property in a media query, so build-time interpolation is the
+ * only single-home option.
  */
-@media (min-width: 60rem) and (max-height: 62rem) {
+@media ${BREAKPOINT_WIDE} {
   .card-body.has-media { flex-direction: row; align-items: stretch; gap: var(--sp-5); }
   .card-media { flex: 0 1 22rem; align-items: center; }
   .card-copy { flex: 1 1 20rem; }

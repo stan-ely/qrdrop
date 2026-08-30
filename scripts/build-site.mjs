@@ -22,7 +22,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { SIGNALING_URLS } from '../src/transport/room.js'
-import { tokensCSS } from '../src/web/tokens.js'
+import { tokensCSS, BREAKPOINT_WIDE, BREAKPOINT_SHORT } from '../src/web/tokens.js'
+import { sheetCSS, buttonCSS } from '../src/web/styles.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const SITE = path.join(ROOT, 'site')
@@ -203,8 +204,21 @@ async function main() {
   // that must agree but are not the same list is exactly the footgun
   // `buildCSP` above avoids for the CSP allowlist: one generator, read from
   // two places, instead of a second list someone has to remember to update.
-  const siteCSS = await readFile(path.join(SITE, 'styles.css'), 'utf8')
-  const css = tokensCSS(':root') + siteCSS
+  //
+  // sheetCSS() and buttonCSS() are also injected here so there is one
+  // definition of the .sheet dialog and .btn.ghost button styles, not hand-kept
+  // copies in both src/web/styles.js and site/styles.css. The site's .sheet
+  // uses var(--col) for a wider dialog than the component's 30rem.
+  //
+  // Breakpoint strings are interpolated at build time since CSS media queries
+  // cannot read custom properties. This ensures the same breakpoint values are
+  // used in both the component's shadow-DOM styles and the page's styles.
+  let siteCSS = await readFile(path.join(SITE, 'styles.css'), 'utf8')
+  // Interpolate breakpoint values into media query strings so they match the
+  // component's styles exactly (defined in src/web/tokens.js).
+  siteCSS = siteCSS.replaceAll('(min-width: 60rem) and (max-height: 62rem)', BREAKPOINT_WIDE)
+  siteCSS = siteCSS.replaceAll('(max-height: 46rem)', BREAKPOINT_SHORT)
+  const css = tokensCSS(':root') + sheetCSS('var(--col)') + buttonCSS() + siteCSS
 
   // Content-hashed exactly like the JS bundles, and for a reason that cost a
   // live deploy to learn: GitHub Pages serves everything with max-age=600 and

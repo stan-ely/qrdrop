@@ -235,8 +235,15 @@ footer { min-inline-size: 0; }
  * anything inside <qr-drop>: these open explanations, and an explanation must
  * never compete with "Send a file" or with Accept. The component's own buttons
  * are styled in its shadow root and inherit none of this.
+ *
+ * Styled as a ghost button (transparent, border, muted text) to match
+ * .btn.ghost in the component. The ghost button rules are generated from
+ * src/web/styles.js at build time via scripts/build-site.mjs, so there is
+ * one definition of the ghost button style. This rule adds page-specific
+ * display properties and applies those styles to the chip element.
  */
 .chip {
+  display: inline-flex;
   font: inherit;
   font-size: var(--fs--1);
   color: var(--muted);
@@ -263,37 +270,11 @@ footer { min-inline-size: 0; }
  * which is above every stacking context on the page by definition -- that is
  * the reason this is a real <dialog> and not a positioned div, along with the
  * focus trap and Escape that would otherwise be hand-written.
- */
-.sheet {
-  max-inline-size: min(var(--col), calc(100vw - var(--sp-6)));
-  max-block-size: min(80dvh, calc(100dvh - var(--sp-6)));
-  inline-size: 100%;
-  margin: auto;
-  padding: var(--sp-5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
-  flex-direction: column;
-  gap: var(--sp-4);
-}
-
-/*
- * display goes on [open], never on .sheet itself.
  *
- * A closed <dialog> is hidden by exactly one thing: `display: none` in the UA
- * stylesheet. Any `display` in an author rule beats it, so styling .sheet as
- * a flex column silently makes both dialogs permanently visible, in flow, at
- * the bottom of the page. That is not a subtle failure -- it added 4300px to a
- * page whose entire premise is that it is exactly one viewport tall -- but it
- * is an easy one to write and it looks correct in the stylesheet.
+ * The .sheet rules are generated from src/web/styles.js at build time via
+ * scripts/build-site.mjs, so there is one definition of the dialog style,
+ * not two hand-kept copies. This rule provides page-chrome-only customizations.
  */
-.sheet[open] {
-  display: flex;
-}
-.sheet::backdrop { background: rgb(0 0 0 / 0.45); }
 .sheet h2 {
   margin: 0;
   font-size: var(--fs-1);
