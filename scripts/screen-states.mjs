@@ -65,6 +65,14 @@ export const FIXTURES = [
     state: { screen: 'choose' },
   },
   {
+    // Someone on the choose screen who has tapped the frame's 'No network?'
+    // button: the info sheet is the only place the two beam buttons live now,
+    // and it is the tallest thing this screen can show.
+    name: 'choose-beam-sheet',
+    screen: 'choose',
+    state: { screen: 'choose', modal: 'info' },
+  },
+  {
     name: 'send',
     screen: 'send',
     state: {
@@ -74,11 +82,35 @@ export const FIXTURES = [
     },
   },
   {
+    // The send screen with its 'About this code' sheet open -- the read-it-
+    // aloud fallback and the password warning, which moved off the screen and
+    // now sit behind the frame's Details button.
+    name: 'send-info-sheet',
+    screen: 'send',
+    state: {
+      screen: 'send', role: 'sender', code: CODE, qrIsLink: true,
+      file: PDF,
+      status: 'Waiting for the other device…', pairing: true,
+      modal: 'info',
+    },
+  },
+  {
     name: 'receive',
     screen: 'receive',
     state: {
       screen: 'receive', role: 'receiver', cameraAvailable: true,
       status: 'Point the camera at the code on the other device…',
+    },
+  },
+  {
+    // A receiver on a device with no usable camera: the scanner frame is
+    // replaced by the same-sized empty frame carrying NO_CAMERA_SCAN, and the
+    // manual-entry form below is the real way through.
+    name: 'receive-no-camera',
+    screen: 'receive',
+    state: {
+      screen: 'receive', role: 'receiver', cameraAvailable: false,
+      status: 'No camera available — enter the code by hand.',
     },
   },
   {
@@ -144,6 +176,20 @@ export const FIXTURES = [
     },
   },
   {
+    // beam-send with its 'About beaming' sheet open -- the "several passes are
+    // normal" and "nothing comes back here" reassurance that moved off the
+    // screen so the danger callout and the keep-it-on-screen line stay the
+    // loudest things on it.
+    name: 'beam-info-sheet',
+    screen: 'beam-send',
+    state: {
+      screen: 'beam-send', mode: 'beam', role: 'sender',
+      file: NOTES,
+      beam: { fps: 10, loops: 2, solved: 0, blocks: 0, eta: 31 },
+      modal: 'info',
+    },
+  },
+  {
     // The screen this whole sweep was written for. `offer` set is what puts it
     // on the answered-offer branch -- the manifest has decoded and the camera
     // is still running. The action bar shows `Review file`, which reopens the
@@ -173,6 +219,21 @@ export const FIXTURES = [
       offer: NOTES,
       modal: 'beam-offer',
       beam: { fps: 10, loops: 1, solved: 41, blocks: 190, eta: 74 },
+    },
+  },
+  {
+    // A beam receiver on a device whose camera the browser will not grant:
+    // _startBeamReceive sets a zeroed beam and returns early, so there is no
+    // offer and no progress -- just the danger callout and the same-sized empty
+    // scanner frame carrying NO_CAMERA_BEAM, which this mode has no fallback
+    // for because a beam code is thousands of frames, not a string to type.
+    name: 'beam-receive-no-camera',
+    screen: 'beam-receive',
+    state: {
+      screen: 'beam-receive', mode: 'beam', role: 'receiver',
+      cameraAvailable: false,
+      status: '',
+      beam: { fps: 0, loops: 0, solved: 0, blocks: 0, eta: null },
     },
   },
   {

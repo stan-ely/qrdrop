@@ -144,9 +144,49 @@ for (const vp of VIEWPORTS) {
       // scrollbar is not a layout that fits, whatever the buttons are doing.
       const body = screen ? screen.querySelector('.card-copy') : null
 
+      // Exactly one <h2> on the visible screen. Every screen builder draws its
+      // own heading and element.js's _focusScreenHeading moves focus to it by
+      // tag alone (`querySelector('h2')`) on every screen change -- a screen
+      // that grew a second <h2>, or a builder that left an old heading in place
+      // beside a new one, would make that focus target ambiguous and split the
+      // screen's a11y outline. The sheet's own <h2 class="sheet-title"> lives
+      // in the <dialog>, not in the section, so it is not counted here.
+      const headingCount = screen ? screen.querySelectorAll('h2').length : 0
+
+      // .card-actions holds controls and nothing else. The body/actions split
+      // in view.js only keeps a button on screen if the bar it sits in stays a
+      // bar: a filename line or a path badge landing in there (both did, inside
+      // #verify-status) puts non-actions in the one box the layout guarantees
+      // is reachable and starts it growing tall enough to push the real buttons
+      // out. #verify-status is the single allowed non-button -- it is verify's
+      // aria-live region and e2e/transfer.e2e.mjs clicks its child button.
+      const actionsBar = screen ? screen.querySelector('.card-actions') : null
+      const strayActions = actionsBar
+        ? [...actionsBar.children]
+          .filter(c => c.tagName !== 'BUTTON' && c.id !== 'verify-status')
+          .map(c => c.tagName.toLowerCase() + (c.id ? `#${c.id}` : ''))
+        : []
+
+      // The <dialog> autofocus trap, asserted rather than remembered. Each
+      // sheet's first vnode is `<h2 class="sheet-title" tabindex="-1"
+      // autofocus>`, and it exists so showModal() lands focus on the heading
+      // rather than on the first control -- which on the beam-offer sheet is
+      // Accept, where a stray Enter still travelling from the keypress that
+      // opened the sheet would accept a file. The harness clears `modal`
+      // between fixtures (see above), so there is only a sheet to check on the
+      // fixtures that open one; when none is open this is null.
+      const openSheet = root.querySelector('dialog[open]')
+      const focused = root.activeElement
+      const sheetFocusProblem = openSheet && !(focused && focused.classList.contains('sheet-title'))
+        ? `sheet open but focus is on ${focused ? focused.tagName.toLowerCase() + (focused.className ? `.${focused.className}` : '') : 'nothing'}`
+        : null
+
       return {
         bodyOverflow: body ? body.scrollHeight - body.clientHeight : 0,
         pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
+        headingCount,
+        strayActions,
+        sheetFocusProblem,
         offscreen: buttons
           .map(b => ({ label: (b.textContent || '').trim().slice(0, 40), box: b.getBoundingClientRect() }))
           // A tolerance of 1px, not 0: subpixel layout routinely puts an
@@ -162,6 +202,12 @@ for (const vp of VIEWPORTS) {
     if (report.pageOverflow > 1) problems.push(`page scrolls by ${report.pageOverflow}px`)
     if (report.bodyOverflow > 1) problems.push(`card copy scrolls by ${report.bodyOverflow}px`)
     for (const b of report.offscreen) problems.push(`button out of view: ${b}`)
+    // One heading per visible screen -- see `headingCount` in the evaluate above.
+    if (report.headingCount !== 1) problems.push(`visible screen has ${report.headingCount} <h2>, expected 1`)
+    // Nothing but buttons and #verify-status in the action bar.
+    for (const s of report.strayActions) problems.push(`non-button in .card-actions: ${s}`)
+    // Focus trapped on the sheet heading whenever a sheet is open.
+    if (report.sheetFocusProblem) problems.push(report.sheetFocusProblem)
 
     if (problems.length === 0) {
       console.log(`  ok    ${id}`)
