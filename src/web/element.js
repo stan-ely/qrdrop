@@ -109,6 +109,22 @@ export class QRDropElement extends HTMLElement {
     // It is also constructed once at module scope and shared by every
     // instance: two <qr-drop>s on a page then parse this CSS once between
     // them rather than once each.
+    /**
+     * @type {HTMLStyleElement | null} Fallback only; see above and _render.
+     *
+     * DECLARED BEFORE THE BRANCH BELOW, NOT AFTER IT. This line used to sit
+     * underneath the `else` that fills it in, so the fallback built a <style>
+     * element and then had it overwritten with null two statements later --
+     * on every browser that took that branch. `_render`'s
+     * `if (this._styleEl)` could therefore never be true, and any engine
+     * without constructable stylesheets rendered the component completely
+     * unstyled: exactly the failure the long comment above describes an
+     * appended <style> child causing, arrived at from the other direction and
+     * invisible to the same tests for the same reason (the e2e reads text and
+     * visibility, not paint).
+     */
+    this._styleEl = null
+
     if (SHEET) root.adoptedStyleSheets = [SHEET]
     else {
       // No constructable stylesheets. Re-appended after each patch instead --
@@ -116,9 +132,6 @@ export class QRDropElement extends HTMLElement {
       this._styleEl = document.createElement('style')
       this._styleEl.textContent = STYLES
     }
-
-    /** @type {HTMLStyleElement | null} Fallback only; see above and _render. */
-    this._styleEl = null
 
     /**
      * The one <dialog>, created once and never rebuilt.
@@ -352,7 +365,11 @@ export class QRDropElement extends HTMLElement {
       message: /** @type {string | null} */ (null),
       digest: '',
       dragging: false,
-      copied: /** @type {'code' | 'digest' | null} */ (null),
+      // The two -failed variants are not optional: _copy sets them when
+      // copyText rejects, and view.js's copyLabel reads them to render
+      // "Couldn't copy". This annotation had only the two success values, so
+      // the widening happened silently at the assignment.
+      copied: /** @type {import('./view.js').State['copied']} */ (null),
       pairing: false,
       busy: false,
       manualError: /** @type {string | null} */ (null),
