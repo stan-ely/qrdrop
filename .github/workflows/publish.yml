@@ -263,10 +263,28 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- Formula/qrdrop.rb; then
+
+          # Stage BEFORE asking whether anything changed. `git diff` compares
+          # the index against the working tree and does not consider untracked
+          # files at all, so on the release that first adds this formula it
+          # reports no change and this step exits 0 having done nothing -- a
+          # green tick over a no-op, which is how 0.3.1 shipped with the tap
+          # left empty. `--cached` against HEAD sees an added file and a
+          # modified one alike.
+          git add Formula/qrdrop.rb
+          if git diff --cached --quiet -- Formula/qrdrop.rb; then
             echo "Formula already at $VERSION; nothing to push."
             exit 0
           fi
-          git add Formula/qrdrop.rb
           git commit -m "qrdrop $VERSION"
           git push
+
+          # Prove the formula that is now in the tap is the one built above.
+          # The failure this catches is the one that got through last time:
+          # a step that reports success without the file having moved.
+          git fetch origin
+          if ! git diff --quiet origin/HEAD -- Formula/qrdrop.rb; then
+            echo "Formula/qrdrop.rb did not land in the tap as written" >&2
+            exit 1
+          fi
+          echo "Formula/qrdrop.rb is at $VERSION in the tap."
