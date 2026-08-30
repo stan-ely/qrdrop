@@ -419,22 +419,42 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 }
 .choices.secondary .btn:hover { border-color: var(--line-strong); }
 
-/* ---- unmissable "this is not encrypted" banner, both beam screens ----
- * Reuses --warn/--warn-soft rather than a new colour: those tokens are
- * already the "heed this" pair everywhere else in the component (the
- * too-large outcome), and a second warning colour would just make the
- * palette bigger without making this one easier to notice. A left border
- * rather than a full outline keeps it from reading as an error box (--bad),
- * which this is not -- it is a permanent property of the mode, not a fault. */
-.warn-banner {
-  margin: 0 0 var(--sp-4);
-  padding: var(--sp-3) var(--sp-4);
-  border-left: 3px solid var(--warn);
-  border-radius: var(--r-sm);
-  background: var(--warn-soft);
-  color: var(--warn);
+/* ---- callout boxes: info, warn, danger variants ----
+ * A left border rather than a full outline keeps boxed guidance from reading
+ * as an error the way a bordered box always would. Colour and weight carry
+ * the meaning; the left border is shared across all levels. */
+.callout {
+  border-left: 3px solid;
   font-weight: 600;
   font-size: var(--fs--1);
+}
+
+/* Variants with backgrounds (used for boxed/emphasized content) */
+.callout.info {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-sm);
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.callout.warn {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-sm);
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.callout.danger {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-sm);
+  border-left-color: var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
 }
 
 /* ---- drop zone: drag-and-drop / paste entry point for a send ---- */
@@ -509,21 +529,6 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   image-rendering: pixelated;
 }
 
-/* The "don't put the phone down yet" line, on both beam screens.
- *
- * Weighted deliberately heavier than .status and .note around it. This is the
- * one instruction whose absence produced a real failure -- an abandoned
- * transfer and an empty file that read as a corrupt download -- and it was a
- * quiet status line when that happened. It is not a warning (--warn belongs to
- * the unencrypted banner, and two competing amber blocks would flatten both),
- * so it leans on weight and the accent rule instead of colour. */
-.beam-instruction {
-  margin: var(--sp-4) 0 var(--sp-2);
-  padding-left: var(--sp-3);
-  border-left: 3px solid var(--accent);
-  font-weight: 600;
-  color: var(--text);
-}
 
 .beam-controls {
   display: flex;
@@ -706,7 +711,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
    Accept button. Styled flat and unclickable on purpose: it is the answer to
    "is this costing me data", not a control, and anything button-shaped beside
    a safety gesture is something people learn to click through. Same reasoning
-   as .warn-banner above -- a permanent property of the connection, not a
+   as .callout above -- a permanent property of the connection, not a
    fault. */
 .path-info { margin: var(--sp-3) 0; }
 
@@ -740,29 +745,10 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   white-space: pre;
 }
 
-/* The metered heads-up. Subordinate to the badge -- no background fill, so it
-   reads as a sentence attached to the pill rather than a second banner
-   competing with the gesture underneath it. */
-.path-warning {
-  margin: var(--sp-2) 0 0;
-  color: var(--warn);
-  font-size: var(--fs--1);
-  font-weight: 600;
-}
 
 .status { color: var(--muted); font-size: var(--fs--1); margin: var(--sp-2) 0 0; }
 .note { color: var(--muted); font-size: var(--fs--1); }
 .filename { font-weight: 600; margin: 0; word-break: break-all; }
-
-.error {
-  margin-top: var(--sp-4);
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: var(--r-sm);
-  border: 1px solid var(--bad);
-  background: var(--bad-soft);
-  color: var(--bad);
-  font-size: var(--fs--1);
-}
 
 summary {
   cursor: pointer;

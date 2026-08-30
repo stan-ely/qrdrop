@@ -168,7 +168,7 @@ function pathBadge(state) {
   return h('div', { class: 'path-info', 'aria-live': 'polite' }, [
     h('p', { class: `path-badge ${state.path}` }, label),
     h('p', { class: 'note' }, detail),
-    warning ? h('p', { class: 'path-warning' }, warning) : null,
+    warning ? h('p', { class: 'callout warn' }, warning) : null,
     // TEMPORARY, `?debug=path` only. Text content via h(), never innerHTML --
     // this is peer-influenced data (addresses the other device chose to send)
     // and the no-innerHTML rule is what keeps it inert.
@@ -613,7 +613,7 @@ function receive(state, dispatch) {
       // input are the same statement made to assistive tech, which otherwise
       // had no way at all to connect the two.
       state.manualError
-        ? h('p', { id: 'manual-error', class: 'error', role: 'alert' }, state.manualError)
+        ? h('p', { id: 'manual-error', class: 'callout danger', role: 'alert' }, state.manualError)
         : null,
     ]),
 
@@ -901,7 +901,7 @@ function beamSend(state, dispatch) {
     media: h('div', { id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', adopt: state.beamNode }),
     body: [
     h('h2', { tabindex: '-1' }, 'Show this to the other device'),
-    h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
+    h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
     state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
 
     // `adopt` and `key` are both load-bearing, not stylistic. The canvas is a
@@ -933,7 +933,7 @@ function beamSend(state, dispatch) {
     // means the bytes now move on their own. Here it means the opposite: the
     // work has not started yet. That misreading is the default, so it is worth
     // spending the most prominent element on the page to prevent.
-    h('p', { class: 'beam-instruction' }, 'Keep this code on screen until the other device says it is done.'),
+    h('p', { class: 'callout warn' }, 'Keep this code on screen until the other device says it is done.'),
 
     // Loops, not percent: a sender has no back channel at all (see
     // core/beam.js's header), so "how far along is the other device" is a
@@ -969,7 +969,7 @@ function beamReceive(state, dispatch) {
       : null,
     body: [
       h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
-      h('p', { class: 'warn-banner', role: 'note' }, BEAM_WARNING),
+      h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
 
       // Unlike receive()'s scanner, there is no manual-entry fallback to fall
       // back to here -- a beam code is thousands of frames, not one string a
@@ -986,7 +986,7 @@ function beamReceive(state, dispatch) {
       // the sending laptop down, so the instruction is promoted to the loudest
       // thing on the screen rather than left as the quiet status line it was.
       !state.offer && state.beam && state.beam.blocks > 0
-        ? h('p', { class: 'beam-instruction' }, BEAM_KEEP_GOING)
+        ? h('p', { class: 'callout warn' }, BEAM_KEEP_GOING)
         : null,
       !state.offer
         ? h('p', { class: 'status', 'aria-live': 'polite' }, state.status)
