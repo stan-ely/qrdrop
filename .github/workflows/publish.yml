@@ -93,11 +93,14 @@ jobs:
       # this repo at this commit.
       - run: npm publish --provenance --access public
 
-  # The Release is the page people land on from the repo, and until now there
-  # was nothing behind any tag -- v0.2.0 and v0.3.0 have no notes and no files.
-  # It also answers a concrete problem the 0.3.1 entry created: that entry tells
-  # self-hosters to redeploy the browser bundle, and there was nowhere to
-  # download one from short of unpacking the npm tarball by hand.
+  # The Release is the page people land on from the repo. v0.2.0 and v0.3.0 got
+  # one by hand, with their CHANGELOG text pasted in; this makes that automatic
+  # and stops the body from being a copy anyone can forget to make.
+  #
+  # The files are the new part -- both of those releases carry zero assets. That
+  # is a concrete problem the 0.3.1 entry created: it tells self-hosters to
+  # redeploy the browser bundle, and there was nowhere to download one from
+  # short of unpacking the npm tarball by hand.
   release:
     needs: publish
     runs-on: ubuntu-latest
