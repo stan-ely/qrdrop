@@ -542,8 +542,7 @@ function send(state, dispatch) {
         'aria-label': 'Copy the transfer code',
       }, copyLabel(state, 'code')),
     ]),
-    h('p', { class: 'note' },
-      'Read it out if scanning fails. Anyone who learns it can join — treat it like a password.'),
+    h('p', { class: 'note' }, 'Anyone who learns it can join.'),
     state.pairing
       ? h('div', {
         class: 'bar indeterminate', role: 'progressbar', 'aria-label': 'Connecting', 'aria-valuetext': state.status,
@@ -554,6 +553,19 @@ function send(state, dispatch) {
     actions: [
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
     ],
+
+    // The read-it-aloud fallback and the password warning are both true and
+    // neither is what a sender is looking at this screen to find out, so they
+    // move off it. The inline note keeps only the one sentence that changes
+    // what a person does next -- "anyone who learns it can join" -- and the
+    // rest waits behind the frame's Details button.
+    info: {
+      title: 'About this code',
+      content: [
+        h('p', { class: 'note' }, 'Read it out if scanning fails.'),
+        h('p', { class: 'note' }, 'Treat it like a password.'),
+      ],
+    },
   }
 }
 
@@ -960,12 +972,24 @@ function beamSend(state, dispatch) {
     // single pass takes -- which at least turns "keep it up indefinitely" into
     // a number someone can plan around.
     h('p', { class: 'status', 'aria-live': 'polite' },
-      `Shown in full ${loops} time${loops === 1 ? '' : 's'}, ${duration(eta)} per pass. Several passes are `
-      + 'normal. Nothing comes back here, so stop only when the other device says so.'),
+      `Shown in full ${loops} time${loops === 1 ? '' : 's'}, ${duration(eta)} per pass.`),
     ],
     actions: [
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
     ],
+
+    // The warning and the keep-it-on-screen instruction stay inline -- they are
+    // the whole reason this screen is careful. What moves is the reassurance
+    // around them: that many passes are expected, and that nothing on this side
+    // reports progress. True, but not what the status line is for.
+    info: {
+      title: 'About beaming',
+      content: [
+        h('p', { class: 'note' }, 'Several passes are normal.'),
+        h('p', { class: 'note' },
+          'Nothing comes back here, so stop only when the other device says so.'),
+      ],
+    },
   }
 }
 
