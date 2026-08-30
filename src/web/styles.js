@@ -602,6 +602,25 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 .viewfinder > span::before { bottom: 0; left: 0; border-right: none; border-top: none; }
 .viewfinder > span::after { bottom: 0; right: 0; border-left: none; border-top: none; }
 
+/* No camera on this device: view.js still fills the media slot, with an empty
+ * frame the same size and shape as the live one so the screen keeps its
+ * two-column wide-and-short layout instead of collapsing to one column on the
+ * screens that have no camera to show. Nothing to aim, so it reads as an inert
+ * placeholder -- dashed edge, muted fill -- with its one line centred where the
+ * picture would have been. It inherits the box (aspect-ratio, min-block-size,
+ * margin) from .scanner-frame above; this rule only restyles the surface. */
+.scanner-frame.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  border: 2px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--scan-bg);
+  text-align: center;
+}
+.scanner-frame.is-empty .note { margin: 0; }
+
 /* ---- SAS tiles: emoji above word, so the pair can be read aloud ---- */
 .sas-grid {
   display: flex;
@@ -669,6 +688,13 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
   overflow: hidden;
   margin: var(--sp-4) 0 var(--sp-3);
 }
+
+/* The transfer screen's bar is its media block -- the only child of
+ * .card-media. That container is a column flex box, and the wide-and-short
+ * query sets align-items: center on it, which on a bar with no content width
+ * would shrink it to nothing. align-self: stretch opts this one child back
+ * out, so the bar fills the media column at every width. */
+.card-media > .bar { align-self: stretch; }
 
 .bar-fill {
   height: 100%;

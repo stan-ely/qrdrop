@@ -563,12 +563,22 @@ function send(state, dispatch) {
  */
 function receive(state, dispatch) {
   return {
+    // The manual-entry form below is the real fallback when there is no camera,
+    // but the media slot still has to be filled or this screen alone would drop
+    // out of the two-column wide-and-short layout that verify, transfer, done
+    // and receive-with-camera all use -- the card would reflow every time the
+    // flow passed through here. A dashed, empty scanner-frame carrying the same
+    // "no camera" line holds the slot at the size and shape the <video> would
+    // have taken, and puts the message where a person is already looking for
+    // the picture.
     media: state.cameraAvailable
-        ? h('div', { class: 'scanner-frame' }, [
-          h('video', { id: 'scanner', key: 'scanner', class: 'scanner', muted: true, playsinline: '' }),
-          h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
-        ])
-      : null,
+      ? h('div', { class: 'scanner-frame' }, [
+        h('video', { id: 'scanner', key: 'scanner', class: 'scanner', muted: true, playsinline: '' }),
+        h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
+      ])
+      : h('div', { class: 'scanner-frame is-empty' }, [
+        h('p', { class: 'note' }, NO_CAMERA_SCAN),
+      ]),
     body: [
     h('h2', { tabindex: '-1' }, "Scan the sender's code"),
 
@@ -738,16 +748,24 @@ function transfer(state, dispatch) {
   const pct = total > 0 ? Math.min(100, (moved / total) * 100) : 0
 
   return {
-    // Nothing visual to put beside the words; see screen().
-    media: null,
+    // The progress bar is this screen's visual block -- the slot the QR, the
+    // camera, and the outcome banner fill on the screens either side of this
+    // one. transfer used to pass `media: null` on the grounds that a
+    // percentage is part of the prose, and that made it the one screen in the
+    // verify -> transfer -> done run without a media column: the wide-and-short
+    // layout collapsed to one column here and sprang back on the next screen,
+    // so the whole card visibly reflowed twice mid-transfer. The bar is a
+    // picture of how far along things are, not a sentence about it, so it
+    // belongs beside the words rather than among them. Every aria attribute is
+    // exactly as it was when it sat in `body`.
+    media: h('div', {
+      class: 'bar', role: 'progressbar',
+      'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(moved),
+    }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]),
     body: [
     h('h2', { tabindex: '-1' }, state.role === 'receiver' ? 'Receiving' : 'Sending'),
     state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
     pathBadge(state),
-    h('div', {
-      class: 'bar', role: 'progressbar',
-      'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(moved),
-    }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]),
     h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
     ],
     actions: [
@@ -961,22 +979,30 @@ function beamReceive(state, dispatch) {
   const pct = blocks > 0 ? Math.min(100, (solved / blocks) * 100) : 0
 
   return {
+    // Camera present: the live viewfinder. Absent: an empty frame the same size
+    // carrying NO_CAMERA_BEAM, so the media slot is filled either way and this
+    // screen stops dropping out of the two-column wide-and-short layout whenever
+    // the device has no camera. See the body comment below for why the message
+    // belongs here rather than in a note further down.
     media: state.cameraAvailable
       ? h('div', { class: 'scanner-frame' }, [
         h('video', { id: 'beam-scanner', key: 'beam-scanner', class: 'scanner', muted: true, playsinline: '' }),
         h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
       ])
-      : null,
+      : h('div', { class: 'scanner-frame is-empty' }, [
+        h('p', { class: 'note' }, NO_CAMERA_BEAM),
+      ]),
     body: [
       h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
       h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
 
-      // Unlike receive()'s scanner, there is no manual-entry fallback to fall
-      // back to here -- a beam code is thousands of frames, not one string a
-      // person could read aloud or paste. So a missing camera is said outright
-      // instead of the silent omission receive() uses (see its comment): there
-      // the fallback is right there below; here there genuinely is none.
-      state.cameraAvailable ? null : h('p', { class: 'note' }, NO_CAMERA_BEAM),
+      // Unlike receive()'s scanner there is no manual-entry fallback here -- a
+      // beam code is thousands of frames, not one string a person could read
+      // aloud or paste -- so a missing camera has to be said outright rather
+      // than left to a form that does not exist. It is said in the media slot
+      // itself now (the is-empty scanner-frame above), landing in the space the
+      // camera would have filled instead of as a note stranded below the
+      // warning, where it read as one more thing gone wrong.
 
       state.offer
         ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`)
