@@ -100,8 +100,7 @@ be committed is the three outputs above.
 
 ## 4. Wire it in
 
-Not done here yet — do it once the three files exist, so the repo never
-references a missing video.
+The README is wired (the GIF path below). The site is not yet.
 
 - **Site** — `site/index.html`, styled in `site/styles.css`:
 
@@ -117,12 +116,14 @@ references a missing video.
   `default-src 'self'`. Confirm `img-src` covers the poster; no `site/_headers`
   change is needed.
 
-- **README** — a committed `<video>` file reference is unreliable on github.com.
-  Either upload `site/loop.mp4` to a PR to get a
-  `github.com/user-attachments/assets/…` URL and use it in a `<video>` tag with
-  `poster="docs/loop.poster.png"`, or add `docs/loop.gif` (an extra
-  `ffmpeg` output) and use a plain `<img>`. The npm render falls back to the
-  poster either way.
+- **README** — done, via `docs/loop.gif` and a plain `<img>` just under the
+  share.stan-ely.com line. A committed `<video>` file reference does not play on
+  github.com and npm plays no video at all, so the GIF is the one form that
+  works in both; `docs/loop.poster.png` stays the still fallback. The `ffmpeg`
+  recipe for the GIF is in `videos/loop/BUILD.md` §3. If a crisper embed is
+  wanted later, upload `site/loop.mp4` to a PR for a
+  `github.com/user-attachments/assets/…` URL and swap the `<img>` for a
+  `<video ... poster="docs/loop.poster.png">` — github.com will play that one.
 
 - **npm** — leave `package.json` `files` unchanged. The loop does not ship in
   the tarball; the npm page shows `docs/loop.poster.png`, which is already under

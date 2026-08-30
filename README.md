@@ -17,6 +17,16 @@
   <b><a href="https://share.stan-ely.com">share.stan-ely.com</a></b> — no install, no account, no upload.
 </p>
 
+<!-- One real transfer, captured from both ends and cut together by hand from
+     videos/loop/ (recipe: videos/loop/BUILD.md); not regenerated in CI.
+     site/loop.mp4 / site/loop.webm are the same clip, for the site hero. A GIF
+     rather than a <video> tag because github.com will not play a repo-relative
+     <video> and npm plays neither; docs/loop.poster.png is the still fallback
+     for the npm page. The alt text is the clip in words. -->
+<p align="center">
+  <img width="900" alt="One real qrdrop transfer, filmed from both ends. On a laptop, report.pdf is dropped onto share.stan-ely.com and a QR code appears. A phone's camera scans the code. Both screens then show the same four symbols — taco, umbrella, snake, rainbow — under “Check both devices show the same symbols”. The laptop sends the file and reports it delivered while the phone opens the received report.pdf. The clip loops through a brief dip to black." src="docs/loop.gif">
+</p>
+
 ```bash
 npx qrdrop send report.pdf     # prints a QR code in your terminal
 npx qrdrop receive             # on the other machine
