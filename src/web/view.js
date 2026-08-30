@@ -98,7 +98,7 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   by element.js. For things that HAPPENED rather than things that are true:
  *   a state a screen can go on describing belongs in `status`, which is always
  *   on screen, not in something that disappears.
- * @property {'beam-offer' | 'error' | null} modal which sheet is open, if any.
+ * @property {'beam-offer' | 'error' | 'info' | null} modal which sheet is open, if any.
  *   The sheet is the only box on a non-scrolling page allowed to scroll
  *   inside itself, so it is where long copy and anything unplanned goes.
  * @property {Element | null} beamNode the adopted <canvas> the player owns
@@ -122,6 +122,19 @@ const STEP_INDEX = { send: 0, receive: 0, verify: 1, transfer: 2, done: 2 }
 const STEP_LABELS = ['Connect', 'Verify', 'Transfer']
 
 const SUCCESS_OUTCOMES = new Set(['sent', 'received'])
+
+// Every screen's builder, keyed by screen name. Module scope rather than a
+// local inside screen() because dialogContent() needs it too: the `info` sheet
+// reads its copy straight back off the builder for state.screen rather than
+// keeping a second copy of it (the same reasoning tokens.js applies to the
+// palette). The functions are declarations, so referencing them from a
+// module-scope const above their definitions is safe -- they are hoisted and
+// initialised before this runs.
+/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { media?: any, body: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[] } | null }>} */
+const builders = {
+  choose, send, receive, verify, transfer, done,
+  'beam-send': beamSend, 'beam-receive': beamReceive,
+}
 
 /**
  * The network-path badge, plus the metered warning when there is one.
@@ -284,6 +297,25 @@ export function render(state, dispatch) {
  * @returns {import('./vdom.js').VNode[]}
  */
 export function dialogContent(state, dispatch) {
+  // The per-screen info sheet. Its copy is not stored here -- it is read back
+  // off the same builder that draws the screen, so the words in the sheet and
+  // the screen that owns them cannot drift apart. A builder that declares no
+  // `info` for the current screen has no sheet to show; return nothing rather
+  // than an empty dialog frame.
+  if (state.modal === 'info') {
+    const info = builders[state.screen](state, dispatch).info
+    if (!info) return []
+    return [
+      h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, info.title),
+      h('div', { class: 'sheet-body' }, info.content),
+      h('div', { class: 'sheet-actions' }, [
+        h('button', {
+          class: 'btn', type: 'button', onclick: () => dispatch('modal:close'),
+        }, 'Close'),
+      ]),
+    ]
+  }
+
   if (state.modal === 'beam-offer' && state.offer) {
     return [
       h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, 'Before you accept'),
@@ -374,11 +406,6 @@ function stepRail(state) {
  * @param {Dispatch} dispatch
  */
 function screen(name, state, dispatch) {
-  const builders = {
-    choose, send, receive, verify, transfer, done,
-    'beam-send': beamSend, 'beam-receive': beamReceive,
-  }
-
   // Every builder returns { body, actions } rather than one flat array, and
   // the two halves land in different boxes: `.card-body` may give up space and
   // scroll as a last resort, `.card-actions` never does. See the .card comment
@@ -397,14 +424,31 @@ function screen(name, state, dispatch) {
   // the wrong tool: an item spanning an unknown number of rows has to name a
   // count, and every row it names past the real ones still contributes a gap.
   // A span of 99 added 1584px of empty gaps to the send screen.
-  const { media, body, actions } = builders[name](state, dispatch)
+  const { media, body, actions, info } = builders[name](state, dispatch)
+
+  // The Details button is appended here, by the frame, when a builder declares
+  // `info` -- never rendered by the builder itself. It is the exact same
+  // enforced-shape argument as the body/actions split above: a screen that
+  // carries an info sheet should not also have to remember to draw, label, and
+  // wire the button that opens it, and two screens hand-rolling that button
+  // would drift in copy and placement the first time one of them was edited.
+  // The frame owns the button; a builder owns only whether there is one and
+  // what it opens onto.
+  const cardActions = info
+    ? [
+      ...actions,
+      h('button', {
+        class: 'btn ghost', type: 'button', onclick: () => dispatch('modal:open', 'info'),
+      }, 'Details'),
+    ]
+    : actions
 
   return h('section', { id: `screen-${name}`, class: 'card', hidden: state.screen !== name }, [
     h('div', { class: `card-body${media ? ' has-media' : ''}` }, [
       media ? h('div', { class: 'card-media' }, media) : null,
       h('div', { class: 'card-copy' }, body),
     ].filter(Boolean)),
-    h('div', { class: 'card-actions' }, actions),
+    h('div', { class: 'card-actions' }, cardActions),
   ])
 }
 

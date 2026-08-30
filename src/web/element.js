@@ -359,7 +359,7 @@ export class QRDropElement extends HTMLElement {
       mode: /** @type {'p2p' | 'beam'} */ ('p2p'),
       beamNode: /** @type {Element | null} */ (null),
       dialogNode: /** @type {Element | null} */ (this._dialogNode),
-      modal: /** @type {'beam-offer' | 'error' | null} */ (null),
+      modal: /** @type {'beam-offer' | 'error' | 'info' | null} */ (null),
       toast: /** @type {string | null} */ (null),
       beam: /** @type {import('./view.js').State['beam']} */ (null),
     }
@@ -508,6 +508,7 @@ export class QRDropElement extends HTMLElement {
       // explanation is not declining a transfer, and a sheet whose Close
       // button silently cancelled the thing it was explaining would be the
       // most expensive possible reading of a dismissal.
+      case 'modal:open': return this._setState({ modal: payload })
       case 'modal:close': return this._setState({ modal: null })
       case 'cancel': return this._reset()
       case 'restart': return this._reset()
