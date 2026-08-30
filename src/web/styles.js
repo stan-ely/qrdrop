@@ -89,6 +89,7 @@ ${tokensCSS(':host')}
   color: var(--muted);
   font-size: var(--fs--1);
   font-weight: 500;
+  transition: color var(--dur-base), background var(--dur-base);
 }
 
 .step::before {
@@ -135,6 +136,10 @@ ${tokensCSS(':host')}
   padding: var(--sp-6);
   gap: var(--sp-4);
 }
+
+/* The selector only matches on a screen change, not on progress ticks, so the
+ * animation does not run repeatedly while watching a transfer. */
+.card:not([hidden]) { animation: screen-in var(--dur-slow) ease-out; }
 
 /*
  * Restores what \`display: flex\` above just broke.
@@ -335,6 +340,11 @@ ${tokensCSS(':host')}
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(var(--sp-3)); }
   to { opacity: 1; transform: none; }
+}
+
+@keyframes screen-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 h2 {
