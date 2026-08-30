@@ -331,7 +331,15 @@ export function installState({ state, link }) {
     qr.make()
     const t = document.createElement('template')
     t.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 3, scalable: true })
-    return t.content.firstElementChild
+    const svg = t.content.firstElementChild
+    // Mirrors renderQR's explicit intrinsic size. Not cosmetic here: without
+    // it the sweep goes on measuring markup the app no longer produces, which
+    // is the one way this fixture could report a pass the real screen has not
+    // earned.
+    const side = (qr.getModuleCount() + 3 * 2) * 6
+    svg?.setAttribute('width', String(side))
+    svg?.setAttribute('height', String(side))
+    return svg
   }
 
   /** @param {string} text */

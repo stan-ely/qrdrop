@@ -370,7 +370,18 @@ export function dialogContent(state, dispatch) {
       h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, 'Something went wrong'),
       // role="alert" so this is announced even though focus went to the
       // heading rather than to the message.
-      h('div', { class: 'sheet-body' }, [h('p', { role: 'alert' }, state.error)]),
+      h('div', { class: 'sheet-body' }, [
+        h('p', { role: 'alert' }, errorCopy(state.error)),
+        // Closed by default, so it costs no height on a layout that must not
+        // scroll, and the raw sentence is one tap away for a bug report.
+        // Rendered through h() like everything else -- some of these strings
+        // originate from the peer, and there is no innerHTML path to reach
+        // for even if one wanted it.
+        errorCopy(state.error) === state.error ? null : h('details', { class: 'error-detail' }, [
+          h('summary', {}, 'Details'),
+          h('p', {}, state.error),
+        ]),
+      ]),
       h('div', { class: 'sheet-actions' }, [
         h('button', {
           class: 'btn', type: 'button', onclick: () => dispatch('modal:close'),
@@ -992,6 +1003,62 @@ function done(state, dispatch) {
       h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
     ],
   }
+}
+
+/**
+ * Internal failure text, said the way a person would say it.
+ *
+ * The strings on the left are written for whoever is reading a stack trace,
+ * and as diagnostics they are good ones: "Out-of-order frame: expected 0, got
+ * 13877" names the exact fault. It was also, verbatim, the whole of what a
+ * user standing in a room with a phone was told about why their file had
+ * vanished.
+ *
+ * Unmatched messages pass through UNCHANGED, and that default is the point.
+ * Most of what reaches here is already user copy -- PEER_DISCONNECTED, both
+ * relay-cap sentences in core/messages.js, the insecure-context line -- and a
+ * catch-all "Something went wrong" would trade several good sentences for one
+ * worse one in order to improve a handful of bad ones. The sheet's heading
+ * already says that much.
+ *
+ * Nothing is thrown away: anything translated here is still shown raw under a
+ * Details disclosure, because "the transfer failed" is not a bug report
+ * anyone can act on.
+ *
+ * @param {string} message
+ * @returns {string}
+ */
+export function errorCopy(message) {
+  // sender.js prefixes the peer's own message before it ever gets here, so
+  // one underlying failure arrives in two shapes depending which end is
+  // reading it. Peeled once rather than duplicated down the table.
+  const peerPrefix = /^Peer (?:refused|could not complete) the transfer: /
+  if (peerPrefix.test(message)) return errorCopy(message.replace(peerPrefix, ''))
+
+  if (/^Out-of-order frame/.test(message)
+    || message === 'Unexpected frame type'
+    || message === 'Frame from unexpected file'
+    || message === 'Chunk arrived with no accepted file'
+    || message === 'Unexpected completion'
+    || message === 'Peer offered a file while one was already in flight') {
+    return 'The two devices lost track of each other mid-transfer, so nothing was saved. '
+      + 'Start again with a fresh code.'
+  }
+
+  if (message === 'Digest mismatch' || message === 'Size mismatch'
+    || message === 'Chunk count mismatch'
+    || message === 'Peer sent more data than the manifest declared'
+    || message === 'End-of-file flag arrived at the wrong chunk') {
+    return 'What arrived does not match what the other device said it was sending, '
+      + 'so it was thrown away rather than saved.'
+  }
+
+  if (message === 'Frame too short' || message === 'Frame exceeds maximum size'
+    || message === 'Runt frame') {
+    return 'The other device sent something this one could not read, so the transfer stopped.'
+  }
+
+  return message
 }
 
 /**

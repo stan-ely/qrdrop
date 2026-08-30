@@ -8,12 +8,22 @@
  *
  * The receiver never trusts the frame it was handed to tell it where the frame
  * belongs. Expected indices come from state tracked locally and are passed into
- * open(), so a peer that replays, skips, or reorders is rejected before its
- * bytes are decrypted -- let alone written to disk.
+ * open(), so a peer that replays, skips, or reorders is rejected before a byte
+ * of it reaches the disk.
+ *
+ * Rejected how, though, is the part that matters, and there are two answers
+ * rather than one. A frame whose tag fails did not come from our peer at all,
+ * and the only correct response is to drop it: anything louder hands whoever
+ * sent it the power to end a transfer they cannot read. A frame whose tag
+ * PASSES and whose index is still wrong is our peer contradicting itself, and
+ * that is fatal, because it is either a bug in this protocol or an attempt to
+ * make a partial file look whole. See open() in frame.js for the ordering that
+ * makes those two distinguishable.
  */
 
 import {
-  HEADER_BYTES, TYPE_CHUNK, TYPE_CONTROL, decodeHeader, open, openControl, sealControl,
+  HEADER_BYTES, TYPE_CHUNK, TYPE_CONTROL, UnauthenticatedFrame,
+  decodeHeader, open, openControl, sealControl,
 } from './frame.js'
 import { EMPTY_CHAIN, chainHash, hex, equalHex } from './digest.js'
 
@@ -40,13 +50,24 @@ const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
  *   sink (File System Access) or the Node one (fs), dragging one runtime's
  *   globals into a file that must run in both. src/web/ and src/node/ each
  *   supply their own; the tests supply a third.
- * @returns {{ handleFrame: (bytes: Bytes) => Promise<void>, readonly busy: boolean }}
+ * @returns {{
+ *   handleFrame: (bytes: Bytes) => Promise<void>,
+ *   readonly busy: boolean,
+ *   readonly dropped: number,
+ * }}
  */
 export function createReceiver({
   channel, sendKey, recvKey, control, nextControlIndex,
   onOffer, onProgress, onFileDone, onError, onPeerPath, createSink,
 }) {
   let controlIn = 0
+
+  // Frames that failed their tag and were dropped. Diagnosis, not a fault
+  // counter: a healthy transfer sees zero, and a non-zero count beside a
+  // transfer that still COMPLETED is the evidence that something else is
+  // putting packets into this room. Without it, dropping silently would mean
+  // the next report of this looks exactly like nothing happening.
+  let dropped = 0
 
   /**
    * @type {{
@@ -127,7 +148,21 @@ export function createReceiver({
 
   /** @param {Bytes} frame */
   async function handleChunk(frame) {
-    if (!active) throw new Error('Chunk arrived with no accepted file')
+    if (!active) {
+      // Opened with no expectation purely to answer one question: is this our
+      // peer? A frame that fails the tag here is a stranger's, and
+      // processFrame's catch drops it. One that PASSES is our peer sending
+      // chunks for a file we never accepted, which is a genuine protocol
+      // violation and stays fatal.
+      //
+      // This used to throw on the cleartext type byte alone, which made those
+      // two cases indistinguishable -- and since stray frames arrive as a
+      // stream rather than one at a time, each one aborted an already-dead
+      // transfer again and sent the peer one more error control frame for it.
+      // That is the storm behind a "got N" that climbs while the user watches.
+      await open(recvKey, frame, null)
+      throw new Error('Chunk arrived with no accepted file')
+    }
 
     const { plaintext, last } = await open(recvKey, frame, {
       type: TYPE_CHUNK,
@@ -210,6 +245,29 @@ export function createReceiver({
 
       await handleChunk(bytes)
     } catch (error) {
+      // A frame that failed its tag is not from the peer we paired with --
+      // the header is the AAD, so nobody without the session key can produce
+      // one that opens. Dropping it is the only defensible response: aborting
+      // would let anyone who can get a packet into this room end a transfer
+      // in progress, which is exactly the failure this arm exists to close.
+      //
+      // Silently is not quite silently -- it is counted, and reported beside
+      // a transfer rather than instead of one.
+      //
+      // Nor can a real fault hide behind it. A dropped chunk resurfaces at
+      // handleComplete as a chunk-count, size or digest mismatch, all three
+      // of which are fatal; a dropped control frame cannot swallow anything a
+      // transfer depends on, because those are awaited by name in
+      // control.next() and a missing one stalls into that wait. Same argument
+      // as the unrecognised control message above.
+      //
+      // Deliberately NOT a threshold that gives up after N drops. That reads
+      // like prudence and is a two-line denial of service: a stranger who can
+      // send N frames gets the abort back that this change just took away.
+      if (error instanceof UnauthenticatedFrame) {
+        dropped += 1
+        return
+      }
       control.fail(error)
       await abortActive(error)
     }
@@ -245,7 +303,11 @@ export function createReceiver({
     return next
   }
 
-  return { handleFrame, get busy() { return active !== null } }
+  return {
+    handleFrame,
+    get busy() { return active !== null },
+    get dropped() { return dropped },
+  }
 }
 
 /**

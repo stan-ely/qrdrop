@@ -3,6 +3,36 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
+## 0.3.1 — 2026-08-30
+
+**Security: a stranger in the rendezvous room could end a transfer.** Frame headers were
+checked for type, file sequence and chunk index *before* AES-GCM ran, and the transport
+accepted frames from any peer in the room rather than only the paired one. Together those
+meant anyone who could put a single packet into the room — no code, no pairing, never
+holding a key — could kill a live transfer with fourteen bytes of well-formed cleartext:
+the receiver refused the frame, aborted its sink, and discarded the partial file. Reported
+from the field as `Out-of-order frame: expected 0, got 13877` on a sub-1 MB transfer, which
+has about 64 chunks in it.
+
+Confidentiality and integrity were never affected — the attacker could not read, forge or
+alter file contents, and nothing unauthenticated ever reached a sink. Availability was.
+Frames are now authenticated before their headers are trusted, and a frame that fails its
+tag is dropped and counted (`receiver.dropped`) rather than treated as a fault in the
+transfer; inbound frames are filtered by the paired peer, matching the targeting the send
+side has always done. **If you self-host the browser bundle, redeploy.**
+
+**Fixes.** A failed transfer now closes its room, so frames still in flight stop
+re-entering a dead state machine and firing one error control frame each. Internal failure
+text no longer reaches the user verbatim — the error sheet says what happened in plain
+words, with the raw message under a Details disclosure for a bug report. The pairing QR and
+the beam stage stay square when the window is short: the wide-layout branch pinned their
+width while the card went on squeezing their height, which paid out as a white band beside
+a code pinned to the corner.
+
+**Layout sweep.** `scripts/check-layout.mjs` now runs Firefox as well as Chromium, and
+asserts the QR and beam boxes are actually square — the check that caught the above. It
+needs `npx playwright install firefox` once.
+
 ## 0.3.0 — 2026-08-30
 
 **Web UI overhaul.** Screens now animate on entrance and as you step through the transfer.

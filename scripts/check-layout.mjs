@@ -35,7 +35,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { chromium } from 'playwright'
+import { chromium, firefox } from 'playwright'
 
 import { serveStatic } from '../src/node/serve.js'
 import { FIXTURES, LINK, installState } from './screen-states.mjs'
@@ -74,10 +74,40 @@ await mkdir(OUT, { recursive: true })
 // secure context (see connectedCallback), and loopback is one -- the same
 // property `qrdrop web` relies on.
 const server = await serveStatic({ root: DIST, port: 0 })
-const browser = await chromium.launch()
+
+/*
+ * Two engines, and the second one is not symmetry for its own sake.
+ *
+ * Everything this script asserted was an overflow or a position, and two
+ * engines rarely disagree about those. What they do disagree about is SIZING,
+ * and that is where the gap was: Firefox drew the pairing QR's white quiet
+ * zone as a 300x150 rectangle -- on the one screen every user of this app
+ * sees -- and nothing here could have noticed, because there was no Firefox
+ * and no assertion that a box meant to be square is square.
+ *
+ * The binary is not bundled. `npx playwright install firefox` once; the
+ * launch failure below says so rather than letting a missing download read as
+ * a layout fault.
+ */
+const BROWSERS = [
+  { name: 'chromium', type: chromium },
+  { name: 'firefox', type: firefox },
+]
 
 /** @type {string[]} */
 const failures = []
+
+for (const engine of BROWSERS) {
+  let browser
+  try {
+    browser = await engine.type.launch()
+  } catch (error) {
+    console.log(`\n${engine.name}: cannot launch -- run \`npx playwright install ${engine.name}\``)
+    console.log(`  ${error instanceof Error ? error.message.split('\n')[0] : error}`)
+    failures.push(`${engine.name}: browser not installed`)
+    continue
+  }
+  console.log(`\n${engine.name}`)
 
 for (const vp of VIEWPORTS) {
   const context = await browser.newContext({
@@ -181,7 +211,17 @@ for (const vp of VIEWPORTS) {
         ? `sheet open but focus is on ${focused ? focused.tagName.toLowerCase() + (focused.className ? `.${focused.className}` : '') : 'nothing'}`
         : null
 
+      // The QR and the beam stage are square boxes with a white background,
+      // and being square is not decoration: that background IS the scanner's
+      // quiet zone, and preserveAspectRatio pins the code into one corner of
+      // any box that is not square, so the rest becomes a white band. Nothing
+      // else in this report measures a SHAPE, which is exactly how a
+      // rectangle survived on the send screen in one of the two engines.
+      const media = screen ? screen.querySelector('.qr, .beam-stage') : null
+      const mediaBox = media ? media.getBoundingClientRect() : null
+
       return {
+        mediaBox: mediaBox ? { width: mediaBox.width, height: mediaBox.height } : null,
         bodyOverflow: body ? body.scrollHeight - body.clientHeight : 0,
         pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
         headingCount,
@@ -197,9 +237,16 @@ for (const vp of VIEWPORTS) {
       }
     })
 
-    const id = `${fixture.name}.${vp.name}`
+    const id = `${fixture.name}.${vp.name}.${engine.name}`
     const problems = []
     if (report.pageOverflow > 1) problems.push(`page scrolls by ${report.pageOverflow}px`)
+    // Same 1px subpixel tolerance as the offscreen check below, for the same
+    // reason. The failure this exists to catch was ~44px out, nowhere near it.
+    if (report.mediaBox && Math.abs(report.mediaBox.width - report.mediaBox.height) > 1) {
+      problems.push(
+        `.qr/.beam-stage is ${Math.round(report.mediaBox.width)}x${Math.round(report.mediaBox.height)}, expected square`,
+      )
+    }
     if (report.bodyOverflow > 1) problems.push(`card copy scrolls by ${report.bodyOverflow}px`)
     for (const b of report.offscreen) problems.push(`button out of view: ${b}`)
     // One heading per visible screen -- see `headingCount` in the evaluate above.
@@ -227,7 +274,9 @@ for (const vp of VIEWPORTS) {
   await context.close()
 }
 
-await browser.close()
+  await browser.close()
+}
+
 await server.close()
 
 console.log('')

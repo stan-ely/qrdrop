@@ -49,7 +49,20 @@ export function renderQR(text, { cellSize = 6, margin = 3 } = {}) {
   template.innerHTML = qr.createSvgTag({ cellSize, margin, scalable: true })
   // Non-null: createSvgTag always returns one <svg> root, and the only input
   // to it is the code we generated ourselves.
-  return /** @type {Element} */ (template.content.firstElementChild)
+  const svg = /** @type {Element} */ (template.content.firstElementChild)
+
+  // `scalable: true` emits a viewBox and NO width or height, and an inline
+  // <svg> with no size is 300x150 by CSS default -- the same trap
+  // site/styles.css:375 spells out for the footer icons. The stylesheet still
+  // decides what is actually drawn (.qr svg is 100%/100% of a square box);
+  // these attributes only matter when an engine reaches for an intrinsic
+  // size, and they make the one it finds square rather than 2:1. The viewBox
+  // createSvgTag writes is "0 0 N N" for exactly this N.
+  const side = (qr.getModuleCount() + margin * 2) * cellSize
+  svg.setAttribute('width', String(side))
+  svg.setAttribute('height', String(side))
+
+  return svg
 }
 
 /**

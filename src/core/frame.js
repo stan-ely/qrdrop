@@ -23,6 +23,15 @@
  * edit to it fails the tag. The `last` flag lives in there specifically so that
  * end-of-file is authenticated: without it, an attacker who simply stops
  * forwarding frames could pass off a truncated file as a complete one.
+ *
+ * Travelling in the clear is not the same as being trustworthy, and the rule
+ * that keeps the difference straight is: AUTHENTICATE, THEN TRUST. Nothing
+ * decides the fate of a transfer on the strength of a header until the tag has
+ * proved that header came from the peer. open() below used to check ordering
+ * first, and that inversion was a denial of service -- a stranger who could
+ * get one packet into the rendezvous room could kill a live transfer with
+ * fourteen bytes, without the code, without pairing, without ever holding a
+ * key. See the comment on those checks for the failure it actually produced.
  */
 
 export const CHUNK_SIZE = 16 * 1024 // SCTP-safe across browsers; 64 KiB is modern-only
@@ -97,6 +106,24 @@ export async function seal(key, headerFields, plaintext) {
 }
 
 /**
+ * A frame that did not authenticate under our key.
+ *
+ * Its own class because the caller's response is completely different from
+ * every other failure in this module: a bad tag means the bytes did not come
+ * from the peer we paired with, so there is nothing to report and nothing to
+ * abort -- the right answer is to drop it and carry on. Every other error
+ * here is a statement about a frame that provably DID come from the peer, and
+ * is worth failing loudly over.
+ */
+export class UnauthenticatedFrame extends Error {
+  /** @param {unknown} [cause] */
+  constructor(cause) {
+    super('Frame did not authenticate under the session key', { cause })
+    this.name = 'UnauthenticatedFrame'
+  }
+}
+
+/**
  * Opens a frame, enforcing that it is the one we expected.
  *
  * `expect` is supplied by the caller from its own tracked state rather than
@@ -108,17 +135,60 @@ export async function seal(key, headerFields, plaintext) {
  * @param {CryptoKey} key
  * @param {Bytes} frame Untrusted: this is exactly what the peer sent.
  * @param {FrameExpectation | null} [expect] null opens without ordering
- *   checks, leaving only the AEAD tag to catch tampering. Only the tests do
- *   that; both real call sites always pass their tracked expectation.
+ *   checks, leaving only the AEAD tag to catch tampering. Used by the tests,
+ *   and by receiver.js to ask "is this our peer at all?" about a frame it has
+ *   no expectation for.
  * @returns {Promise<FrameHeader & { plaintext: Bytes }>}
+ * @throws {UnauthenticatedFrame} If the tag fails, i.e. the frame is not ours.
  */
 export async function open(key, frame, expect) {
+  // These two stay ahead of everything, and they are not provenance claims --
+  // they are bounds checks. The first keeps a runt out of decodeHeader's
+  // DataView, the second keeps an arbitrarily large buffer out of
+  // crypto.subtle.decrypt, which is what stops the decrypt-first order below
+  // from being an invitation to burn CPU on garbage.
   if (frame.length < HEADER_BYTES + TAG_BYTES) throw new Error('Frame too short')
   if (frame.length > MAX_FRAME_BYTES) throw new Error('Frame exceeds maximum size')
 
   const header = frame.slice(0, HEADER_BYTES)
   const fields = decodeHeader(header)
 
+  // Decrypt BEFORE the ordering checks. This is the reverse of how the
+  // function read for its first year, and the reversal is the whole fix.
+  //
+  // The nonce is derived from the header and the header is the AAD, so a
+  // header we did not produce cannot pass the tag. The checks below therefore
+  // learn nothing the tag has not already proved -- but running them first
+  // meant a stranger's cleartext decided whether our transfer lived. Someone
+  // whose frames reached a receiver sent a well-formed chunk header claiming
+  // index 13877 at a receiver expecting 0, for a file under 1 MB that had
+  // only ~64 chunks in it. The receiver threw "Out-of-order frame: expected
+  // 0, got 13877" on bytes it could never have opened, aborted the sink, and
+  // showed the user that sentence. Nothing was saved.
+  //
+  // The old order was chosen to avoid decrypting a frame we were going to
+  // refuse anyway. What that saved was a few microseconds against a
+  // size-bounded buffer; what it cost was letting an unauthenticated header
+  // reach the state machine, which is precisely what sealing at this layer
+  // exists to prevent.
+  /** @type {Bytes} */
+  let plaintext
+  try {
+    plaintext = new Uint8Array(
+      await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonceFor(header), additionalData: header },
+        key,
+        frame.slice(HEADER_BYTES),
+      ),
+    )
+  } catch (error) {
+    throw new UnauthenticatedFrame(error)
+  }
+
+  // Past this line the frame provably came from the peer holding our key, so
+  // a wrong index is a real desync in one of the two state machines and still
+  // fails loudly. That is the case these three checks were written for, and
+  // the only case they can now see.
   if (expect) {
     if (fields.type !== expect.type) throw new Error('Unexpected frame type')
     if (fields.fileSeq !== expect.fileSeq) throw new Error('Frame from unexpected file')
@@ -127,13 +197,6 @@ export async function open(key, frame, expect) {
     }
   }
 
-  const plaintext = new Uint8Array(
-    await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: nonceFor(header), additionalData: header },
-      key,
-      frame.slice(HEADER_BYTES),
-    ),
-  )
   return { ...fields, plaintext }
 }
 

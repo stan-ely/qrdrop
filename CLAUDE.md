@@ -46,8 +46,18 @@ on a page that scrolls or a button outside the viewport, writing a picture of
 each failure to `docs/screenshots/layout/` (gitignored):
 
 ```bash
+npx playwright install firefox        # one-time; only chromium ships by default
 npm run build && node scripts/check-layout.mjs
 ```
+
+It runs **both** engines, and the second one earns its place: everything this script used
+to assert was an overflow or a position, and engines rarely disagree about those. They
+disagree about *sizing*, which is why it also asserts that `.qr` / `.beam-stage` is
+actually square. That assertion found a real one immediately — 352x306 at 1280x620, in
+both engines, because the wide-layout branch pinned `inline-size: 100%` while
+`.card-media` (`flex: 1 100 auto`) went on squeezing the block axis. `preserveAspectRatio`
+pins the code into a corner of a box that is not square, so the difference pays out as a
+white band beside the QR.
 
 Run it after anything that touches `src/web/view.js`, `src/web/styles.js`, or the
 site's page chrome. The fixtures both scripts drive are shared, in
@@ -83,6 +93,26 @@ twice — once under `tsconfig.json` with `types: []` and no Node lib, once unde
 `tsconfig.node.json` with Node's globals. A stray `Buffer.from` in core passes the second
 and fails the first. That double-check is the only thing making "isomorphic" a build
 property rather than a comment. Always run both (`npm run typecheck`), never one.
+
+**Authenticate, then trust.** The ordering, type and `fileSeq` checks in `src/core/frame.js`
+run **after** `crypto.subtle.decrypt`, never before. The header is the AAD and the nonce is
+derived from it, so the tag already proves everything those comparisons could; running them
+first bought a few microseconds of skipped decryption and cost a denial of service. Anyone
+who could get one packet into the rendezvous room — no code, no pairing, never holding a key
+— could end a live transfer with fourteen bytes of well-formed cleartext, and the receiver
+would abort its sink and throw the partial file away. It was reported from the field as
+`Out-of-order frame: expected 0, got 13877` on a sub-1 MB transfer that only ever had ~64
+chunks in it. A frame that fails its tag is now dropped and counted (`receiver.dropped`),
+never fatal; a frame that passes and is *still* out of order is our own peer contradicting
+itself and stays fatal. Do not add a "give up after N drops" threshold — that hands the
+same DoS back.
+
+**Inbound frames are filtered by the paired `peerId`, exactly as outbound ones are targeted.**
+`src/transport/channel.js` has always sent to one peer, and its comment names the reason: a
+third party holding the code can be in the room. `src/transport/room.js` accepted from
+anyone, which made that targeting a courtesy rather than a boundary. Both halves or neither.
+`test/room.test.mjs` joins a third member to the topic and asserts it never reaches the
+frame handler.
 
 **The two safety gestures cannot be softened.** The sender confirms the SAS before a
 manifest goes out (the manifest alone leaks filename and size); the receiver's Accept

@@ -670,6 +670,26 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
+   * Ends the live session, once, without touching the screen.
+   *
+   * Separate from _reset because a failure has to leave the 'done' screen
+   * standing with its explanation on it rather than bouncing the user back to
+   * 'choose' -- but the room underneath has to go either way, and it did not.
+   * A failed transfer used to leave the room open with a receiver still wired
+   * behind it, so every frame still in flight re-entered a dead state machine,
+   * threw again, and sent the peer one more error control frame each time.
+   *
+   * _sessionEnded is set BEFORE the teardown so that the onPeerLeave handler
+   * _establish installs does not stack a second modal reading "The other
+   * device disconnected" on top of the real reason.
+   */
+  _endSession() {
+    this._sessionEnded = true
+    try { this._teardown?.() } catch { /* already gone */ }
+    this._teardown = null
+  }
+
+  /**
    * A failed transfer must look failed.
    *
    * Landing on 'done' with outcome 'failed' clears the frozen progress bar
@@ -680,6 +700,12 @@ export class QRDropElement extends HTMLElement {
    * @param {unknown} error
    */
   _failTransfer(error) {
+    // Safe to close here and not a moment earlier: createReceiver's onError
+    // fires at the END of abortActive, after sendControl({ t: 'error' }) has
+    // been awaited, so the peer's notification is already flushed. Closing
+    // before that await is the flush race CLAUDE.md lists under
+    // known-flaky -- do not move this up.
+    this._endSession()
     this._setState({ screen: 'done', outcome: 'failed', file: null, digest: '', message: null })
     this._fail(error)
   }

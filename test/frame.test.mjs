@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  seal, open, sealControl, openControl, decodeHeader,
+  seal, open, sealControl, openControl, decodeHeader, UnauthenticatedFrame,
   TYPE_CHUNK, CHUNK_SIZE, HEADER_BYTES, MAX_FRAME_BYTES,
 } from '../src/core/frame.js'
 
@@ -61,7 +61,51 @@ test('ciphertext edits are rejected', async () => {
   assert.ok(await rejects(() => open(k, t, null)))
 })
 
-test('replayed and reordered frames are refused before decryption', async () => {
+test('a frame that fails its tag is unauthenticated, whatever its header claims', async () => {
+  // The field failure, at unit scale. A stranger sealed a perfectly
+  // well-formed chunk header claiming index 13877 at a receiver expecting 0,
+  // for a file that only ever had 64 chunks in it. Because the ordering
+  // checks ran on the CLEARTEXT header, the receiver answered with
+  // "Out-of-order frame: expected 0, got 13877" and threw the transfer away
+  // -- on bytes it could not have opened, from someone who never held a key.
+  const stranger = await key()
+  const frame = await seal(stranger, { type: TYPE_CHUNK, fileSeq: 0, index: 13877 }, body())
+
+  const error = await open(await key(), frame, { type: TYPE_CHUNK, fileSeq: 0, index: 0 })
+    .then(() => null, e => e)
+
+  assert.ok(error instanceof UnauthenticatedFrame, 'a bad tag is never an ordering fault')
+  assert.doesNotMatch(String(error.message), /Out-of-order/)
+})
+
+test('our own peer reordering still fails loudly, because the tag passed first', async () => {
+  // The other half. Once the tag proves the frame came from the peer holding
+  // our key, a wrong index is a real desync -- dropping THIS would be how a
+  // truncated file gets presented as a whole one.
+  const k = await key()
+  const frame = await seal(k, { type: TYPE_CHUNK, fileSeq: 0, index: 1 }, body())
+
+  const error = await open(k, frame, { type: TYPE_CHUNK, fileSeq: 0, index: 0 })
+    .then(() => null, e => e)
+
+  assert.ok(!(error instanceof UnauthenticatedFrame))
+  assert.match(String(error.message), /Out-of-order frame: expected 0, got 1/)
+})
+
+test('the size guards still run ahead of any decryption', async () => {
+  // Not pedantry: they are what bounds the work a stranger can make us do now
+  // that a frame is decrypted before it is judged. If either of these ever
+  // came back as UnauthenticatedFrame it would mean an arbitrarily large
+  // buffer had reached crypto.subtle.decrypt first.
+  const k = await key()
+  for (const frame of [new Uint8Array(HEADER_BYTES + 4), new Uint8Array(MAX_FRAME_BYTES + 1)]) {
+    const error = await open(k, frame, null).then(() => null, e => e)
+    assert.ok(!(error instanceof UnauthenticatedFrame))
+    assert.match(String(error.message), /Frame too short|Frame exceeds maximum size/)
+  }
+})
+
+test('replayed and reordered frames are refused once the tag proves they are ours', async () => {
   const k = await key()
   const f0 = await seal(k, { type: TYPE_CHUNK, fileSeq: 0, index: 0 }, body(100, 1))
   const f1 = await seal(k, { type: TYPE_CHUNK, fileSeq: 0, index: 1 }, body(100, 2))

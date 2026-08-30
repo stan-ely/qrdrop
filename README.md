@@ -313,11 +313,18 @@ in a browser with no install on either side.
 - A network attacker without the QR cannot join, read, or MITM the transfer.
 - Past transfers stay closed if the code leaks afterwards.
 - Truncated, reordered, or altered files are rejected, not silently written.
+- Frames are accepted only from the peer this device actually paired with, and
+  a frame that fails its authentication tag is dropped rather than treated as a
+  fault in the transfer — so somebody else in the rendezvous room cannot
+  *interrupt* a transfer they cannot read. This was not true before v0.3.1; see
+  the note under [Known limitations](#known-limitations).
 
 **Not protected**
 
 - **Anyone with the code can join.** It is the entire credential. Show the QR to
-  a person, not to a room.
+  a person, not to a room. Note the boundary this draws, though: someone
+  *without* the code cannot read your file, cannot forge or alter one, and
+  cannot stop one being transferred.
 - **The host serving the page could serve modified code.** No in-browser design
   prevents that. It is mitigated by a strict CSP, no inline scripts, a small
   auditable surface, and shipped source maps — the deployed bundle is readable
@@ -539,6 +546,24 @@ site answer the question out loud is what stopped it.
   wallpaper. It is text beside the existing gestures, never a second click.
 - **One file at a time.** The framing supports a file sequence; neither the UI
   nor the CLI exposes it yet.
+- **Fixed in v0.3.1: a stranger in the room could end a transfer.** Up to
+  v0.3.0, `open()` checked a frame's type, file sequence and chunk index on the
+  **cleartext** header, before AES-GCM ran, and the transport accepted frames
+  from any peer in the rendezvous room rather than only the paired one. So
+  anyone who could get a single packet into that room — with no code, no
+  pairing, and never holding a key — could end a live transfer with fourteen
+  bytes of well-formed header: the receiver refused the frame, aborted its sink
+  and discarded the partial file. It surfaced in the field as
+  `Out-of-order frame: expected 0, got 13877` on a sub-1 MB transfer, which has
+  only about 64 chunks in it.
+
+  Confidentiality and integrity were never at risk. The attacker could not read,
+  forge or alter file contents, and nothing unauthenticated was ever written to
+  disk — the tag has always been checked before a byte reached a sink.
+  **Availability was**: a transfer could be interrupted by someone who could not
+  read it. Both halves are fixed — frames are authenticated before their headers
+  are trusted, and inbound frames are filtered by the paired peer — and both are
+  covered by regression tests. If you self-host the browser bundle, redeploy.
 
 ## Layout
 

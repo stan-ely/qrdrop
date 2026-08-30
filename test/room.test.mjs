@@ -126,3 +126,42 @@ test('every pairing announces a public key it has never announced before', async
   assert.equal(announced.length, 6)
   assert.equal(new Set(announced).size, 6, 'a repeated key here means one was reused')
 })
+
+test('frames from a third peer in the room never reach the receiver', async () => {
+  // The send side has always been targeted at the paired peer, and
+  // channel.js says why in as many words: a third party holding the code can
+  // be sitting in this room. The receive side took frames from anyone, which
+  // made that targeting a courtesy rather than a boundary -- and paired with
+  // core/frame.js reading a cleartext header before authenticating it, one
+  // stray frame was enough to end a live transfer.
+  const secret = generateSecret()
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  const { strategy } = fakeNetwork()
+  const { host, guest } = await pair(strategy, { topic, password, secret })
+
+  /** @type {Bytes[]} */
+  const seen = []
+  host.onFrame(bytes => seen.push(bytes))
+
+  // A third member on the same topic, broadcasting untargeted. It never sends
+  // on 'ecdh', so it does not disturb a pairing that has already settled.
+  const intruder = strategy.join(
+    /** @type {any} */ ({ appId: 'x', password, relayConfig: { urls: [] }, rtcConfig: {} }),
+    topic,
+  )
+  await intruder.makeAction('frame').send(new Uint8Array([1, 2, 3]))
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  assert.deepEqual(seen, [], 'a stranger in the room must not reach the frame handler')
+
+  // And the filter is not simply dropping everything: the peer we paired with
+  // still gets through.
+  await guest.channel.send(new Uint8Array([9, 9, 9]))
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  assert.equal(seen.length, 1, 'the paired peer is still delivered')
+  assert.deepEqual([...seen[0]], [9, 9, 9])
+
+  host.close()
+  guest.close()
+})

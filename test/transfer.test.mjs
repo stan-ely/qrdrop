@@ -7,7 +7,7 @@ import { createControlStream } from '../src/core/control.js'
 import { createReceiver } from '../src/core/receiver.js'
 import { sendFile } from '../src/core/sender.js'
 import { fromBytes } from '../src/core/source.js'
-import { CHUNK_SIZE } from '../src/core/frame.js'
+import { CHUNK_SIZE, TYPE_CHUNK, seal } from '../src/core/frame.js'
 import { safeFilename } from '../src/web/sink.js'
 
 /**
@@ -113,9 +113,14 @@ async function pairedSessions() {
  *   sink?: MemorySink,
  *   onProgress?: (p: TransferProgress) => void,
  *   serialize?: boolean,
- * }} [options]
+ *   inject?: () => Promise<Bytes> | Bytes,
+ * }} [options] `inject`, when given, is called before every frame the guest
+ *   receives and its result is fed to the guest first -- the stand-in for
+ *   someone else's bytes arriving mid-transfer.
  */
-async function transfer(file, { decide = 'accept', sink = memorySink(), onProgress, serialize = true } = {}) {
+async function transfer(file, {
+  decide = 'accept', sink = memorySink(), onProgress, serialize = true, inject,
+} = {}) {
   const { host, guest } = await pairedSessions()
   const [hostCh, guestCh] = channelPair({ serialize })
 
@@ -160,7 +165,12 @@ async function transfer(file, { decide = 'accept', sink = memorySink(), onProgre
     onFileDone: f => events.done.push(f),
     onError: e => events.errors.push(e),
   })
-  guestCh.onFrame = guestRx.handleFrame
+  guestCh.onFrame = inject
+    ? async bytes => {
+      await guestRx.handleFrame(await inject())
+      await guestRx.handleFrame(bytes)
+    }
+    : guestRx.handleFrame
 
   const result = await sendFile({
     channel: hostCh,
@@ -172,7 +182,7 @@ async function transfer(file, { decide = 'accept', sink = memorySink(), onProgre
     onProgress,
   })
 
-  return { result, events, sink, hostCh, guestCh }
+  return { result, events, sink, hostCh, guestCh, guestRx }
 }
 
 /**
@@ -196,6 +206,19 @@ const randomBytes = n => {
   for (let i = 0; i < n; i += 65536) crypto.getRandomValues(b.subarray(i, Math.min(i + 65536, n)))
   return b
 }
+
+/**
+ * A key nobody in the session holds, for sealing frames a stranger might send.
+ *
+ * Generated rather than derived from a second pairing, because what matters is
+ * only that it is not ours: the frames it produces are well-formed qrdrop
+ * frames with plausible headers that can never open under the session key,
+ * which is exactly the shape of the thing that killed a transfer in the field.
+ *
+ * @returns {Promise<CryptoKey>}
+ */
+const foreignKey = () =>
+  crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
 
 test('a small file arrives byte-identical', async () => {
   const data = randomBytes(1000)
@@ -276,6 +299,7 @@ test('a corrupted chunk is rejected and the partial file is abandoned', async ()
   const { host, guest } = await pairedSessions()
   const [hostCh, guestCh] = channelPair()
   const sink = memorySink()
+  /** @type {unknown[]} */
   const errors = []
 
   const control = createControlStream()
@@ -322,9 +346,99 @@ test('a corrupted chunk is rejected and the partial file is abandoned', async ()
     nextControlIndex: () => hostCtl++,
   }))
 
+  // Caught one step later than it used to be, and deliberately. The flipped
+  // byte is ciphertext, so the frame now fails its tag and is DROPPED rather
+  // than treated as a fault in the transfer -- on a reliable, DTLS-protected
+  // channel a bad tag means "not our peer", not "our peer's bytes rotted",
+  // and the alternative is letting anyone who can reach the room end a
+  // transfer they cannot read. The missing chunk still cannot be hidden: it
+  // resurfaces as a count mismatch the moment the sender claims completion,
+  // which is the assertion below and the reason dropping is safe.
   assert.ok(errors.length > 0, 'the receiver should report the tampering')
+  assert.match(String(errors[0]), /Chunk count mismatch/)
+  assert.equal(rx.dropped, 1, 'the tampered frame was dropped, and counted')
   assert.ok(sink.aborted, 'the partial file should be abandoned')
   assert.equal(sink.closed, false, 'a corrupt file must never be presented as complete')
+})
+
+test('a foreign frame injected mid-transfer does not kill it', async () => {
+  // The field report this exists for: a receiver 0 chunks into a sub-1 MB
+  // file -- 64 chunks at most -- was shown "Out-of-order frame: expected 0,
+  // got 13877" and lost the transfer. Nothing this sender could produce has
+  // an index of 13877, and the frame could never have been decrypted; it was
+  // refused on its CLEARTEXT header, before the tag was ever checked, which
+  // made fourteen bytes from a stranger enough to end a transfer.
+  const foreign = await foreignKey()
+  const inject = () => seal(foreign, { type: TYPE_CHUNK, fileSeq: 0, index: 13877 }, randomBytes(64))
+
+  const payload = randomBytes(CHUNK_SIZE * 3)
+  const { events, sink, guestRx } = await transfer(fileOf(payload, 'wanted.bin'), { inject })
+
+  assert.deepEqual(events.errors, [], 'a stranger must not be able to fail the transfer')
+  assert.deepEqual([...sink.bytes()], [...payload], 'the file arrives byte-identical')
+  assert.equal(sink.closed, true)
+  assert.equal(sink.aborted, false, 'nothing was thrown away')
+  assert.ok(guestRx.dropped >= 4, 'every injected frame was dropped, and counted')
+})
+
+test('a foreign chunk arriving with no accepted file is dropped, not fatal', async () => {
+  // The error storm. This used to throw on the cleartext type byte alone, so
+  // each stray frame aborted an already-dead transfer again and sent the peer
+  // one more error control frame -- which is what a "got N" climbing while
+  // the user watches actually looks like from the inside.
+  const { guest } = await pairedSessions()
+  const [, guestCh] = channelPair()
+  /** @type {unknown[]} */
+  const errors = []
+
+  const rx = createReceiver({
+    channel: guestCh,
+    sendKey: guest.sendKey,
+    recvKey: guest.recvKey,
+    control: createControlStream(),
+    nextControlIndex: () => 0,
+    createSink: async () => memorySink(),
+    onOffer: () => {},
+    onError: e => errors.push(e),
+  })
+
+  const foreign = await foreignKey()
+  for (let index = 13877; index < 13887; index++) {
+    await rx.handleFrame(await seal(foreign, { type: TYPE_CHUNK, fileSeq: 0, index }, randomBytes(64)))
+  }
+
+  assert.deepEqual(errors, [], 'a stranger must not be able to raise an error')
+  assert.equal(guestCh.sent, 0, 'nor to make us send them anything back')
+  assert.equal(rx.dropped, 10)
+})
+
+test('our own peer contradicting itself is still fatal', async () => {
+  // The other half of the same change: once the tag has proved a frame came
+  // from the peer holding our key, a wrong index is a real desync and must
+  // still fail loudly. Dropping THIS would be how a truncated file gets
+  // presented as a whole one.
+  const { guest } = await pairedSessions()
+  const [, guestCh] = channelPair()
+  /** @type {unknown[]} */
+  const errors = []
+
+  const rx = createReceiver({
+    channel: guestCh,
+    sendKey: guest.sendKey,
+    recvKey: guest.recvKey,
+    control: createControlStream(),
+    nextControlIndex: () => 0,
+    createSink: async () => memorySink(),
+    onOffer: () => {},
+    onError: e => errors.push(e),
+  })
+
+  // guest.recvKey is what the host seals with, so this frame is genuinely ours.
+  await rx.handleFrame(await seal(guest.recvKey, { type: TYPE_CHUNK, fileSeq: 0, index: 7 }, randomBytes(64)))
+
+  assert.equal(errors.length, 1)
+  assert.match(String(errors[0]), /Chunk arrived with no accepted file/)
+  assert.equal(rx.dropped, 0, 'an authenticated frame is never a drop')
 })
 
 test('filenames from the peer are sanitised before reaching a save dialog', () => {

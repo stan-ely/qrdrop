@@ -536,6 +536,21 @@ ${sheetCSS()}
 .sheet-body p { margin: 0; color: var(--muted); font-size: var(--fs--1); }
 .sheet-body .filename { color: var(--text); font-size: var(--fs-0); }
 
+/* The raw failure text, for a bug report. Closed by default and deliberately
+ * quieter than the sentence above it: this is the developer's copy of the
+ * message, and a user who does not need it should not have to read past it.
+ * Monospace because the interesting part is usually a number. */
+.error-detail > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--fs--1);
+}
+.error-detail > p {
+  margin-block-start: var(--sp-2);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
 .sheet-actions {
   flex: none;
   display: flex;
@@ -766,19 +781,30 @@ ${buttonCSS()}
 
 /* Always light, whatever the page theme: scanners read dark-on-light best. */
 /*
- * Sized from its HEIGHT, with aspect-ratio deriving the width -- the reverse
- * of the obvious inline-size cap this used to have.
+ * Sized from its INLINE size, with aspect-ratio deriving the height, and NOT
+ * flex-shrinkable. Both halves of that are load-bearing.
  *
- * A QR is square, so whichever axis is scarcer has to be the one that governs.
- * On a phone that is the height: a 16rem-wide code demands 16rem of vertical
- * space unconditionally, and on the send screen that was 322px of a card that
- * did not have it, pushing the rest of the screen into a scroll. Driving the
- * block size instead lets the code shrink when the card is short and sit at
- * its full size when it is not, with the width following rather than leading.
+ * A QR is square, so whichever axis is scarcer has to be the one that
+ * governs, and the version before this drove the block size for exactly that
+ * reason: a 16rem-wide code demands 16rem of vertical space unconditionally,
+ * and on the send screen that was 322px of a card that did not have it. That
+ * reasoning was right; the mechanism was not. \`flex: 0 1 auto\` in a column
+ * flex container leaves the BLOCK axis shrinkable, and an aspect-ratio box
+ * that is allowed to shrink on one axis only is no longer square -- it just
+ * quietly stops being. check-layout.mjs caught this at 1280x620, where the
+ * box measured 352x306 in both engines and the extra 46px paid out as a white
+ * band beside a code pinned to the corner by preserveAspectRatio.
+ *
+ * So: the scarcer axis is respected by CAPPING the inline size with a
+ * viewport-height term, not by handing the browser a second axis to squash.
+ * Same device .card-media uses one rule up (\`min-block-size: min(7rem, 20vh)\`),
+ * and it holds in both directions -- the box shrinks on a short card and sits
+ * at full size on a tall one, while staying square at every step.
  *
  * The floor matters: below roughly 7rem the modules of a version-6 code get
  * small enough that a phone camera at arm length stops locking on, and a QR
- * nobody can scan is not a smaller QR, it is a broken screen.
+ * nobody can scan is not a smaller QR, it is a broken screen. It has only
+ * changed axis, not value.
  */
 /* One rule, not two. A beam frame is read by the exact same class of scanner
  * as the pairing QR -- same quiet zone, same always-light surface, same
@@ -794,10 +820,21 @@ ${buttonCSS()}
   block-size: min(16rem, 100%);
   min-block-size: 7rem;
   aspect-ratio: 1;
+  /* inline-size stays AUTO on purpose, and every override below must keep it
+   * that way. It is what lets aspect-ratio derive the width from whatever
+   * block size the box ends up with after .card-media (flex: 1 100 auto) has
+   * taken its share -- so a squeezed box gets smaller rather than oblong.
+   * Pin it, and the two axes stop agreeing the moment anything shrinks. */
   max-inline-size: 100%;
   margin-inline: auto;
 }
-.qr svg { display: block; inline-size: 100%; block-size: 100%; }
+/* aspect-ratio as well as 100%/100%: the box above is square by construction,
+ * but this says so a second time at the one element that has no intrinsic
+ * size of its own to fall back on -- qrcode-generator's \`scalable: true\`
+ * emits a viewBox and no width/height, and an inline <svg> with no size is
+ * 300x150 by CSS default. site/styles.css:375 records the same trap for the
+ * footer icons. */
+.qr svg { display: block; inline-size: 100%; block-size: 100%; aspect-ratio: 1; }
 
 /* web/beam.js paints one canvas pixel per QR module and leaves the CSS to
  * blow it up to display size (see startBeamSend's canvas). image-rendering:
@@ -1254,7 +1291,22 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
 
   /* Height stops being the scarce axis in two columns, so the QR goes back to
    * filling the width it is given. */
-  .qr, .beam-stage { block-size: auto; inline-size: 100%; margin-inline: 0; }
+  /*
+   * Left-aligned in its column rather than centred, and bigger than the base
+   * rule allows -- there is width to spare in this layout and a larger code
+   * is easier to scan across a desk.
+   *
+   * What it must NOT do is pin the inline size, which is what this rule used
+   * to say (\`block-size: auto; inline-size: 100%\`). .card-media is
+   * flex: 1 100 auto and gives way readily, so on a short window the box was
+   * squeezed on the block axis while its width stayed nailed to the column:
+   * check-layout.mjs measured 352x306 at 1280x620, in both engines. A QR is
+   * square or it is a QR with a white band down one side, because
+   * preserveAspectRatio pins the code to the corner of whatever box it is
+   * handed. So this raises the block cap and lets aspect-ratio derive the
+   * width, exactly as the base rule does.
+   */
+  .qr, .beam-stage { block-size: min(22rem, 100%); margin-inline: 0; }
 }
 
 /*

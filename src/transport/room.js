@@ -685,7 +685,29 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
   // registered are dropped rather than thrown on.
   /** @type {(bytes: Bytes) => void} */
   let frameHandler = () => {}
-  frameAction.onMessage = data => frameHandler(toBytes(data))
+
+  // The peer we committed to, or null until one arrives.
+  //
+  // The send side has always been targeted at exactly this id, and channel.js
+  // names the reason in as many words: a third party holding the code can be
+  // sitting in this room. The receive side accepted frames from anyone, which
+  // made that targeting a courtesy rather than a boundary -- and because
+  // core/frame.js used to read a frame's cleartext header before
+  // authenticating it, fourteen bytes from a stranger were enough to abort a
+  // live transfer and throw away the partial file. Both halves or neither.
+  /** @type {string | null} */
+  let pairedPeerId = null
+
+  frameAction.onMessage = (data, { peerId: from }) => {
+    // Dropped rather than queued. Nothing legitimate can arrive before
+    // pairing: frames only start once openRoom has resolved and the caller
+    // has registered a handler, and until then frameHandler is the no-op
+    // placeholder that would discard them anyway. Buffering them "just in
+    // case" would mean holding an unpaired stranger's bytes for later replay
+    // into an authenticated session, which is the opposite of the intent.
+    if (from !== pairedPeerId) return
+    frameHandler(toBytes(data))
+  }
 
   return new Promise((resolve, reject) => {
     /** @param {Error} reason */
@@ -712,6 +734,13 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
       // partner to the user.
       if (settled) return
       settled = true
+
+      // Set here rather than beside resolve(): establishSession is awaited
+      // below, and this is already the peer whose public key is about to be
+      // mixed into the session. Waiting for that derivation to finish would
+      // leave the await as a window in which a stranger's frames are still
+      // accepted.
+      pairedPeerId = id
 
       // Trystero delivers whatever the peer serialised, so this is a string
       // only by convention. Checked rather than assumed: without it a peer
