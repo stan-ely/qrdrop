@@ -1,6 +1,6 @@
 {
   "name": "qrdrop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.",
   "license": "MIT",

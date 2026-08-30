@@ -3,28 +3,35 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
-## Unreleased
+## 0.3.0 — 2026-08-30
 
-Documentation and project files only — nothing in `src/` changed, so the
-published package behaves exactly as 0.2.0 does.
+**Web UI overhaul.** Screens now animate on entrance and as you step through the transfer.
+Info sheets hold long-form copy — reassurance text, warnings, and explanations — keeping
+them off the main layout and freeing mobile screens from vertical scroll. The UI role
+system collapsed to three clear treatments. A choose-screen heading and step dots
+guide navigation. Media lays beside text on short windows instead of stacking.
 
-- The README is restructured: three rendered diagrams in place of two ASCII
-  sketches, screenshots of the real UI, a contents strip, the deep-dive
-  sections folded into `<details>`, and the two load-bearing warnings (the SAS
-  that `--yes` cannot skip, and backpressure) raised into callouts. Diagram
-  sources live in `docs/diagrams/*.mmd` and are rendered to PNG by
-  `scripts/make-diagrams.mjs` — a ` ```mermaid ` fence renders on GitHub but not
-  on npm, which shows this README too.
-- `scripts/make-screenshots.mjs` drives every screen through `_setState` and
-  writes `docs/screenshots/`. It is also the cheapest way to look at the whole
-  UI at once, which is how the adopted-stylesheet bug was found.
-- Added `SECURITY.md`, with the reporting channel and an explicit list of the
-  things that are documented behaviour rather than vulnerabilities — beam being
-  unencrypted, and the code being the entire credential.
-- Added `CONTRIBUTING.md` and this file.
-- The social preview tags in `site/index.html` moved above the comment
-  explaining them. They had been pushed to byte 1507 by 1.4 kB of prose, and
-  several crawlers read `<head>` on a byte budget.
+**Path reporting and verdicts.** Both peers exchange what they learned about which
+route the connection took (LAN, IPv4, IPv6, cost) and show the same answer instead
+of guessing. Route selection is logged to the path debug page (`?debug=path`), showing
+every candidate pair and why it won. The sender warns when the path has a cost (metered
+carrier or VPN).
+
+**Beam demo.** The README now leads with a video of a live file transfer, filmed from
+both the sender and receiver at once. The loop was one real transfer, not staged.
+
+**Fixes.** Styles render without constructable stylesheets for better compatibility.
+Transfer screens get a media block so layout doesn't depend on content. Beam offers
+are answered on the sheet only, leaving a way back. Unrecognized control messages are
+ignored instead of crashing. LAN hops are recognized when only one peer resolves the
+mDNS name. IPv4-mapped IPv6 addresses are judged as IPv4.
+
+**Documentation.** The README is restructured with three rendered diagrams, screenshots
+of the real UI, a contents strip, and deep-dive sections folded into details. Two
+load-bearing warnings (the SAS that `--yes` cannot skip, and backpressure) are raised
+into callouts. Added `SECURITY.md`, `CONTRIBUTING.md`, and `docs/diagrams/*.mmd`
+sources rendered to PNG. Social preview tags moved before their explanation to stay
+within crawlers' byte budgets.
 
 ## 0.2.0 — 2026-08-29
 
