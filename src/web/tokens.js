@@ -52,22 +52,28 @@ ${selector} {
 
   /* ---- layout ----
    *
-   * The app occupies exactly the viewport and never scrolls the page; overflow
-   * lives inside dialogs. These are the two rows that bracket the scrollable
-   * middle, and they are tokens rather than literals because the grid
-   * definition, the dialog's max height, and the site's page grid all have to
-   * agree on them -- three places, which is two too many for a hand-kept
-   * number.
-   *
    * --col is the reading column, matching the cap site/styles.css puts on
-   * main. It
-   * moved here when the site began sharing the viewport grid with the
+   * main. It moved here when the site began sharing the viewport grid with the
    * component: two files claiming a different idea of "the column" is the same
    * drift this whole file exists to prevent.
+   *
+   * --bar-h and --head-h used to sit here, described as "the two rows that
+   * bracket the scrollable middle". They named a layout that no longer exists:
+   * the action bar sizes to its buttons and the page chrome to its content,
+   * and neither stylesheet ever read either token. A token nothing consumes is
+   * worse than no token, because the next reader sizes something to it and
+   * changes nothing.
+   *
+   * --tap is the one that replaced them, and it IS consumed: the floor for
+   * anything a finger has to hit. 44px is the figure both platform guidelines
+   * land on. .btn already computes to ~50px without help; every other control
+   * in the component (the Copy chip, the fps select, the manual-code input)
+   * was between 28px and 36px, which is a miss on a phone and was never
+   * measured because check-layout.mjs asks whether a button is ON the screen,
+   * not whether it can be hit.
    */
   --col: 34rem;
-  --bar-h: 4.5rem;
-  --head-h: 3rem;
+  --tap: 2.75rem;
 
   /* ---- stacking ----
    *
@@ -111,12 +117,21 @@ ${selector} {
    * white text on it (--accent-text, used on .btn.primary) clears 4.5:1
    * (measured 5.87:1) -- the old value sat closer to 4:1 and failed for small
    * button labels. The same #a8462d against --surface is 5.87:1, past the
-   * 3:1 floor for the large-text/UI-border uses (the step rail's active dot,
-   * the SAS "these differ" note's accent underline).
+   * 3:1 floor for the large-text/UI-border uses (the step rail's active
+   * segment, the SAS "these differ" note's accent underline).
    */
   --bg: #f7f6f3;
   --surface: #ffffff;
   --surface-raised: #f1efe9;
+  /* The other direction from --surface-raised, and the axis this palette was
+   * missing. The card, the code block, the text input and the sheet were all
+   * --surface inside a 1px --line, so nothing led and nothing receded -- four
+   * things at one weight, which is the flat, undifferentiated look that reads
+   * as unfinished however carefully the spacing is set. Fields go below the
+   * card they sit in; the card keeps --surface and its shadow. --muted holds
+   * 6.0:1 here and --text 16.7:1, so nothing is bought at the cost of the
+   * contrast budget the rest of this block is written to. */
+  --surface-sunken: #f2f0ea;
   --text: #1a1a19;
   --muted: #5f5d57;
   --line: #e3e1db;
@@ -169,7 +184,17 @@ ${selector} {
   --dur-fast: 0.05s;    /* .btn:active nudge -- must feel instant */
   --dur-base: 0.15s;    /* border and background on hover */
   --dur-slow: 0.2s;     /* the progress bar's fill, which is being watched */
+  --dur-slower: 0.28s;  /* a screen's contents settling in; see screen-in */
   --dur-shimmer: 1.4s;  /* one pass of the indeterminate bar */
+
+  /* Every animation here moves something INTO place and stops -- a screen
+   * arriving, a rail segment filling, a toast rising. None of them move
+   * something out. So the curve wants to be fast at the start and settle at
+   * the end, which \`ease-out\` names but flattens too early to read as
+   * deliberate; this is the same shape with a longer tail. Transitions that
+   * run in both directions (hover, the button press) keep plain easing, since
+   * an asymmetric curve on a reversible change feels wrong going back. */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
 
   /* ---- focus ---- */
   --focus-ring: 0 0 0 3px rgba(var(--accent-rgb), 0.35);
@@ -188,6 +213,11 @@ ${selector} {
     --bg: #16161a;
     --surface: #1f1f24;
     --surface-raised: #262630;
+    /* Below --bg as well as below --surface. In light mode a sunken field can
+     * sit between the page and the card; here the page is already the darkest
+     * thing on screen, so an inset field has to go past it or it reads as
+     * raised. --muted holds 8.7:1 on this. */
+    --surface-sunken: #131317;
     --text: #ecebe8;
     --muted: #b1b0aa;
     --line: #33333a;

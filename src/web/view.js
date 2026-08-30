@@ -36,6 +36,12 @@
  * vdom.js's canReuse), and it is what makes "only one screen visible at a
  * time" a rendering fact rather than something every call site has to
  * remember to maintain by hand.
+ *
+ * The same rule now governs the step rail INSIDE each card, for the sharper
+ * version of the second reason: it is rendered hidden on the beam screens
+ * rather than omitted, because omitting it would shift .card-body up a
+ * position and canReuse would rebuild the subtree holding the adopted canvas.
+ * See stepRail below.
  */
 
 import { h } from './vdom.js'
@@ -242,10 +248,13 @@ const SR_ONLY_STYLE = {
 export function render(state, dispatch) {
   // patch() (see vdom.js) takes a plain VNode[] with no gaps -- unlike an
   // h() children array, it is not run through flatten(), so the optional
-  // step rail and error banner are filtered out here rather than passed
-  // through as literal `null` entries.
+  // toast is filtered out here rather than passed through as a literal
+  // `null` entry.
   return /** @type {import('./vdom.js').VNode[]} */ ([
-    stepRail(state),
+    // The step rail used to be here, as a sibling of the screens. It is now
+    // rendered inside each .card by screen() -- see stepRail's own comment for
+    // why a conditional element in this list was moving the whole layout every
+    // time the flow touched a beam screen.
     ...SCREENS.map(name => screen(name, state, dispatch)),
 
     // The <dialog> is adopted, not described -- see the `adopt` prop in
@@ -373,7 +382,25 @@ export function dialogContent(state, dispatch) {
   return []
 }
 
-/** @param {State} state */
+/**
+ * Connect · Verify · Transfer, as three segments of a hairline along the top
+ * edge of the card.
+ *
+ * Rendered as the card's first child rather than as a sibling of the screens,
+ * and that is the point of the whole change. It was a row of labelled pills
+ * above the card, hidden on `choose` and on both beam screens, so it appeared
+ * and disappeared during ordinary use and took ~50px of layout with it each
+ * way -- most visibly entering beam, where the card and everything in it
+ * jumped as the sheet closed. Absolutely positioned inside the card (see
+ * .rail in styles.js) it occupies no height at all, so being conditional
+ * costs nothing.
+ *
+ * That is also what lets the honest-UI argument below survive unchanged: beam
+ * can simply have no rail, rather than needing some representation invented
+ * for it to avoid moving the page.
+ *
+ * @param {State} state
+ */
 function stepRail(state) {
   // Beam has no Connect/Verify handshake to show progress through -- it is a
   // single unbroken "camera pointed at screen" step, and there is no SAS to
@@ -382,21 +409,53 @@ function stepRail(state) {
   // none, which is exactly the kind of dishonesty core/beam.js's header warns
   // against for the encryption claim -- the same principle applies to the UI
   // implying a verification step that cannot happen.
-  if (state.screen === 'choose' || state.screen === 'beam-send' || state.screen === 'beam-receive') return null
+  //
+  // HIDDEN, NOT ABSENT, and `key` is not decorative either. Returning null
+  // here would drop a child from the top of every card on every beam screen,
+  // and this element's siblings are .card-body -- which contains the `adopt`ed
+  // <svg>, <video> and <canvas> that vdom.js's canReuse keeps alive by
+  // POSITION. A rail that comes and goes shifts .card-body's index, canReuse
+  // sees an <ol> where a <div> was, and the whole subtree is rebuilt, orphaning
+  // the canvas web/beam.js is still painting into. The same reasoning the
+  // dialog-host wrapper's key comment in render() spells out.
+  //
+  // `hidden` needs .rail[hidden] { display: none } in styles.js, because this
+  // element sets an author `display` and an author display beats the UA
+  // stylesheet's [hidden] rule. That is the trap .card[hidden] and .sheet[open]
+  // both already exist to close, said a third time.
+  //
+  // `choose` is hidden for a plainer reason, and the original one: there is
+  // nothing yet to show progress through. Rendering it there was tried --
+  // three neutral segments as a preview of the flow's shape, which costs no
+  // height -- and it reads as a misaligned border along the top of the card
+  // rather than as anything meaningful. Three grey dashes are not a picture of
+  // a journey not yet begun; they are a rendering artefact.
+  const isBeam = state.screen === 'beam-send' || state.screen === 'beam-receive'
+  const hidden = isBeam || state.screen === 'choose'
 
   const doneAll = state.screen === 'done' && SUCCESS_OUTCOMES.has(state.outcome ?? '')
   const current = STEP_INDEX[state.screen]
 
-  return h('ul', { class: 'steps' }, STEP_LABELS.map((label, i) => {
+  return h('ol', {
+    class: 'rail', key: 'rail', hidden, 'aria-label': 'Progress',
+  }, STEP_LABELS.map((label, i) => {
     const status = doneAll || i < current ? 'is-done' : i === current ? 'is-active' : ''
-    // The active step was distinguished by colour and a filled dot alone,
-    // which is nothing at all to a screen reader -- it read as three plain
-    // list items in every state. aria-current is the one attribute that says
-    // which of a set is the current one.
+    // The label is the segment's only content and it is clipped, not shrunk.
+    // The short-height stylesheet used to compact this rail to bare dots with
+    // `font-size: 0` under a comment claiming that was the sr-only clip
+    // technique "preserving them for assistive tech". It is not -- there is no
+    // clip and no overflow, and text at zero size is announced by nothing --
+    // so on the viewport where the rail was least legible it was also least
+    // accessible. SR_ONLY_STYLE is the real technique, it is already in this
+    // file for #sas, and applying it here means the labels read identically at
+    // every size instead of only above 46rem of height.
+    //
+    // aria-current stays exactly as it was: colour alone says which of a set
+    // is current to nobody.
     return h('li', {
-      class: `step ${status}`.trim(), key: label,
+      class: `rail-seg ${status}`.trim(), key: label,
       'aria-current': status === 'is-active' ? 'step' : undefined,
-    }, label)
+    }, [h('span', { style: SR_ONLY_STYLE }, label)])
   }))
 }
 
@@ -445,6 +504,11 @@ function screen(name, state, dispatch) {
     : actions
 
   return h('section', { id: `screen-${name}`, class: 'card', hidden: state.screen !== name }, [
+    // Built from `state`, not from `name`: all eight sections are rendered on
+    // every pass and seven are hidden, so this is the rail for the screen
+    // currently showing, drawn into each card. Only one of them is ever
+    // visible, which is the same trick the screens themselves use.
+    stepRail(state),
     h('div', { class: `card-body${media ? ' has-media' : ''}` }, [
       media ? h('div', { class: 'card-media' }, media) : null,
       h('div', { class: 'card-copy' }, body),
@@ -497,9 +561,16 @@ function choose(state, dispatch) {
         h('p', { class: 'note' },
           'No network needed: the file plays as an animated QR code and is read back by a camera, at '
           + 'about 6 kB/s. Not encrypted, and capped at 1 MiB compressed — text and code, rarely photos.'),
+        // "No network?" was said three times inside one interaction: on the
+        // ghost button that opens this sheet, as the sheet's own title
+        // directly above these buttons, and again at the start of the first
+        // button's label. By the time the question is being asked for the
+        // third time it has already been answered twice -- the reader opened
+        // the sheet, so they have no network. What the buttons have to say is
+        // which of the two ends of a beam this device is.
         h('div', { class: 'choices secondary' }, [
           h('button', { id: 'btn-beam', class: 'btn ghost', onclick: () => dispatch('beam:pick') },
-            'No network? Show it as a QR code'),
+            'Show it as a QR code'),
           h('button', { id: 'btn-beam-receive', class: 'btn ghost', onclick: () => dispatch('beam:scan') },
             'Scan a beamed file'),
         ]),
@@ -535,20 +606,31 @@ function send(state, dispatch) {
       ? 'Any camera app will do — this code is a link that opens qrdrop, ready to receive.'
       : 'On the other device, open qrdrop, tap “Receive a file”, and point it at this code.'),
 
-    h('div', { class: 'code-row' }, [
-      h('code', { id: 'manual-code', class: 'code' }, state.code),
-      h('button', {
-        class: 'btn small', type: 'button', onclick: () => dispatch('copy', 'code'),
-        'aria-label': 'Copy the transfer code',
-      }, copyLabel(state, 'code')),
+    // The code and the one sentence that qualifies it, grouped: at the copy
+    // column's gap they read as two unrelated blocks, and "anyone who learns
+    // it can join" is not a statement about the screen, it is a caption on the
+    // string directly above it.
+    h('div', { class: 'stack' }, [
+      h('div', { class: 'code-row' }, [
+        h('code', { id: 'manual-code', class: 'code' }, state.code),
+        h('button', {
+          class: 'btn small', type: 'button', onclick: () => dispatch('copy', 'code'),
+          'aria-label': 'Copy the transfer code',
+        }, copyLabel(state, 'code')),
+      ]),
+      h('p', { class: 'note' }, 'Anyone who learns it can join.'),
     ]),
-    h('p', { class: 'note' }, 'Anyone who learns it can join.'),
-    state.pairing
-      ? h('div', {
-        class: 'bar indeterminate', role: 'progressbar', 'aria-label': 'Connecting', 'aria-valuetext': state.status,
-      }, [h('div', { class: 'bar-fill' })])
-      : null,
-    h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
+    // The bar and the line that says what it is waiting for, as one block.
+    // Separated by the column gap they were a bar and, some distance below, a
+    // sentence; the sentence is the bar's label.
+    h('div', { class: 'stack' }, [
+      state.pairing
+        ? h('div', {
+          class: 'bar indeterminate', role: 'progressbar', 'aria-label': 'Connecting', 'aria-valuetext': state.status,
+        }, [h('div', { class: 'bar-fill' })])
+        : null,
+      h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
+    ]),
     ],
     actions: [
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
@@ -596,16 +678,23 @@ function receive(state, dispatch) {
 
 
     // A plain, always-visible label rather than a collapsed <details> --
-    // manual entry is the fallback everyone needs when the camera fails or
-    // is absent, so it is promoted out of hiding. It keeps the `.manual`
-    // wrapper and a `<summary>` element for e2e/transfer.e2e.mjs, which
-    // clicks `#screen-receive .manual summary` as part of the manual-entry
-    // path; outside of a <details> a <summary> has no special behaviour of
-    // its own, so the click is an inert no-op and the form stays visible
-    // both before and after it -- which is the point, since this form must
-    // never require an extra click to reach.
+    // manual entry is the fallback everyone needs when the camera fails or is
+    // absent, so it is promoted out of hiding.
+    //
+    // This was a bare <summary> until now, kept only because
+    // e2e/transfer.e2e.mjs clicked `#screen-receive .manual summary` on its
+    // way to the form. Outside a <details> a <summary> has no behaviour, so
+    // the click was already a no-op and the form was already visible before
+    // and after it -- but it was still styled `cursor: pointer` in a muted
+    // colour, which is to say it looked exactly like a disclosure control and
+    // did nothing when pressed. Something that invites a click and then
+    // ignores it is worse than no affordance at all, and it was also invalid
+    // placement. A <label> is what the thing actually is: it names the field
+    // below it, and clicking it now focuses that field, which is the
+    // behaviour the shape was promising all along. The e2e's click is dropped
+    // in the same change rather than re-targeted, since it never did anything.
     h('div', { class: 'manual' }, [
-      h('summary', {}, 'Enter the code by hand'),
+      h('label', { class: 'manual-label', for: 'manual-input' }, 'Enter the code by hand'),
       h('form', {
         id: 'manual-form',
         onsubmit: /** @param {SubmitEvent} ev */ ev => {
@@ -617,8 +706,14 @@ function receive(state, dispatch) {
         },
       }, [
         h('input', {
+          // No aria-label any more: the <label for="manual-input"> above is
+          // now the accessible name, and an aria-label would override it with
+          // different words. A visible label whose text is not in the
+          // accessible name is the thing WCAG's "label in name" exists to
+          // stop -- someone using voice control says what they can see. The
+          // "or a link" half it used to carry is in the placeholder.
           id: 'manual-input', key: 'manual-input', type: 'text', placeholder: 'qrdrop:… or a link',
-          autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Transfer code, or a shared link',
+          autocomplete: 'off', spellcheck: 'false',
           'aria-invalid': state.manualError ? 'true' : undefined,
           'aria-describedby': state.manualError ? 'manual-error' : undefined,
         }),
@@ -689,8 +784,13 @@ function verify(state, dispatch) {
       // both roles now: the sender has no `offer`, so its filename line is
       // just absent rather than special-cased, and pathBadge already returns
       // null when there is no path to show.
-      state.offer ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`) : null,
-      pathBadge(state),
+      // Grouped, because the badge is a statement ABOUT the file named above
+      // it -- "holiday-video.mov is 900 MB" and "this connection crosses the
+      // internet" are one thought, and at the column gap they were two.
+      h('div', { class: 'stack' }, [
+        state.offer ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`) : null,
+        pathBadge(state),
+      ]),
     ],
     actions: [
       // #verify-status stays one element -- e2e/transfer.e2e.mjs clicks
@@ -770,14 +870,38 @@ function transfer(state, dispatch) {
     // picture of how far along things are, not a sentence about it, so it
     // belongs beside the words rather than among them. Every aria attribute is
     // exactly as it was when it sat in `body`.
-    media: h('div', {
-      class: 'bar', role: 'progressbar',
-      'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(moved),
-    }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]),
+    // The percentage above the bar, and the pair is the media block.
+    //
+    // The bar on its own was eight pixels of content in the slot that held a
+    // 256px QR one screen earlier and holds the outcome banner on the next --
+    // the emptiest moment in the app, placed at its longest wait. Now that
+    // .card-media reserves a floor so the heading stops jumping between
+    // screens (see its comment in styles.js), the choice was between
+    // reserving that space for nothing and giving the screen a subject.
+    //
+    // The number is not new information: it is the same `pct` the bar's width
+    // is already set from, and the status line below already says "Sent 1.2 MB
+    // of 2.3 MB". Both stay, because they answer different questions -- the
+    // readout answers "how far along", the status line answers "how far in
+    // bytes", and those stop being the same question the moment the file is
+    // 40 KB and the percentage jumps in tens.
+    //
+    // aria-hidden, and every aria attribute stays on the bar exactly where it
+    // was. The progressbar role already exposes valuenow/valuemax, so a
+    // screen reader announcing this would be reading the same number twice.
+    media: h('div', { class: 'transfer-meter' }, [
+      h('p', { class: 'transfer-pct', 'aria-hidden': 'true' }, `${Math.floor(pct)}%`),
+      h('div', {
+        class: 'bar', role: 'progressbar',
+        'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(moved),
+      }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]),
+    ]),
     body: [
     h('h2', { tabindex: '-1' }, state.role === 'receiver' ? 'Receiving' : 'Sending'),
-    state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
-    pathBadge(state),
+    h('div', { class: 'stack' }, [
+      state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
+      pathBadge(state),
+    ]),
     h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
     ],
     actions: [
@@ -843,10 +967,12 @@ function done(state, dispatch) {
     ]),
     body: [
     h('h2', { tabindex: '-1' }, info.title),
-    state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '')
-      ? h('p', { class: 'filename' }, state.file.name)
-      : null,
-    pathBadge(state),
+    h('div', { class: 'stack' }, [
+      state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '')
+        ? h('p', { class: 'filename' }, state.file.name)
+        : null,
+      pathBadge(state),
+    ]),
     // Only when there is one. A failed or declined transfer never computes a
     // digest, and an outcome screen offering to reveal "Verification digest"
     // that opens onto nothing reads as a second, smaller failure.
@@ -902,7 +1028,7 @@ const BEAM_WARNING = 'This is not encrypted, and cannot be — there is no hands
   + 'verify. Anyone who can see this screen while it plays can read the file.'
 
 /**
- * The other sentence that must not drift, for a duller but more frequent
+ * The other instruction that must not drift, for a duller but more frequent
  * reason than BEAM_WARNING's.
  *
  * Beam is the only transfer here where accepting does NOT mean the bytes now
@@ -910,11 +1036,33 @@ const BEAM_WARNING = 'This is not encrypted, and cannot be — there is no hands
  * keep playing, for minutes. Every other transfer anyone has used, including
  * this app's own WebRTC path, works the other way round, so "Accept means I
  * can put the phone down" is the assumption a new user arrives with rather
- * than one they could be talked out of by a status line. It is said on both
- * screens and before as well as after the click, because the first person to
- * try it stopped showing the code the instant they had tapped Accept, and got
- * an empty file for it.
+ * than one they could be talked out of by a status line. It is said before as
+ * well as after the click, because the first person to try it stopped showing
+ * the code the instant they had tapped Accept, and got an empty file for it.
+ *
+ * TWO CONSTANTS, ONE PER END, and this is a deduplication rather than a
+ * softening -- every screen still carries exactly one prominent statement of
+ * it, in the same .callout warn it was in before. What is gone is the drift:
+ * there were FOUR phrasings of this one instruction in this file, one typed
+ * inline on beam-send, BEAM_KEEP_GOING on beam-receive, BEAM_KEEP_GOING again
+ * in the offer sheet, and a fourth in beam-send's info sheet ("Nothing comes
+ * back here, so stop only when the other device says so"). Four wordings of a
+ * safety instruction is exactly the state this constant existed to prevent,
+ * arrived at by adding screens around it.
+ *
+ * They are two and not one because the two ends are told genuinely different
+ * things -- one person must not stop showing, the other must not stop looking
+ * -- and collapsing them would make one of the two vague about which screen it
+ * meant. The same reasoning, for the same reason, as NO_CAMERA_SCAN and
+ * NO_CAMERA_BEAM above.
  */
+// One line, not two. The first version of this ran to a second sentence and
+// cost the beam screen 40px of copy it did not have on a 390x844 phone --
+// check-layout.mjs failed it. A safety instruction that pushes the rest of the
+// screen out of view is not a safer screen, which is the whole lesson of the
+// Accept button that started this layout.
+const BEAM_KEEP_SHOWING = 'Keep this code on screen until the other device says it is done. '
+  + 'Nothing comes back here.'
 const BEAM_KEEP_GOING = 'Keep the camera on the other screen, and leave that screen playing, '
   + 'until this one says it is done.'
 
@@ -946,14 +1094,28 @@ function beamSend(state, dispatch) {
     // holds no other reference to its canvas than the one this prop hands
     // back, so any path that let the wrapper be thrown away and recreated
     // would silently orphan the canvas the player is still painting to.
-    h('div', { class: 'beam-controls' }, [
-      h('label', { for: 'beam-fps' }, 'Speed'),
-      h('select', {
-        id: 'beam-fps',
-        value: String(fps),
-        onchange: /** @param {Event} ev */ ev =>
-          dispatch('beam:fps', Number(/** @type {HTMLSelectElement} */ (ev.target).value)),
-      }, FPS_CHOICES.map(choice => h('option', { key: String(choice), value: String(choice) }, `${choice} fps`))),
+    // The speed control and the line reporting what that speed is producing,
+    // grouped -- changing the select changes the number in the status below
+    // it, so they are one control and its readout rather than two rows.
+    h('div', { class: 'stack' }, [
+      h('div', { class: 'beam-controls' }, [
+        h('label', { for: 'beam-fps' }, 'Speed'),
+        h('select', {
+          id: 'beam-fps',
+          value: String(fps),
+          onchange: /** @param {Event} ev */ ev =>
+            dispatch('beam:fps', Number(/** @type {HTMLSelectElement} */ (ev.target).value)),
+        }, FPS_CHOICES.map(choice => h('option', { key: String(choice), value: String(choice) }, `${choice} fps`))),
+      ]),
+
+      // Loops, not percent: a sender has no back channel at all (see
+      // core/beam.js's header), so "how far along is the other device" is a
+      // question this screen structurally cannot answer. The one honest signal
+      // is how many times the whole file has already gone by, and how long a
+      // single pass takes -- which at least turns "keep it up indefinitely" into
+      // a number someone can plan around.
+      h('p', { class: 'status', 'aria-live': 'polite' },
+        `Shown in full ${loops} time${loops === 1 ? '' : 's'}, ${duration(eta)} per pass.`),
     ]),
 
     // The single most important instruction on the screen, and it is styled as
@@ -963,16 +1125,12 @@ function beamSend(state, dispatch) {
     // means the bytes now move on their own. Here it means the opposite: the
     // work has not started yet. That misreading is the default, so it is worth
     // spending the most prominent element on the page to prevent.
-    h('p', { class: 'callout warn' }, 'Keep this code on screen until the other device says it is done.'),
-
-    // Loops, not percent: a sender has no back channel at all (see
-    // core/beam.js's header), so "how far along is the other device" is a
-    // question this screen structurally cannot answer. The one honest signal
-    // is how many times the whole file has already gone by, and how long a
-    // single pass takes -- which at least turns "keep it up indefinitely" into
-    // a number someone can plan around.
-    h('p', { class: 'status', 'aria-live': 'polite' },
-      `Shown in full ${loops} time${loops === 1 ? '' : 's'}, ${duration(eta)} per pass.`),
+    //
+    // Last in the column rather than mid-way up it, which is where a typed
+    // copy of it used to sit: this is the sentence the sender has to still be
+    // acting on in four minutes' time, so it belongs against the action bar
+    // where the eye returns, not above the status line it outranks.
+    h('p', { class: 'callout warn' }, BEAM_KEEP_SHOWING),
     ],
     actions: [
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
@@ -980,14 +1138,19 @@ function beamSend(state, dispatch) {
 
     // The warning and the keep-it-on-screen instruction stay inline -- they are
     // the whole reason this screen is careful. What moves is the reassurance
-    // around them: that many passes are expected, and that nothing on this side
-    // reports progress. True, but not what the status line is for.
+    // around them: that many passes are expected. True, but not what the status
+    // line is for.
+    //
+    // "Nothing comes back here, so stop only when the other device says so"
+    // used to be a second paragraph here. It is the fourth phrasing of
+    // BEAM_KEEP_SHOWING, which is now on the screen itself and says the same
+    // thing in its second sentence -- and a safety instruction that is only
+    // complete once you have opened a details sheet is not one the screen can
+    // rely on having been read.
     info: {
       title: 'About beaming',
       content: [
         h('p', { class: 'note' }, 'Several passes are normal.'),
-        h('p', { class: 'note' },
-          'Nothing comes back here, so stop only when the other device says so.'),
       ],
     },
   }
@@ -1049,23 +1212,29 @@ function beamReceive(state, dispatch) {
       // sitting there unanswered. `state.beam` is null until the first block
       // arrives, which is what keeps this from claiming 0% before there is
       // anything to report at all.
-      state.beam ? h('div', {
-        id: 'beam-progress', class: 'bar', role: 'progressbar',
-        'aria-valuemin': '0', 'aria-valuemax': String(blocks), 'aria-valuenow': String(solved),
-      }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]) : null,
+      // The bar and its readout, grouped -- the line is the bar's caption, and
+      // at the column gap it was a paragraph that happened to follow a bar.
+      // This is the block a person stares at for minutes while holding a phone
+      // steady, so it is the one that most wants to read as a single object.
+      h('div', { class: 'stack' }, [
+        state.beam ? h('div', {
+          id: 'beam-progress', class: 'bar', role: 'progressbar',
+          'aria-valuemin': '0', 'aria-valuemax': String(blocks), 'aria-valuenow': String(solved),
+        }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]) : null,
 
-      // A bare bar answers "is it moving?" only if you stare at it. These are
-      // the two questions actually being asked -- how far, and how much longer
-      // do I have to hold this phone up -- and neither was answerable before.
-      // The remaining time is measured from the rate this camera is really
-      // achieving rather than from the sender's chosen fps, which this device
-      // has no way to learn; it stays absent for the first few seconds because
-      // an estimate extrapolated from two blocks reads as broken.
-      state.beam && blocks > 0
-        ? h('p', { class: 'status', 'aria-live': 'polite' },
-          `${Math.floor(pct)}% — ${solved} of ${blocks} pieces`
-          + (state.beam.eta ? `, ${duration(state.beam.eta)} left` : ''))
-        : null,
+        // A bare bar answers "is it moving?" only if you stare at it. These are
+        // the two questions actually being asked -- how far, and how much longer
+        // do I have to hold this phone up -- and neither was answerable before.
+        // The remaining time is measured from the rate this camera is really
+        // achieving rather than from the sender's chosen fps, which this device
+        // has no way to learn; it stays absent for the first few seconds because
+        // an estimate extrapolated from two blocks reads as broken.
+        state.beam && blocks > 0
+          ? h('p', { class: 'status', 'aria-live': 'polite' },
+            `${Math.floor(pct)}% — ${solved} of ${blocks} pieces`
+            + (state.beam.eta ? `, ${duration(state.beam.eta)} left` : ''))
+          : null,
+      ]),
     ],
 
     // The offer is answered on the sheet, never here. Accept and Decline used

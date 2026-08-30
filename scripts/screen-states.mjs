@@ -149,6 +149,26 @@ export const FIXTURES = [
     },
   },
   {
+    // The receiver's OTHER half of verify: paired, SAS on screen, and waiting
+    // on a sender who has not offered a file yet. Between the two of them
+    // these are every state #verify-status can be in, and this is the one
+    // nothing had ever looked at -- which is how it went unnoticed that
+    // #verify-status had no CSS rule at all, so its Accept and Decline touched
+    // edge to edge while every other action bar in the app had a gap. A branch
+    // absent from this list is a branch nobody has seen.
+    //
+    // No `path`: classification resolves a beat after pairing, so a receiver
+    // still waiting on the manifest usually has no badge yet either.
+    name: 'verify-waiting',
+    screen: 'verify',
+    state: {
+      screen: 'verify', role: 'receiver',
+      sas: SAS.map(e => e[0]).join(' '),
+      sasWords: SAS.map(e => e[1]),
+      offer: null,
+    },
+  },
+  {
     name: 'transfer',
     screen: 'transfer',
     state: {
@@ -164,6 +184,20 @@ export const FIXTURES = [
     state: {
       screen: 'done', role: 'receiver', outcome: 'received',
       file: PDF, path: 'local', digest: DIGEST,
+    },
+  },
+  {
+    // The failure outcome, which is the sparsest screen the app can render:
+    // no filename (view.js drops it unless the outcome succeeded), no digest
+    // (a failed transfer never computes one, and _failTransfer clears the
+    // progress with it), and a red banner instead of a green one. So it is
+    // both the only screen whose card is nearly empty and the one place the
+    // 'bad' variant of .outcome is ever drawn -- neither had a picture.
+    name: 'done-failed',
+    screen: 'done',
+    state: {
+      screen: 'done', role: 'receiver', outcome: 'failed',
+      file: null, digest: '',
     },
   },
   {
@@ -238,8 +272,13 @@ export const FIXTURES = [
   },
   {
     // The toast, over the screen it most often appears on. It is position:
-    // fixed so that the component's overflow-hidden boxes cannot clip it, and
-    // that is precisely the kind of claim worth having a picture of.
+    // ABSOLUTE against :host -- this comment used to say fixed, and styles.js
+    // says the opposite and explains why at length: fixed anchors to the
+    // viewport, which on the deployed site is the page's bottom edge and not
+    // the component's, so the toast landed on top of the site footer's links.
+    // Nothing clips it either way (:host sets no overflow), so the
+    // overflow-hidden justification this comment gave was never the reason.
+    // Which of the two it is, is precisely the kind of claim worth a picture.
     name: 'toast',
     screen: 'verify',
     state: {

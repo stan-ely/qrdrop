@@ -124,13 +124,24 @@ async function main() {
     for (const [name, page] of pages) {
       try {
         const state = await page.evaluate(() => {
-          const visible = [...document.querySelectorAll('section')]
-            .filter(s => !s.hidden).map(s => s.id)
-          const err = document.getElementById('error')
+          // Every one of these queries used to run against the light DOM, and
+          // the whole UI lives in <qr-drop>'s shadow root -- so this reported
+          // `screen=none` with no status and no error on every page, every
+          // time. It only runs on failure, which is exactly when nothing is
+          // watching closely enough to notice the diagnostics are empty.
+          // (The assertions themselves were always fine: Playwright locators
+          // pierce shadow roots, and only this hand-written evaluate did not.)
+          const root = document.querySelector('qr-drop')?.shadowRoot
+          if (!root) return { visible: [], error: null, status: [] }
+          const visible = [...root.querySelectorAll('section')]
+            .filter(s => /** @type {HTMLElement} */ (s).hidden === false).map(s => s.id)
+          // The #error banner became a <dialog class="sheet">; when one is
+          // open its text is the thing worth reporting.
+          const sheet = root.querySelector('dialog.sheet[open]')
           return {
             visible,
-            error: err?.hidden ? null : err?.textContent?.trim(),
-            status: [...document.querySelectorAll('.status')]
+            error: sheet?.textContent?.trim() ?? null,
+            status: [...root.querySelectorAll('.status')]
               .map(s => s.textContent?.trim() ?? '').filter(Boolean),
           }
         })
@@ -220,7 +231,12 @@ async function main() {
     // --- receiver joins with the code ---------------------------------------
     await b.click('#btn-receive')
     await b.waitForSelector('#screen-receive:not([hidden])')
-    await b.click('#screen-receive .manual summary')
+    // No disclosure to open: manual entry is always visible on this screen.
+    // There used to be a `.manual summary` click here, and it was already a
+    // no-op -- the <summary> sat outside any <details>, so it had no behaviour
+    // and the form was visible before and after it. Keeping the click in the
+    // test was what kept the element in the markup, where it looked like a
+    // control and ignored being pressed; it is a <label> now.
     await b.fill('#manual-input', code)
     await b.click('#manual-form button[type=submit]')
     log('receiver joined, pairing via Trystero...')
