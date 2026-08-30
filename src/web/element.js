@@ -1192,9 +1192,10 @@ export class QRDropElement extends HTMLElement {
         // spends; if opening the sheet were itself part of that click, the
         // gesture would be spent on the dialog instead of the picker.
         //
-        // Accept and Decline remain in the screen's action bar as well, so a
-        // sheet dismissed with Escape leaves the transfer answerable rather
-        // than stranded.
+        // Accept and Decline live only on this sheet. A sheet dismissed with
+        // Escape is reopened by the action bar's `Review file` button, which
+        // carries no activation of its own -- it just sets modal: 'beam-offer'
+        // again.
         this._setState({
           offer: { name: incoming.name, size: incoming.size },
           modal: 'beam-offer',

@@ -145,10 +145,11 @@ export const FIXTURES = [
   },
   {
     // The screen this whole sweep was written for. `offer` set is what puts it
-    // on the Accept branch -- the manifest has decoded, the camera is still
-    // running, and the button whose click is the user activation
-    // showSaveFilePicker will spend is on screen. If it is not visible in this
-    // picture, that is the bug.
+    // on the answered-offer branch -- the manifest has decoded and the camera
+    // is still running. The action bar shows `Review file`, which reopens the
+    // sheet if it was dismissed; the click that spends the showSaveFilePicker
+    // activation is Accept inside that sheet (fixture below). If `Review file`
+    // is not visible in this picture, that is the bug.
     name: 'beam-receive',
     screen: 'beam-receive',
     state: {

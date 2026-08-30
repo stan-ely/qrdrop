@@ -1018,31 +1018,28 @@ function beamReceive(state, dispatch) {
         : null,
     ],
 
-    // Accept is offered the instant the manifest decodes -- a second or two
-    // into pointing the camera -- rather than after the transfer finishes
-    // minutes later, because this click IS the user activation
-    // showSaveFilePicker needs, and by the time a beam transfer completes
-    // there is no activation left to spend. Same rule as the WebRTC path's
-    // verify screen; see web/beam.js's startBeamReceive doc comment for the
-    // beam-specific version of it.
+    // The offer is answered on the sheet, never here. Accept and Decline used
+    // to be duplicated into this bar as well, so the same gesture appeared
+    // twice -- and the bar copy had none of the warning the gesture exists to
+    // follow. The sheet (dialogContent's 'beam-offer' branch) is now the only
+    // place Accept and Decline live.
     //
-    // Which is exactly why it is in the action bar. Rendered after the camera
-    // and two paragraphs of notes, this button sat 99px below the bottom of a
-    // phone screen, and the activation it exists to spend was never spent
-    // because nobody knew it was there. The notes it used to follow are now in
-    // the sheet that opens with it (see dialogContent), so the warning still
-    // arrives before the gesture -- in the same box as it, rather than above a
-    // button nobody could see.
+    // The activation rule is untouched. The sheet opens itself the instant the
+    // manifest decodes (element.js's onManifest), a second or two into pointing
+    // the camera; the click that reaches 'offer:accept' is still the one on the
+    // sheet's Accept, and nothing is awaited before createSink. See web/beam.js's
+    // startBeamReceive doc comment for the beam-specific version of that rule.
     actions: state.offer
       ? [
+        // Not the way in to the offer -- the sheet opened on its own when the
+        // manifest decoded. This is the way BACK to it after someone presses
+        // Escape. It only sets modal: 'beam-offer'; it carries no user
+        // activation, and the activation-bearing click is still Accept inside
+        // the sheet.
         h('button', {
           class: 'btn primary', type: 'button', disabled: state.busy,
-          onclick: () => dispatch('offer:accept'),
-        }, 'Accept'),
-        h('button', {
-          class: 'btn ghost', type: 'button', disabled: state.busy,
-          onclick: () => dispatch('offer:decline'),
-        }, 'Decline'),
+          onclick: () => dispatch('modal:open', 'beam-offer'),
+        }, 'Review file'),
       ]
       : [
         h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
