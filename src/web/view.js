@@ -130,7 +130,7 @@ const SUCCESS_OUTCOMES = new Set(['sent', 'received'])
 // palette). The functions are declarations, so referencing them from a
 // module-scope const above their definitions is safe -- they are hoisted and
 // initialised before this runs.
-/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { media?: any, body: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[] } | null }>} */
+/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { media?: any, body: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[], label?: string } | null }>} */
 const builders = {
   choose, send, receive, verify, transfer, done,
   'beam-send': beamSend, 'beam-receive': beamReceive,
@@ -432,14 +432,15 @@ function screen(name, state, dispatch) {
   // carries an info sheet should not also have to remember to draw, label, and
   // wire the button that opens it, and two screens hand-rolling that button
   // would drift in copy and placement the first time one of them was edited.
-  // The frame owns the button; a builder owns only whether there is one and
-  // what it opens onto.
+  // The frame owns the button; a builder owns only whether there is one, what
+  // it opens onto, and -- via `info.label` -- what it is called when 'Details'
+  // is the wrong word. `choose` names its sheet 'No network?'.
   const cardActions = info
     ? [
       ...actions,
       h('button', {
         class: 'btn ghost', type: 'button', onclick: () => dispatch('modal:open', 'info'),
-      }, 'Details'),
+      }, info.label ?? 'Details'),
     ]
     : actions
 
@@ -468,28 +469,11 @@ function choose(state, dispatch) {
       h('p', {}, 'Drop a file here, or choose one below.'),
     ]),
     body: [
+      h('h2', { tabindex: '-1' }, 'Send or receive a file'),
+
       // Shown only when this browser cannot stream a download to disk (see
       // web/sink.js's canStreamToDisk) -- everyone else never sees this note.
       state.capabilityNote ? h('p', { class: 'note' }, state.capabilityNote) : null,
-
-      // A deliberately quieter, third row rather than a third .choices button:
-      // the network path is better in every measurable way when a network
-      // exists (encrypted, faster, no camera needed), so beam is an escape
-      // hatch for when there genuinely is no network, not an equal
-      // alternative. `.btn.ghost` and its place below the fold-line of the
-      // action bar keep it from competing for the eye with "Send a file" /
-      // "Receive a file".
-      h('div', { class: 'beam-entry' }, [
-        h('div', { class: 'choices secondary' }, [
-          h('button', { id: 'btn-beam', class: 'btn ghost', onclick: () => dispatch('beam:pick') },
-            'No network? Show it as a QR code'),
-          h('button', { id: 'btn-beam-receive', class: 'btn ghost', onclick: () => dispatch('beam:scan') },
-            'Scan a beamed file'),
-        ]),
-        h('p', { class: 'note' },
-          'No network needed: the file plays as an animated QR code and is read back by a camera, at '
-          + 'about 6 kB/s. Not encrypted, and capped at 1 MiB compressed — text and code, rarely photos.'),
-      ]),
     ],
     actions: [
       h('button', { id: 'btn-send', class: 'btn primary', onclick: () => dispatch('send:pick') },
@@ -497,6 +481,30 @@ function choose(state, dispatch) {
       h('button', { id: 'btn-receive', class: 'btn', onclick: () => dispatch('receive:scan') },
         'Receive a file'),
     ],
+
+    // Beam is not an equal option, and now nothing on the screen implies it is:
+    // it has no button here at all, only the frame's generic details button
+    // (relabelled 'No network?' via `info.label`) opening onto this sheet. The
+    // network path is better in every measurable way when a network exists --
+    // encrypted, faster, no camera needed -- so beam is an escape hatch for
+    // when there genuinely is no network, not a third choice competing with
+    // "Send a file" / "Receive a file" for the eye. The two beam buttons, with
+    // their ids, classes and dispatches unchanged, live inside the sheet.
+    info: {
+      label: 'No network?',
+      title: 'No network?',
+      content: [
+        h('p', { class: 'note' },
+          'No network needed: the file plays as an animated QR code and is read back by a camera, at '
+          + 'about 6 kB/s. Not encrypted, and capped at 1 MiB compressed — text and code, rarely photos.'),
+        h('div', { class: 'choices secondary' }, [
+          h('button', { id: 'btn-beam', class: 'btn ghost', onclick: () => dispatch('beam:pick') },
+            'No network? Show it as a QR code'),
+          h('button', { id: 'btn-beam-receive', class: 'btn ghost', onclick: () => dispatch('beam:scan') },
+            'Scan a beamed file'),
+        ]),
+      ],
+    },
   }
 }
 
@@ -648,19 +656,26 @@ function verify(state, dispatch) {
       h('p', { class: 'note' },
         'If these differ, someone is between you. Stop, and start over with a fresh code.'),
 
-      // Sender only. The receiver's copy lives inside verifyStatus instead, so
-      // it can sit BELOW the line naming the incoming file: rendered here it
-      // warned that "holiday-video.mov is 900 MB" several lines above the only
-      // place the reader had been told a holiday-video.mov existed.
-      // Both placements are still above the gesture, which is the point.
-      state.role === 'sender' ? pathBadge(state) : null,
+      // Filename, then badge, then -- down in the action bar -- the gesture.
+      // That is the order the receiver reads them in, and the reason the
+      // filename comes first: the badge can warn that "holiday-video.mov is
+      // 900 MB", and it must not do so above the only line that has told the
+      // reader a holiday-video.mov exists. Both of these used to live inside
+      // #verify-status, which put a filename and a path badge -- neither of
+      // them a control -- in the action bar, where "the bar is where the
+      // actions are" is the one thing that has to stay true. They render for
+      // both roles now: the sender has no `offer`, so its filename line is
+      // just absent rather than special-cased, and pathBadge already returns
+      // null when there is no path to show.
+      state.offer ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`) : null,
+      pathBadge(state),
     ],
     actions: [
-      // #verify-status moves into the bar whole rather than having its buttons
-      // lifted out of it: e2e/transfer.e2e.mjs clicks
-      // `#verify-status button.primary`, and it is also this screen's
-      // aria-live region, so both the selector and the announcement depend on
-      // the element staying exactly what it is.
+      // #verify-status stays one element -- e2e/transfer.e2e.mjs clicks
+      // `#verify-status button.primary` and it is this screen's aria-live
+      // region -- but it now holds only controls and the waiting-state
+      // indeterminate bar. The filename and the path badge it used to carry
+      // moved up into the body above.
       h('div', { id: 'verify-status', class: 'verify-actions', 'aria-live': 'polite' },
         verifyStatus(state, dispatch)),
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
@@ -702,8 +717,6 @@ function verifyStatus(state, dispatch) {
   // being made safer here (the one-shot closure above already guarantees it
   // fires once); it is being made to admit that it heard.
   return [
-    h('p', { class: 'status' }, `${state.offer.name} (${bytes(state.offer.size)})`),
-    pathBadge(state),
     h('button', {
       class: 'btn primary', type: 'button', disabled: state.busy,
       onclick: () => dispatch('offer:accept'),
