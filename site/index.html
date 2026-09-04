@@ -91,7 +91,49 @@
 
 <main>
   <header>
-    <h1>qrdrop</h1>
+    <!--
+      Which build you are looking at, and how to get to the other one.
+
+      This page is served twice from one deploy and the two are visually
+      identical, so without a stamp there is no way to tell a released build
+      from the tip of main -- which matters here more than it would on most
+      sites, because the thing a visitor is being asked to trust is the code
+      running in their browser. The label is generated (buildStamp in
+      scripts/build-site.mjs): a version on stable, a short sha on edge,
+      because those are the two different identifiers a person would actually
+      go and look up. The full build date rides in the title attribute.
+
+      Beside the wordmark rather than down in the footer, and that is a
+      layout decision as much as an editorial one. This page is a fixed-height
+      grid with no spare vertical pixels; the h1's line box is taller than
+      13px text, so a stamp sitting on it costs nothing, where the same two
+      links in the footer's link row wrapped it onto a second line on a phone
+      and took 32px out of the card <qr-drop> fills. It is also simply where a
+      version belongs -- next to the name of the thing it is a version of.
+
+      Exactly one of the two cross-links is shown, by site/styles.css keying
+      on :root[data-channel] -- both are in the markup because this is one
+      template, and CSS is what makes it two pages.
+
+      No icon and no pill: this is a readout, not navigation, and the two
+      controls in this header (the "How it works" chip below, and everything
+      in the card) should not have to compete with it.
+
+      aria-label on the cross-link extends the visible word rather than
+      replacing it -- "edge" is a substring of "Switch to the edge build",
+      which is what WCAG 2.5.3 asks for, and a reader gets the same link
+      either way. That is the opposite of what shipped first, where the label
+      was clipped to sr-only and the remaining icon was aria-hidden, so the
+      link had no name for anyone.
+    -->
+    <div class="masthead">
+      <h1>qrdrop</h1>
+      <span class="build-stamp">
+        <a class="build" href="__BUILD_HREF__" title="__BUILD_TITLE__" target="_blank" rel="noopener noreferrer">__BUILD_LABEL__</a>
+        <a id="to-edge" href="/edge/" aria-label="Switch to the edge build" target="_blank" rel="noopener noreferrer">edge</a>
+        <a id="to-stable" href="/" aria-label="Switch to the stable build" target="_blank" rel="noopener noreferrer">stable</a>
+      </span>
+    </div>
     <p class="tagline">Scan a code, send a file, device to device. Nothing in between ever holds a readable copy.</p>
 
     <!--
@@ -193,41 +235,6 @@
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
         Feedback
       </a>
-      <!--
-        Which build you are looking at, and how to get to the other one.
-
-        This page is served twice from one deploy and the two are visually
-        identical, so without a stamp there is no way to tell a released build
-        from the tip of main -- which matters here more than it would on most
-        sites, because the thing a visitor is being asked to trust is the code
-        running in their browser. The label is generated (buildStamp in
-        scripts/build-site.mjs): a version on stable, a short sha on edge,
-        because those are the two different identifiers a person would actually
-        go and look up. The full build date rides in the title attribute, where
-        it does not cost the row a second line.
-
-        Exactly one of the two cross-links is shown, by site/styles.css keying
-        on :root[data-channel] -- both are in the markup because this is one
-        template, and CSS is what makes it two pages.
-
-        These two are the only things in this row that are not navigation, and
-        they do not look like the three pills around them: no icon, no pill,
-        just muted text pushed to the right of the line. A build number is
-        what it is, and dressing it as a third and fourth button both crowded
-        a footer that has two lines to spend on a phone and overstated it.
-
-        aria-label on the cross-link extends the visible word rather than
-        replacing it -- "edge" is a substring of "Switch to the edge build",
-        which is what WCAG 2.5.3 asks for, and a reader gets the same link
-        either way. That is the opposite of what shipped first, where the label
-        was clipped to sr-only and the remaining icon was aria-hidden, so the
-        link had no name for anyone.
-      -->
-      <span class="build-stamp">
-        <a class="build" href="__BUILD_HREF__" title="__BUILD_TITLE__" target="_blank" rel="noopener noreferrer">__BUILD_LABEL__</a>
-        <a id="to-edge" href="/edge/" aria-label="Switch to the edge build" target="_blank" rel="noopener noreferrer">edge</a>
-        <a id="to-stable" href="/" aria-label="Switch to the stable build" target="_blank" rel="noopener noreferrer">stable</a>
-      </span>
       <a class="who" href="https://stan-ely.com" target="_blank" rel="noopener noreferrer">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Bevan Stanely

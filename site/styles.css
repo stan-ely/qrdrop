@@ -115,6 +115,121 @@ h1 {
   letter-spacing: -0.02em;
 }
 
+/*
+ * The wordmark and the build stamp, on one line.
+ *
+ * `nowrap` and no shrinking, deliberately: this page is a fixed-height grid,
+ * and the whole reason the stamp is up here rather than in the footer is that
+ * the h1's line box is already taller than 13px text, so it costs no height at
+ * all. Allowed to wrap it would cost a line at exactly the width where there
+ * is least to spare. It fits -- "qrdrop" and the longest stamp
+ * (`edge · 0000000 | stable`) are about 240px together, against 312px of
+ * content width at 320px, the narrowest viewport this is checked at.
+ *
+ * Baseline rather than centre: the stamp is type, the wordmark is type, and
+ * sitting them on a shared baseline is what makes the small one read as an
+ * annotation of the big one rather than as a separate thing parked nearby.
+ */
+.masthead {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+/*
+ * The build stamp: which build this is, and a link to the other one.
+ *
+ * A readout, not navigation, and styled to say so. No icon and no pill --
+ * both of which it had when it lived in the footer's link row, where it read
+ * as two more buttons -- just --muted text at the row's own size. The only
+ * controls in this header are the "How it works" chip and the card below;
+ * neither should have to compete with a version number.
+ *
+ * min-inline-size: 0 lets it be the thing that gives way if the masthead ever
+ * is squeezed, rather than pushing the h1 out of the page.
+ */
+.build-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-inline-size: 0;
+  font-size: var(--fs--1);
+}
+
+/* Self-contained now that this is not inside .meta: colour, hover and focus
+ * were all inherited from `.meta a` before the move, and a link with no
+ * :focus-visible of its own is invisible to a keyboard. The hover cue is an
+ * underline as well as the colour shift, since --accent alone is the one cue
+ * a person who cannot distinguish it would miss. */
+.build-stamp a {
+  padding: var(--sp-1);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  text-decoration: none;
+  transition: color var(--dur-base);
+}
+.build-stamp a:hover { color: var(--accent); text-decoration: underline; }
+.build-stamp a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* The channel cross-link, one of two.
+ *
+ * They are hidden with `display: none` and shown again per channel, rather
+ * than one of them carrying `hidden` in the markup. An author `display` beats
+ * the UA stylesheet's rule for [hidden], so a stylesheet that hides with the
+ * attribute and reveals with `display` is one rule away from showing both --
+ * the failure this project has already had three times over (.card laying out
+ * all eight screens at once, .sheet rendering both closed dialogs in flow).
+ * Saying it in one place, in both directions, has no such edge: neither link
+ * is visible unless a rule here names its channel.
+ *
+ * Which also means these are the rules to check if both cross-links ever
+ * appear at once: that is data-channel arriving as a literal __CHANNEL__,
+ * matching neither selector -- except the build would have failed first, on
+ * the leftover-placeholder guard in scripts/build-site.mjs. */
+#to-edge,
+#to-stable { display: none; }
+:root[data-channel='stable'] #to-edge { display: inline-flex; }
+:root[data-channel='edge'] #to-stable { display: inline-flex; }
+
+/* A rule between the two rather than a separator character: `edge · ceb67e3`
+ * already contains a middle dot, and a second glyph beside it reads as noise
+ * rather than as a division.
+ *
+ * Drawn as a pseudo-element sized in em, not as a border-left on the link. A
+ * border spans the whole padded box, and that padding is a tap target rather
+ * than a visual height -- so the rule came out 26px tall beside 13px text and
+ * read as a bracket around the cross-link instead of a divider between two
+ * things. The link is inline-flex, so this is a flex item and `align-self`
+ * centres it. */
+#to-edge::before,
+#to-stable::before {
+  content: '';
+  align-self: center;
+  inline-size: 1px;
+  block-size: 1em;
+  margin-inline-end: var(--sp-2);
+  background: var(--line);
+}
+
+/* Edge is the development build and says so in the one way a header can. Not
+ * red: nothing is wrong, and a page about trust that cries wolf in its own
+ * chrome spends credibility it needs elsewhere. --warn is legible against both
+ * themes' backgrounds (src/web/tokens.js defines it for each), and the label
+ * beside it already reads "edge", so the colour is reinforcement rather than
+ * the only carrier of the meaning -- which is what keeps it working for a
+ * reader who cannot see it. */
+:root[data-channel='edge'] .build { color: var(--warn); }
+:root[data-channel='edge'] .build:hover { color: var(--warn); }
+
+/* `edge · ceb67e3` is three space-separated tokens, so without this it is free
+ * to break after "edge" or after the dot -- a build identifier split across
+ * two lines, which is worse than a wide one. Stable's `v0.3.1` has no break
+ * opportunity in it and does not need the rule; the stamp shares one class
+ * across both channels, so it is stated once here. */
+.build { white-space: nowrap; }
+
 .tagline {
   margin: var(--sp-2) 0 0;
   color: var(--muted);
@@ -356,100 +471,11 @@ footer strong { color: var(--text); font-weight: 600; }
 .meta a:active { transform: translateY(0); }
 .meta a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-/* The byline used to carry `margin-left: auto` to set it apart from the two
- * project links. The build stamp carries it now (below) and only one item on a
- * line can: two auto margins split the free space between them, so the stamp
- * would land mid-row and the byline short of the edge. The gap the byline had
- * is now the gap before the stamp, and the byline follows it. */
-
-/* The channel cross-link, one of two.
- *
- * They are hidden with `display: none` and shown again per
- * channel, rather than one of them carrying `hidden` in the markup. An author
- * `display` beats the UA stylesheet's rule for [hidden], so a stylesheet that
- * hides with the attribute and reveals with `display` is one rule away from
- * showing both -- the failure this project has already had three times over
- * (.card laying out all eight screens at once, .sheet rendering both closed
- * dialogs in flow). Saying it in one place, in both directions, has no such
- * edge: neither link is visible unless a rule here names its channel.
- *
- * Which also means these are the rules to check if both cross-links ever
- * appear at once: that is data-channel arriving as a literal __CHANNEL__,
- * matching neither selector -- except the build would have failed first, on
- * the leftover-placeholder guard in scripts/build-site.mjs. */
-#to-edge,
-#to-stable { display: none; }
-
-/* The stamp and the cross-link, as one quiet readout at the right of the row.
- *
- * They are not pills, and that is the point: the three links around them are
- * navigation and these two are a status line -- which build this is, and how
- * to get to the other. Given pill chrome and icons of their own they read as
- * two more buttons, which on a phone is most of a footer that only has two
- * lines to spend. Dropping the icons and the pill is nearly all of the weight
- * saved; the colour stays --muted, inherited from .meta a, so the hierarchy is
- * three affordances and one readout.
- *
- * margin-left: auto is what puts the group right, and it is why .who no longer
- * carries one -- two auto margins on a line divide the free space between them
- * and neither ends up where it was aimed. The end margin pulls the group back
- * inside the text column: .meta is pulled out by --sp-2 and the pills pay that
- * back with their padding, which this group no longer has. */
-.build-stamp {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  margin-left: auto;
-  margin-inline-end: var(--sp-1);
-}
-
-/* Padding without a background. The block half keeps the tap target near 26px
- * now that the pill is gone (WCAG 2.5.8 asks 24), and the inline half gives
- * .meta a:focus-visible's ring somewhere to sit that is not on top of the
- * glyphs. Hover cannot be a raised pill here, so it is an underline: the
- * colour shift to --accent alone is the one cue this row's links have that a
- * person who cannot distinguish it would miss. */
-.build-stamp a { padding: var(--sp-1); border-radius: var(--r-sm); }
-.build-stamp a:hover { background: none; transform: none; text-decoration: underline; }
-
-/* A rule rather than a separator character: `edge · ceb67e3` already contains
- * a middle dot, and a second glyph beside it reads as noise rather than as a
- * division.
- *
- * Drawn as a pseudo-element sized in em, not as a border-left on the link. A
- * border spans the whole padded box, and that padding is a tap target rather
- * than a visual height -- so the rule came out 26px tall beside 13px text and
- * read as a bracket around the cross-link instead of a divider between two
- * things. The link is inline-flex, so this is a flex item and `align-self`
- * centres it. */
-#to-edge::before,
-#to-stable::before {
-  content: '';
-  align-self: center;
-  inline-size: 1px;
-  block-size: 1em;
-  margin-inline-end: var(--sp-2);
-  background: var(--line);
-}
-
-/* `edge · ceb67e3` is three space-separated tokens, so without this it is free
- * to break after "edge" or after the dot -- a build identifier split across
- * two lines, which is worse than a wide one. Stable's `v0.3.1` has no break
- * opportunity in it and does not need the rule; the stamp shares one class
- * across both channels, so it is stated once here. */
-.build { white-space: nowrap; }
-:root[data-channel='stable'] #to-edge { display: inline-flex; }
-:root[data-channel='edge'] #to-stable { display: inline-flex; }
-
-/* Edge is the development build and says so in the one way a footer can. Not
- * red: nothing is wrong, and a page about trust that cries wolf in its own
- * chrome spends credibility it needs elsewhere. --warn is legible against both
- * themes' backgrounds (src/web/tokens.js defines it for each), and the label
- * beside it already reads "edge", so the colour is reinforcement rather than
- * the only carrier of the meaning -- which is what keeps it working for a
- * reader who cannot see it. */
-:root[data-channel='edge'] .build { color: var(--warn); }
-:root[data-channel='edge'] .build:hover { color: var(--warn); }
+/* Who made this, set apart from what it is -- the two project links are one
+ * thought and the byline is another, and a gap says so without a separator
+ * character. Dropped at the narrow breakpoint, where the row wraps and an
+ * auto margin would strand the name alone on its own line. */
+.meta .who { margin-left: auto; }
 
 /* aria-hidden in the markup: every label already says what the link is, so
  * the icon is decoration and a screen reader announcing it would be reading
@@ -495,33 +521,6 @@ footer summary:focus-visible {
 @media (max-width: 30rem) {
   main { padding: var(--sp-5) var(--sp-3) var(--sp-6); }
 
-  /* The row is five pills now, not three, and at 390px it wraps to a second
-   * line no matter what -- the five together are ~416px of content in ~342px
-   * of width. So the line is paid for out of the space above the row rather
-   * than out of the card, which is the only other place a fixed-height page
-   * can take it from: check-layout.mjs measured the beam screen scrolling by
-   * 21px internally on a phone when the card paid.
-   *
-   * 24px of the 40px above the hairline, which the row can spare precisely
-   * because it got busier -- the gap existed to set three quiet links apart
-   * from the disclosure above them, and five pills already read as their own
-   * band without it.
-   *
-   * This rule is the whole of the height saving. An earlier version of this
-   * block also clipped the cross-link's label away to sr-only, on the theory
-   * that the shorter row bought a line back; measured, it buys nothing --
-   * .meta is 68px tall at 320, 360 and 390px with the label present or absent
-   * -- and it cost the link its only visible cue, since its icon is
-   * aria-hidden like every other icon here. Shipped, it read as a bare shield
-   * glyph parked beside the byline. */
-  .meta { margin-block-start: var(--sp-2); padding-top: var(--sp-2); }
-
-  /* The second line, once the row wraps, holds the byline alone -- the stamp
-   * stays up on the first, at its right, where it is the same distance from
-   * the corner of the page as it is on a desktop. Nothing declares that: the
-   * three links plus the stamp fit the first line and the byline does not, so
-   * flex-wrap puts it where the widths say. No rule here, deliberately, since
-   * the arrangement holds at 320, 360, 390 and 430 on both channels. */
 }
 
 /* The same bargain src/web/styles.js strikes for the component: someone who
