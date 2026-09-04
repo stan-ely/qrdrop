@@ -67,17 +67,25 @@ footer, and the footer is the one part of this page with no vertical slack. Addi
 the build stamp and the channel cross-link wrapped `.meta` onto a second line at
 390px, which a fixed-height grid pays for out of the card: `beam.phone` scrolled
 internally by 21px in both engines. That is why `.meta` gives back its top spacing
-under `max-width: 30rem`, and it is the whole of the fix: the row wraps at 390px
-whatever the labels say, so the second line is bought from the space above the
-hairline and then spent deliberately, on the build stamp and the cross-link
-together (`.build-group`, `flex-basis: 100%`).
+under `max-width: 30rem` — the row wraps at 390px whatever those two say, so the
+second line is bought from the space above the hairline rather than from the card.
+The stamp itself (`.build-stamp`) stays on the first line, pushed right by the auto
+margin the byline used to carry; only one item on a flex line can hold one, which is
+why the byline no longer does.
 
-The first attempt also clipped the cross-link's label away to sr-only on that line,
-and that is the part worth remembering, because this script cannot catch it: `.meta`
-measures 68px with the label or without, so the clip saved nothing and cost the link
-its only visible cue — the icon beside it is `aria-hidden` like every other icon in
-that row. It shipped, and read on a phone as a bare shield glyph parked beside the
-byline. Layout being legal is not layout being right; look at the screenshots.
+Two findings from that row are worth more than the CSS. The first: the stamp shipped
+once with the cross-link's label clipped to sr-only, on the theory that a shorter row
+bought the line back. It does not — `.meta` measures 68px with the label or without —
+and the clip cost the link its only visible cue, since the icon beside it was
+`aria-hidden` like every other icon in that row. On a phone it read as a bare shield
+glyph parked beside the byline, and **this script cannot see that**: a link with no
+accessible name overflows nothing. Layout being legal is not layout being right; look
+at the screenshots.
+
+The second: the fix for that made both of them full pills, and pills were the wrong
+register — the three links in this row are navigation and the stamp is a readout, so
+it now has no icon and no pill, just muted text and a hairline divider. Weight in that
+row is a design decision this script has no opinion about either.
 The fixtures both scripts drive are shared, in
 `scripts/screen-states.mjs`, so a new screen gets added once and both see it. If
 a screenshot comes out wrong, that is the finding.

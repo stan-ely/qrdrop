@@ -356,20 +356,15 @@ footer strong { color: var(--text); font-weight: 600; }
 .meta a:active { transform: translateY(0); }
 .meta a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-/* Who made this, set apart from what it is -- the two project links are one
- * thought and the byline is another, and a gap says so without a separator
- * character. Dropped at the narrow breakpoint, where the row wraps and an
- * auto margin would strand the name alone on its own line. */
-.meta .who { margin-left: auto; }
+/* The byline used to carry `margin-left: auto` to set it apart from the two
+ * project links. The build stamp carries it now (below) and only one item on a
+ * line can: two auto margins split the free space between them, so the stamp
+ * would land mid-row and the byline short of the edge. The gap the byline had
+ * is now the gap before the stamp, and the byline follows it. */
 
-/* The build stamp and the channel cross-link.
+/* The channel cross-link, one of two.
  *
- * Both inherit .meta a wholesale -- same pill, same hover, same focus ring --
- * because they are the same kind of thing as the three links around them: a
- * quiet pointer out of the page. The only departure is the colour of the stamp
- * on the edge build, below.
- *
- * The two cross-links are hidden with `display: none` and shown again per
+ * They are hidden with `display: none` and shown again per
  * channel, rather than one of them carrying `hidden` in the markup. An author
  * `display` beats the UA stylesheet's rule for [hidden], so a stylesheet that
  * hides with the attribute and reveals with `display` is one rule away from
@@ -385,23 +380,63 @@ footer strong { color: var(--text); font-weight: 600; }
 #to-edge,
 #to-stable { display: none; }
 
-/* The stamp and the cross-link are one thought -- which build this is, and how
- * to get to the other -- and on a phone they get a footer line of their own to
- * say it in (see the narrow breakpoint). `display: contents` is what keeps
- * that grouping free everywhere else: the wrapper generates no box, so .meta's
- * flex row still sees these three anchors as direct children and the wide
- * layout, .who's auto margin included, is untouched.
+/* The stamp and the cross-link, as one quiet readout at the right of the row.
  *
- * Not a nested flex row at all widths: that would make the group one flex item
- * of .meta, so a narrow viewport would break *inside* it or not at all, and
- * the row's five pills could no longer reflow as five things. */
-.build-group { display: contents; }
+ * They are not pills, and that is the point: the three links around them are
+ * navigation and these two are a status line -- which build this is, and how
+ * to get to the other. Given pill chrome and icons of their own they read as
+ * two more buttons, which on a phone is most of a footer that only has two
+ * lines to spend. Dropping the icons and the pill is nearly all of the weight
+ * saved; the colour stays --muted, inherited from .meta a, so the hierarchy is
+ * three affordances and one readout.
+ *
+ * margin-left: auto is what puts the group right, and it is why .who no longer
+ * carries one -- two auto margins on a line divide the free space between them
+ * and neither ends up where it was aimed. The end margin pulls the group back
+ * inside the text column: .meta is pulled out by --sp-2 and the pills pay that
+ * back with their padding, which this group no longer has. */
+.build-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+  margin-inline-end: var(--sp-1);
+}
 
-/* `edge · ceb67e3` is three space-separated tokens, so without this the pill
- * is free to break after "edge" or after the dot -- a build identifier split
- * across two lines, which is worse than a wide pill. Stable's `v0.3.1` has no
- * break opportunity in it and does not need the rule; the stamp shares one
- * class across both channels, so it is stated once here. */
+/* Padding without a background. The block half keeps the tap target near 26px
+ * now that the pill is gone (WCAG 2.5.8 asks 24), and the inline half gives
+ * .meta a:focus-visible's ring somewhere to sit that is not on top of the
+ * glyphs. Hover cannot be a raised pill here, so it is an underline: the
+ * colour shift to --accent alone is the one cue this row's links have that a
+ * person who cannot distinguish it would miss. */
+.build-stamp a { padding: var(--sp-1); border-radius: var(--r-sm); }
+.build-stamp a:hover { background: none; transform: none; text-decoration: underline; }
+
+/* A rule rather than a separator character: `edge · ceb67e3` already contains
+ * a middle dot, and a second glyph beside it reads as noise rather than as a
+ * division.
+ *
+ * Drawn as a pseudo-element sized in em, not as a border-left on the link. A
+ * border spans the whole padded box, and that padding is a tap target rather
+ * than a visual height -- so the rule came out 26px tall beside 13px text and
+ * read as a bracket around the cross-link instead of a divider between two
+ * things. The link is inline-flex, so this is a flex item and `align-self`
+ * centres it. */
+#to-edge::before,
+#to-stable::before {
+  content: '';
+  align-self: center;
+  inline-size: 1px;
+  block-size: 1em;
+  margin-inline-end: var(--sp-2);
+  background: var(--line);
+}
+
+/* `edge · ceb67e3` is three space-separated tokens, so without this it is free
+ * to break after "edge" or after the dot -- a build identifier split across
+ * two lines, which is worse than a wide one. Stable's `v0.3.1` has no break
+ * opportunity in it and does not need the rule; the stamp shares one class
+ * across both channels, so it is stated once here. */
 .build { white-space: nowrap; }
 :root[data-channel='stable'] #to-edge { display: inline-flex; }
 :root[data-channel='edge'] #to-stable { display: inline-flex; }
@@ -414,7 +449,7 @@ footer strong { color: var(--text); font-weight: 600; }
  * the only carrier of the meaning -- which is what keeps it working for a
  * reader who cannot see it. */
 :root[data-channel='edge'] .build { color: var(--warn); }
-:root[data-channel='edge'] .build:hover { color: var(--warn); background: var(--surface-raised); }
+:root[data-channel='edge'] .build:hover { color: var(--warn); }
 
 /* aria-hidden in the markup: every label already says what the link is, so
  * the icon is decoration and a screen reader announcing it would be reading
@@ -459,9 +494,6 @@ footer summary:focus-visible {
 
 @media (max-width: 30rem) {
   main { padding: var(--sp-5) var(--sp-3) var(--sp-6); }
-  /* The row has wrapped by now, so pushing the byline right would leave it
-   * alone on a second line with a hand-width of empty space beside it. */
-  .meta .who { margin-left: 0; }
 
   /* The row is five pills now, not three, and at 390px it wraps to a second
    * line no matter what -- the five together are ~416px of content in ~342px
@@ -484,24 +516,12 @@ footer summary:focus-visible {
    * glyph parked beside the byline. */
   .meta { margin-block-start: var(--sp-2); padding-top: var(--sp-2); }
 
-  /* Given that the row wraps regardless, the second line may as well be
-   * chosen rather than fallen into. The stamp and the cross-link take it
-   * together, and `flex-basis: 100%` means they take it at every stamp width
-   * -- left to reflow they compose differently on each page, because `v0.3.1`
-   * is four characters and `edge · ceb67e3` is fourteen, and the leftover pill
-   * lands next to the byline on one and alone on the other.
-   *
-   * `order` rather than moving the group in the markup, which would put the
-   * build pills flush right on a desktop instead of the byline. The cost is
-   * that a keyboard reaches these two before the byline they now sit under;
-   * across five quiet footer links that is the cheaper of the two. */
-  .build-group {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-1) var(--sp-2);
-    flex-basis: 100%;
-    order: 1;
-  }
+  /* The second line, once the row wraps, holds the byline alone -- the stamp
+   * stays up on the first, at its right, where it is the same distance from
+   * the corner of the page as it is on a desktop. Nothing declares that: the
+   * three links plus the stamp fit the first line and the byline does not, so
+   * flex-wrap puts it where the widths say. No rule here, deliberately, since
+   * the arrangement holds at 320, 360, 390 and 430 on both channels. */
 }
 
 /* The same bargain src/web/styles.js strikes for the component: someone who
