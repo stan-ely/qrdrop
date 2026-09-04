@@ -1,6 +1,8 @@
 node_modules/
 dist/
 site/dist/
+site/dist-edge/
+_site/
 .vite/
 *.local
 .DS_Store

@@ -41,7 +41,18 @@ import { serveStatic } from '../src/node/serve.js'
 import { FIXTURES, LINK, installState } from './screen-states.mjs'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const DIST = path.join(ROOT, 'site', 'dist')
+// Which built tree to walk, so the edge build can be checked too:
+//
+//   node scripts/build-site.mjs --channel edge --out site/dist-edge
+//   node scripts/check-layout.mjs site/dist-edge
+//
+// The edge tree is not a cosmetic variant of the stable one for this script's
+// purposes: it carries an extra pill in the footer, on a page that is a
+// fixed-height grid with no spare vertical pixels, and "the footer grew and
+// pushed a button off the bottom at 1280x620" is precisely the class of thing
+// this file exists to catch. A check that only ever saw one of the two trees
+// would be checking the half that did not change.
+const DIST = path.resolve(ROOT, process.argv[2] ?? path.join('site', 'dist'))
 const OUT = path.join(ROOT, 'docs', 'screenshots', 'layout')
 
 const QRCODE = path.join(ROOT, 'node_modules', 'qrcode-generator', 'dist', 'qrcode.js')

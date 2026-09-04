@@ -362,6 +362,41 @@ footer strong { color: var(--text); font-weight: 600; }
  * auto margin would strand the name alone on its own line. */
 .meta .who { margin-left: auto; }
 
+/* The build stamp and the channel cross-link.
+ *
+ * Both inherit .meta a wholesale -- same pill, same hover, same focus ring --
+ * because they are the same kind of thing as the three links around them: a
+ * quiet pointer out of the page. The only departure is the colour of the stamp
+ * on the edge build, below.
+ *
+ * The two cross-links are hidden with `display: none` and shown again per
+ * channel, rather than one of them carrying `hidden` in the markup. An author
+ * `display` beats the UA stylesheet's rule for [hidden], so a stylesheet that
+ * hides with the attribute and reveals with `display` is one rule away from
+ * showing both -- the failure this project has already had three times over
+ * (.card laying out all eight screens at once, .sheet rendering both closed
+ * dialogs in flow). Saying it in one place, in both directions, has no such
+ * edge: neither link is visible unless a rule here names its channel.
+ *
+ * Which also means these are the rules to check if both cross-links ever
+ * appear at once: that is data-channel arriving as a literal __CHANNEL__,
+ * matching neither selector -- except the build would have failed first, on
+ * the leftover-placeholder guard in scripts/build-site.mjs. */
+#to-edge,
+#to-stable { display: none; }
+:root[data-channel='stable'] #to-edge { display: inline-flex; }
+:root[data-channel='edge'] #to-stable { display: inline-flex; }
+
+/* Edge is the development build and says so in the one way a footer can. Not
+ * red: nothing is wrong, and a page about trust that cries wolf in its own
+ * chrome spends credibility it needs elsewhere. --warn is legible against both
+ * themes' backgrounds (src/web/tokens.js defines it for each), and the label
+ * beside it already reads "edge", so the colour is reinforcement rather than
+ * the only carrier of the meaning -- which is what keeps it working for a
+ * reader who cannot see it. */
+:root[data-channel='edge'] .build { color: var(--warn); }
+:root[data-channel='edge'] .build:hover { color: var(--warn); background: var(--surface-raised); }
+
 /* aria-hidden in the markup: every label already says what the link is, so
  * the icon is decoration and a screen reader announcing it would be reading
  * the same word twice. Sized in em so it tracks --fs--1, and drawn in
@@ -408,6 +443,44 @@ footer summary:focus-visible {
   /* The row has wrapped by now, so pushing the byline right would leave it
    * alone on a second line with a hand-width of empty space beside it. */
   .meta .who { margin-left: 0; }
+
+  /* The row is five pills now, not three, and at 390px the byline wraps to a
+   * second line no matter how the labels are trimmed -- the five together are
+   * ~416px of content in ~342px of width. So the line is paid for out of the
+   * space above the row rather than out of the card, which is the only other
+   * place a fixed-height page can take it from: check-layout.mjs measured the
+   * beam screen scrolling by 21px internally on a phone when the card paid.
+   *
+   * 24px of the 40px above the hairline, which the row can spare precisely
+   * because it got busier -- the gap existed to set three quiet links apart
+   * from the disclosure above them, and five pills already read as their own
+   * band without it. */
+  .meta { margin-block-start: var(--sp-2); padding-top: var(--sp-2); }
+
+  /* The cross-link goes to its icon alone, and this is a height fix rather
+   * than a taste one. "Edge build" is the widest label in the row; with it
+   * present the footer wrapped onto one more line at 390px, and the page is a
+   * fixed-height grid, so that line came out of the row <qr-drop> fills --
+   * 21px of it, which check-layout.mjs caught as the beam screen scrolling
+   * internally on a phone. The build stamp beside it keeps its text: `v0.3.1`
+   * is four characters and is the thing worth reading here.
+   *
+   * Genuinely clipped, not `font-size: 0` and not `display: none`. This exact
+   * shortcut is documented as a past bug in src/web/styles.js (the step rail's
+   * labels, which a comment claimed were "preserved for assistive tech" while
+   * being read by nothing) -- and here it would be worse than cosmetic, since
+   * with the text gone the link has no accessible name at all: its icon is
+   * aria-hidden, like every other icon in this row. */
+  .pill-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 /* The same bargain src/web/styles.js strikes for the component: someone who

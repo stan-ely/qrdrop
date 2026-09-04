@@ -12,7 +12,8 @@ README does not: the invariants a change can break silently, and where they live
 ```bash
 npm test                                   # unit suite, offline, ~2s
 npm run typecheck                          # two tsc invocations; see below
-npm run build                              # esbuild -> site/dist/
+npm run build                              # esbuild -> site/dist/ (the stable tree)
+node scripts/build-site.mjs --channel edge --out site/dist-edge   # the other deployed tree
 
 npm start                                  # build + serve site/dist/ flat on :4173 (deploy preview)
 npm run web                                # build, then `qrdrop web`: serves the bundle, opens a browser
@@ -48,6 +49,7 @@ each failure to `docs/screenshots/layout/` (gitignored):
 ```bash
 npx playwright install firefox        # one-time; only chromium ships by default
 npm run build && node scripts/check-layout.mjs
+node scripts/check-layout.mjs site/dist-edge   # the edge tree, built as above
 ```
 
 It runs **both** engines, and the second one earns its place: everything this script used
@@ -60,7 +62,15 @@ pins the code into a corner of a box that is not square, so the difference pays 
 white band beside the QR.
 
 Run it after anything that touches `src/web/view.js`, `src/web/styles.js`, or the
-site's page chrome. The fixtures both scripts drive are shared, in
+site's page chrome, **and run it against both deployed trees** — they differ in the
+footer, and the footer is the one part of this page with no vertical slack. Adding
+the build stamp and the channel cross-link wrapped `.meta` onto a second line at
+390px, which a fixed-height grid pays for out of the card: `beam.phone` scrolled
+internally by 21px in both engines. That is why `.meta` gives back its top spacing
+under `max-width: 30rem` and the cross-link's label is clipped there. Clipped, not
+`font-size: 0` and not `display: none` — the icon beside it is `aria-hidden` like
+every other icon in that row, so removing the text would leave the link with no
+accessible name at all. The fixtures both scripts drive are shared, in
 `scripts/screen-states.mjs`, so a new screen gets added once and both see it. If
 a screenshot comes out wrong, that is the finding.
 
@@ -84,9 +94,46 @@ npm run test:e2e:interop  # two Node processes driving the CLI
 
 `mise.toml` mirrors every npm script as a task; either runner works.
 
+## Deploying
+
+The site is **two builds of this repo served from one Pages artifact**: the latest
+`v*` tag at `/`, the tip of `main` at `/edge/`. `.github/workflows/pages.yml` builds
+both — edge from the checkout it starts on, then `git checkout --detach <tag>` plus a
+fresh `npm ci` for stable — and uploads them together. Each page therefore runs
+exactly the code of the ref it names; there is no tree mixing one ref's `scripts/`
+with another's `src/`.
+
+**The order of those two builds is load-bearing.** Only the checkout on `main` has a
+`build-site.mjs` that understands `--channel` and `--out`, so edge must be built and
+set aside before the job moves off `main`. Swapping them fails with a flag error, but
+a subtler version of the same mistake — building stable first and reusing its `_site/`
+— would quietly serve one build twice.
+
+They ship in one workflow because **a Pages deploy replaces the whole site**. Split
+across two workflows, whichever ran last would delete the other half, and the symptom
+is an intermittent 404 rather than anything that looks like a YAML mistake. For the
+same reason `pages.yml` now triggers on `tags: ['v*']` as well as pushes to `main`:
+without it, cutting a release would never update `/`.
+
+`readBuildMeta` in `scripts/build-site.mjs` asks **git before `GITHUB_SHA`**, which is
+the reverse of the obvious order and is the point: the stable tree is built after
+`git checkout <tag>`, where `GITHUB_SHA` still names the commit that triggered the run
+— the tip of `main`. Trusting it there stamps the stable page with a sha it was not
+built from.
+
+One consequence that will age out on its own: a release tagged before this existed has
+no `__VERSION__` in its template, so `/` serves that release's code with no version
+pill until the next tag carries the change. `/edge/` is stamped from the first deploy.
+
+CNAME is written by the **stable build only**. Pages reads exactly one, at the artifact
+root; a second one inside `edge/` is inert but reads like a binding to whoever finds it.
+
 ## Releasing
 
-A `v*` tag runs `.github/workflows/publish.yml`, which is three jobs in a chain:
+A `v*` tag runs both `.github/workflows/publish.yml` (below) and `pages.yml` (above),
+independently and in parallel.
+
+`publish.yml` is three jobs in a chain:
 `publish` (suite, typecheck, build, tag-matches-`package.json`, `npm publish` over OIDC),
 then `release` (a GitHub Release whose body is the CHANGELOG section for that version,
 carrying the npm tarball, `qrdrop-site-<version>.zip`, `SHA256SUMS`, and a build

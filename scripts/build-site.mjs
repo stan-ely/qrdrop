@@ -11,9 +11,19 @@
  * so WebCrypto and the camera both work there the same as they would over
  * real HTTPS -- that is what makes local testing possible at all, since
  * site/main.js and the element both fail closed off a secure context.
+ *
+ * Two more flags exist for the deploy, which serves two builds of this repo
+ * side by side (see .github/workflows/pages.yml): `--channel edge` marks the
+ * output as the bleeding build from main rather than the last released tag,
+ * and `--out <dir>` puts it somewhere other than site/dist so the two builds
+ * do not clobber each other's `rm -rf`. Both default to the stable, single-tree
+ * behaviour, because that is what `npm run build` and `prepublishOnly` want:
+ * site/dist ships inside the npm tarball, and an edge/ subdirectory in there
+ * would be a second copy of the app nobody asked for.
  */
 
 import * as esbuild from 'esbuild'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
@@ -43,6 +53,109 @@ const DIST = path.join(SITE, 'dist')
  * pastes the link somewhere.
  */
 const ORIGIN = 'https://share.stan-ely.com'
+
+/**
+ * The repository the build stamp links into, in one place for the same reason
+ * ORIGIN is: releases/tag/<v> and commit/<sha> are two URLs derived from it,
+ * and site/index.html's footer already names this repo a third time in the
+ * Source link. That third one stays hand-written -- it is prose in the markup,
+ * not a URL this script assembles -- but the two generated ones share a root.
+ */
+const REPO = 'https://github.com/stan-ely/qrdrop'
+
+/**
+ * Where the deployed site serves the bleeding build from main.
+ *
+ * A trailing slash, and it matters twice: as a directory name under the output
+ * root it must not be absolute, and as the href of the "Edge build" link it
+ * must not be `/edge` -- GitHub Pages would answer that with a redirect to
+ * `/edge/`, which is a wasted round trip on a page whose whole pitch is that
+ * it is small.
+ */
+const EDGE_PATH = 'edge/'
+
+/**
+ * What the footer's build pill says, where it points, and which og:url the
+ * page claims -- everything that differs between the two channels, derived in
+ * one pure function so test/build-site.test.mjs can pin it without a build.
+ *
+ * The two channels answer different questions, so they carry different
+ * identifiers rather than the same one formatted twice. Stable is a release:
+ * the only thing a visitor can act on is the version, which is what they would
+ * `npm install`, so it reads `v0.3.1` and points at that Release. Edge is a
+ * commit: there is no version to speak of -- package.json on main says whatever
+ * the last bump said, which is the *previous* release and would be an actively
+ * misleading label -- so it reads the short sha and points at that commit.
+ *
+ * The full ISO date rides in the title attribute rather than the label. It is
+ * the thing someone wants when they are asking "is my fix deployed yet", and it
+ * is also the thing that would wrap the footer row onto a second line if it
+ * were visible, on a page that has no spare vertical pixels anywhere.
+ *
+ * @param {{ channel: string, version: string, commit: string, date: string }} meta
+ * @returns {{ channel: string, label: string, href: string, title: string, ogUrl: string }}
+ */
+export function buildStamp({ channel, version, commit, date }) {
+  if (channel !== 'stable' && channel !== 'edge') {
+    throw new Error(`Unknown channel ${JSON.stringify(channel)} -- expected 'stable' or 'edge'`)
+  }
+
+  if (channel === 'edge') {
+    return {
+      channel,
+      label: `edge · ${commit}`,
+      href: `${REPO}/commit/${commit}`,
+      title: `Built from main at ${commit}, ${date}. This is the development build; it may be broken.`,
+      ogUrl: `${ORIGIN}/${EDGE_PATH}`,
+    }
+  }
+
+  return {
+    channel,
+    label: `v${version}`,
+    href: `${REPO}/releases/tag/v${version}`,
+    title: `Release v${version}, ${date}.`,
+    ogUrl: `${ORIGIN}/`,
+  }
+}
+
+/**
+ * The version, commit and date this build is of.
+ *
+ * Every lookup falls back rather than throwing, because this script runs in
+ * three places that do not all have the same things available: a git checkout,
+ * a CI runner, and `prepublishOnly` inside whatever directory npm is packing
+ * from. A build that dies because `git` is not on PATH would be a stamp
+ * breaking the thing it is supposed to describe.
+ *
+ * git is asked BEFORE process.env.GITHUB_SHA, which is the reverse of the
+ * obvious order and is the point. The pages workflow builds the stable tree
+ * after `git checkout <tag>`, and GITHUB_SHA still names the commit that
+ * *triggered* the run -- the tip of main. Trusting it there would stamp the
+ * stable page with a sha it was not built from. `git rev-parse HEAD` answers
+ * for the tree actually on disk, always. The env var is kept only for a
+ * checkout with no git history to read (a shallow clone with `fetch-depth: 0`
+ * dropped, say), where a slightly-wrong sha still beats "unknown".
+ *
+ * @returns {Promise<{ version: string, commit: string, date: string }>}
+ */
+async function readBuildMeta() {
+  const pkg = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'))
+
+  /** @param {string[]} args @returns {string | null} */
+  const git = args => {
+    try {
+      return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    } catch {
+      return null
+    }
+  }
+
+  const commit = git(['rev-parse', '--short', 'HEAD']) ?? process.env.GITHUB_SHA?.slice(0, 7) ?? 'unknown'
+  const date = git(['log', '-1', '--format=%cI']) ?? new Date().toISOString()
+
+  return { version: pkg.version, commit, date }
+}
 
 /**
  * The Content-Security-Policy, as a single generated string.
@@ -140,11 +253,13 @@ export function buildCSP(signalingUrls) {
  * running in their browser rather than against the code in this repository.
  * They cost bandwidth on a page that is otherwise tiny, and they reveal
  * nothing: every line of this is public already.
+ *
+ * @param {string} dist
  */
-async function bundle() {
+async function bundle(dist) {
   const result = await esbuild.build({
     entryPoints: [path.join(SITE, 'main.js')],
-    outdir: DIST,
+    outdir: dist,
     bundle: true,
     minify: true,
     sourcemap: true,
@@ -177,13 +292,35 @@ async function bundle() {
   }
 }
 
+/**
+ * Reads `--name value` out of argv, or null if the flag is absent.
+ *
+ * Deliberately not `--name=value` as well: two accepted spellings is two
+ * things to get wrong in a workflow file, and the only caller is that
+ * workflow plus a hand-run check-layout.
+ *
+ * @param {string} name
+ * @returns {string | null}
+ */
+function flagValue(name) {
+  const i = process.argv.indexOf(name)
+  if (i === -1) return null
+  const value = process.argv[i + 1]
+  if (!value || value.startsWith('--')) throw new Error(`${name} needs a value`)
+  return value
+}
+
 async function main() {
   const serve = process.argv.includes('--serve')
+  const channel = flagValue('--channel') ?? 'stable'
+  const dist = flagValue('--out') ? path.resolve(ROOT, /** @type {string} */ (flagValue('--out'))) : DIST
 
-  await rm(DIST, { recursive: true, force: true })
-  await mkdir(DIST, { recursive: true })
+  const stamp = buildStamp({ channel, ...(await readBuildMeta()) })
 
-  const { entryFile, outputs } = await bundle()
+  await rm(dist, { recursive: true, force: true })
+  await mkdir(dist, { recursive: true })
+
+  const { entryFile, outputs } = await bundle(dist)
 
   // jsqr must land in a chunk of its own, separate from the entry bundle --
   // see the comment on splitting above. A build that silently regressed back
@@ -231,17 +368,24 @@ async function main() {
   // stylesheet it was built against, and an old cache entry is simply a file
   // nothing asks for any more.
   const cssFile = `styles.${createHash('sha256').update(css).digest('hex').slice(0, 8).toUpperCase()}.css`
-  await writeFile(path.join(DIST, cssFile), css)
-  await copyFile(path.join(SITE, '_headers'), path.join(DIST, '_headers'))
+  await writeFile(path.join(dist, cssFile), css)
+  await copyFile(path.join(SITE, '_headers'), path.join(dist, '_headers'))
 
   // The social-preview card. Committed rather than rendered here, because
   // producing it needs a headless browser (scripts/make-og.mjs, run by hand
   // when the design changes) and `npm run build` runs in CI and in
   // prepublishOnly, where a browser download is not a dependency this repo
   // is willing to take on for an image that changes about never.
-  await copyFile(path.join(SITE, 'og.png'), path.join(DIST, 'og.png'))
+  await copyFile(path.join(SITE, 'og.png'), path.join(dist, 'og.png'))
 
-  await writeFile(path.join(DIST, 'CNAME'), new URL(ORIGIN).host + '\n')
+  // Stable only. CNAME is what binds the custom domain, and GitHub Pages reads
+  // exactly one of them, at the root of the deployed artifact -- the edge tree
+  // is a subdirectory of that same artifact, so a CNAME inside it is not a
+  // second binding, it is a file that looks like one. Skipping it keeps the
+  // edge tree honest about being a subdirectory rather than a site.
+  if (stamp.channel === 'stable') {
+    await writeFile(path.join(dist, 'CNAME'), new URL(ORIGIN).host + '\n')
+  }
 
   const csp = buildCSP(SIGNALING_URLS)
   const template = await readFile(path.join(SITE, 'index.html'), 'utf8')
@@ -250,22 +394,38 @@ async function main() {
   // the first. The guard below is what turns that class of mistake into a
   // failed build rather than a page shipped with a literal __ORIGIN__ in an
   // href, so the two belong together.
+  //
+  // __OG_URL__ is separate from __ORIGIN__ rather than assembled from it,
+  // because the two channels disagree about it and only about it: og:url must
+  // name the page being previewed (/ or /edge/) while og:image stays on the
+  // origin either way, since the edge tree has no og.png of its own worth
+  // making and the card is the same picture regardless of which build served
+  // it. One placeholder covering both would have to be right twice.
   const html = template
     .replaceAll('__CSP__', csp)
     .replaceAll('__SCRIPT__', entryFile)
     .replaceAll('__STYLES__', cssFile)
+    .replaceAll('__OG_URL__', stamp.ogUrl)
     .replaceAll('__ORIGIN__', ORIGIN)
+    .replaceAll('__CHANNEL__', stamp.channel)
+    .replaceAll('__BUILD_LABEL__', stamp.label)
+    .replaceAll('__BUILD_HREF__', stamp.href)
+    .replaceAll('__BUILD_TITLE__', stamp.title)
 
-  const leftover = ['__CSP__', '__SCRIPT__', '__STYLES__', '__ORIGIN__'].filter(t => html.includes(t))
+  const leftover = [
+    '__CSP__', '__SCRIPT__', '__STYLES__', '__OG_URL__', '__ORIGIN__',
+    '__CHANNEL__', '__BUILD_LABEL__', '__BUILD_HREF__', '__BUILD_TITLE__',
+  ].filter(t => html.includes(t))
   if (leftover.length) {
     throw new Error(`site/index.html placeholder(s) not replaced: ${leftover.join(', ')} -- check the token still exists in the template`)
   }
 
-  await writeFile(path.join(DIST, 'index.html'), html)
+  await writeFile(path.join(dist, 'index.html'), html)
 
-  console.log(`Built site/dist/ (${outputs.length} JS output${outputs.length === 1 ? '' : 's'}, entry: ${entryFile})`)
+  const where = path.relative(ROOT, dist).split(path.sep).join('/')
+  console.log(`Built ${where}/ (${stamp.label}, ${outputs.length} JS output${outputs.length === 1 ? '' : 's'}, entry: ${entryFile})`)
 
-  if (serve) await serveDist()
+  if (serve) await serveDist(dist)
 }
 
 /** @type {Record<string, string>} */
@@ -277,14 +437,20 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
 }
 
-async function serveDist() {
+/** @param {string} dist */
+async function serveDist(dist) {
   const PORT = 4173
 
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      let filePath = path.join(DIST, decodeURIComponent(url.pathname))
-      if (url.pathname === '/') filePath = path.join(DIST, 'index.html')
+      let filePath = path.join(dist, decodeURIComponent(url.pathname))
+      // Any directory, not just '/': an assembled deploy has the edge tree at
+      // /edge/, and this server is what a preview of that tree is looked at
+      // through. GitHub Pages resolves a trailing slash to index.html the same
+      // way, so matching it here is what makes the preview representative
+      // rather than a local-only 404.
+      if (url.pathname.endsWith('/')) filePath = path.join(filePath, 'index.html')
 
       const info = await stat(filePath).catch(() => null)
       if (!info || !info.isFile()) {
@@ -302,7 +468,8 @@ async function serveDist() {
   })
 
   await new Promise(resolve => server.listen(PORT, () => resolve(undefined)))
-  console.log(`Serving site/dist/ at http://localhost:${PORT} (secure context: yes, via localhost)`)
+  const where = path.relative(ROOT, dist).split(path.sep).join('/')
+  console.log(`Serving ${where}/ at http://localhost:${PORT} (secure context: yes, via localhost)`)
 }
 
 // Run the build only when invoked as a script (`node scripts/build-site.mjs`),

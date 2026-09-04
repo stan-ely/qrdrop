@@ -12,7 +12,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildCSP } from '../scripts/build-site.mjs'
+import { buildCSP, buildStamp } from '../scripts/build-site.mjs'
 import { SIGNALING_URLS } from '../src/transport/room.js'
 
 test('connect-src lists every signalling origin plus self, and nothing else', () => {
@@ -53,4 +53,53 @@ test('the non-connect directives are the locked-down set', () => {
   ]) {
     assert.ok(csp.includes(directive), `missing: ${directive}`)
   }
+})
+
+/**
+ * The footer's build stamp.
+ *
+ * One template produces two deployed pages -- the last released tag at / and
+ * the tip of main at /edge/ -- and this function is the whole of what differs
+ * between them. The cases below pin the part a reader of the page acts on: the
+ * identifier each channel shows, and that the link under it goes where that
+ * identifier lives. A stamp that said v0.3.1 and linked to a commit would look
+ * entirely correct in a screenshot.
+ */
+
+const META = { version: '1.2.3', commit: 'abc1234', date: '2026-09-04T10:00:00+00:00' }
+
+test('stable names the release, and links to it', () => {
+  const stamp = buildStamp({ channel: 'stable', ...META })
+  assert.equal(stamp.label, 'v1.2.3')
+  assert.equal(stamp.href, 'https://github.com/stan-ely/qrdrop/releases/tag/v1.2.3')
+})
+
+test('edge names the commit, never the version', () => {
+  const stamp = buildStamp({ channel: 'edge', ...META })
+  assert.match(stamp.label, /abc1234/)
+  assert.equal(stamp.href, 'https://github.com/stan-ely/qrdrop/commit/abc1234')
+  // package.json on main carries the PREVIOUS release's number until the next
+  // bump, so a version anywhere on the edge page is a wrong answer to "what am
+  // I running", not merely a redundant one.
+  assert.doesNotMatch(stamp.label, /1\.2\.3/)
+})
+
+test('the build date is available but not in the label', () => {
+  for (const channel of ['stable', 'edge']) {
+    const stamp = buildStamp({ channel, ...META })
+    assert.match(stamp.title, /2026-09-04/)
+    assert.doesNotMatch(stamp.label, /2026/)
+  }
+})
+
+test('og:url names the page being previewed, per channel', () => {
+  assert.equal(buildStamp({ channel: 'stable', ...META }).ogUrl, 'https://share.stan-ely.com/')
+  assert.equal(buildStamp({ channel: 'edge', ...META }).ogUrl, 'https://share.stan-ely.com/edge/')
+})
+
+test('an unknown channel fails the build rather than defaulting', () => {
+  // A typo in the workflow's --channel flag would otherwise deploy a second
+  // copy of the stable page at /edge/, which is a silently wrong site rather
+  // than a failed one.
+  assert.throws(() => buildStamp({ channel: 'Edge', ...META }), /Unknown channel/)
 })
