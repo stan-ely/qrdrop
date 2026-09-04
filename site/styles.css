@@ -384,6 +384,25 @@ footer strong { color: var(--text); font-weight: 600; }
  * the leftover-placeholder guard in scripts/build-site.mjs. */
 #to-edge,
 #to-stable { display: none; }
+
+/* The stamp and the cross-link are one thought -- which build this is, and how
+ * to get to the other -- and on a phone they get a footer line of their own to
+ * say it in (see the narrow breakpoint). `display: contents` is what keeps
+ * that grouping free everywhere else: the wrapper generates no box, so .meta's
+ * flex row still sees these three anchors as direct children and the wide
+ * layout, .who's auto margin included, is untouched.
+ *
+ * Not a nested flex row at all widths: that would make the group one flex item
+ * of .meta, so a narrow viewport would break *inside* it or not at all, and
+ * the row's five pills could no longer reflow as five things. */
+.build-group { display: contents; }
+
+/* `edge · ceb67e3` is three space-separated tokens, so without this the pill
+ * is free to break after "edge" or after the dot -- a build identifier split
+ * across two lines, which is worse than a wide pill. Stable's `v0.3.1` has no
+ * break opportunity in it and does not need the rule; the stamp shares one
+ * class across both channels, so it is stated once here. */
+.build { white-space: nowrap; }
 :root[data-channel='stable'] #to-edge { display: inline-flex; }
 :root[data-channel='edge'] #to-stable { display: inline-flex; }
 
@@ -444,42 +463,44 @@ footer summary:focus-visible {
    * alone on a second line with a hand-width of empty space beside it. */
   .meta .who { margin-left: 0; }
 
-  /* The row is five pills now, not three, and at 390px the byline wraps to a
-   * second line no matter how the labels are trimmed -- the five together are
-   * ~416px of content in ~342px of width. So the line is paid for out of the
-   * space above the row rather than out of the card, which is the only other
-   * place a fixed-height page can take it from: check-layout.mjs measured the
-   * beam screen scrolling by 21px internally on a phone when the card paid.
+  /* The row is five pills now, not three, and at 390px it wraps to a second
+   * line no matter what -- the five together are ~416px of content in ~342px
+   * of width. So the line is paid for out of the space above the row rather
+   * than out of the card, which is the only other place a fixed-height page
+   * can take it from: check-layout.mjs measured the beam screen scrolling by
+   * 21px internally on a phone when the card paid.
    *
    * 24px of the 40px above the hairline, which the row can spare precisely
    * because it got busier -- the gap existed to set three quiet links apart
    * from the disclosure above them, and five pills already read as their own
-   * band without it. */
+   * band without it.
+   *
+   * This rule is the whole of the height saving. An earlier version of this
+   * block also clipped the cross-link's label away to sr-only, on the theory
+   * that the shorter row bought a line back; measured, it buys nothing --
+   * .meta is 68px tall at 320, 360 and 390px with the label present or absent
+   * -- and it cost the link its only visible cue, since its icon is
+   * aria-hidden like every other icon here. Shipped, it read as a bare shield
+   * glyph parked beside the byline. */
   .meta { margin-block-start: var(--sp-2); padding-top: var(--sp-2); }
 
-  /* The cross-link goes to its icon alone, and this is a height fix rather
-   * than a taste one. "Edge build" is the widest label in the row; with it
-   * present the footer wrapped onto one more line at 390px, and the page is a
-   * fixed-height grid, so that line came out of the row <qr-drop> fills --
-   * 21px of it, which check-layout.mjs caught as the beam screen scrolling
-   * internally on a phone. The build stamp beside it keeps its text: `v0.3.1`
-   * is four characters and is the thing worth reading here.
+  /* Given that the row wraps regardless, the second line may as well be
+   * chosen rather than fallen into. The stamp and the cross-link take it
+   * together, and `flex-basis: 100%` means they take it at every stamp width
+   * -- left to reflow they compose differently on each page, because `v0.3.1`
+   * is four characters and `edge · ceb67e3` is fourteen, and the leftover pill
+   * lands next to the byline on one and alone on the other.
    *
-   * Genuinely clipped, not `font-size: 0` and not `display: none`. This exact
-   * shortcut is documented as a past bug in src/web/styles.js (the step rail's
-   * labels, which a comment claimed were "preserved for assistive tech" while
-   * being read by nothing) -- and here it would be worse than cosmetic, since
-   * with the text gone the link has no accessible name at all: its icon is
-   * aria-hidden, like every other icon in this row. */
-  .pill-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+   * `order` rather than moving the group in the markup, which would put the
+   * build pills flush right on a desktop instead of the byline. The cost is
+   * that a keyboard reaches these two before the byline they now sit under;
+   * across five quiet footer links that is the cheaper of the two. */
+  .build-group {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1) var(--sp-2);
+    flex-basis: 100%;
+    order: 1;
   }
 }
 

@@ -209,19 +209,26 @@
         Exactly one of the two cross-links is shown, by site/styles.css keying
         on :root[data-channel] -- both are in the markup because this is one
         template, and CSS is what makes it two pages.
+
+        The three are wrapped because on a phone they take a footer line of
+        their own, and a line needs something to be a line of. The wrapper has
+        `display: contents` everywhere else, so at every other width the row is
+        the flat flex row it has always been.
       -->
-      <a class="build" href="__BUILD_HREF__" title="__BUILD_TITLE__" target="_blank" rel="noopener noreferrer">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4 12.5 21.5a2 2 0 0 1-2.8 0l-7.2-7.2a2 2 0 0 1-.5-1.9l1.6-6.4a2 2 0 0 1 1.5-1.5l6.4-1.6a2 2 0 0 1 1.9.5l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
-        __BUILD_LABEL__
-      </a>
-      <a id="to-edge" href="/edge/" target="_blank" rel="noopener noreferrer">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-        <span class="pill-label">Edge build</span>
-      </a>
-      <a id="to-stable" href="/" target="_blank" rel="noopener noreferrer">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 12 2 2 4-4"/><path d="M12 3l7 3v6c0 4.4-3 8.2-7 9-4-.8-7-4.6-7-9V6z"/></svg>
-        <span class="pill-label">Stable build</span>
-      </a>
+      <span class="build-group">
+        <a class="build" href="__BUILD_HREF__" title="__BUILD_TITLE__" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4 12.5 21.5a2 2 0 0 1-2.8 0l-7.2-7.2a2 2 0 0 1-.5-1.9l1.6-6.4a2 2 0 0 1 1.5-1.5l6.4-1.6a2 2 0 0 1 1.9.5l7.2 7.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+          __BUILD_LABEL__
+        </a>
+        <a id="to-edge" href="/edge/" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          Edge build
+        </a>
+        <a id="to-stable" href="/" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 12 2 2 4-4"/><path d="M12 3l7 3v6c0 4.4-3 8.2-7 9-4-.8-7-4.6-7-9V6z"/></svg>
+          Stable build
+        </a>
+      </span>
       <a class="who" href="https://stan-ely.com" target="_blank" rel="noopener noreferrer">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Bevan Stanely

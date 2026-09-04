@@ -67,10 +67,18 @@ footer, and the footer is the one part of this page with no vertical slack. Addi
 the build stamp and the channel cross-link wrapped `.meta` onto a second line at
 390px, which a fixed-height grid pays for out of the card: `beam.phone` scrolled
 internally by 21px in both engines. That is why `.meta` gives back its top spacing
-under `max-width: 30rem` and the cross-link's label is clipped there. Clipped, not
-`font-size: 0` and not `display: none` — the icon beside it is `aria-hidden` like
-every other icon in that row, so removing the text would leave the link with no
-accessible name at all. The fixtures both scripts drive are shared, in
+under `max-width: 30rem`, and it is the whole of the fix: the row wraps at 390px
+whatever the labels say, so the second line is bought from the space above the
+hairline and then spent deliberately, on the build stamp and the cross-link
+together (`.build-group`, `flex-basis: 100%`).
+
+The first attempt also clipped the cross-link's label away to sr-only on that line,
+and that is the part worth remembering, because this script cannot catch it: `.meta`
+measures 68px with the label or without, so the clip saved nothing and cost the link
+its only visible cue — the icon beside it is `aria-hidden` like every other icon in
+that row. It shipped, and read on a phone as a bare shield glyph parked beside the
+byline. Layout being legal is not layout being right; look at the screenshots.
+The fixtures both scripts drive are shared, in
 `scripts/screen-states.mjs`, so a new screen gets added once and both see it. If
 a screenshot comes out wrong, that is the finding.
 
