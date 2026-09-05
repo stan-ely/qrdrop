@@ -30,6 +30,28 @@ import { EMPTY_CHAIN, chainHash, hex, equalHex } from './digest.js'
 // Replies to our sender, versus offers addressed to us.
 const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
 
+// Application-level flow control. The transport hands frames to handleFrame()
+// fire-and-forget, as fast as the DataChannel delivers them -- see the wiring
+// in web/element.js and cli.js, `room.onFrame(f => receiver.handleFrame(f)...)`,
+// whose returned promise nothing awaits. handleFrame() only appends to a
+// promise chain, so when createSink()'s write() drains slower than frames
+// arrive that chain fills with unresolved closures -- each pinning one frame's
+// ~16 KiB -- until the whole file is resident in RAM. SCTP flow control never
+// steps in, because this side never stops reading.
+//
+// So we tell the peer to stop. Above PAUSE_AT bytes accepted-but-not-yet-
+// written we send { t: 'pause' }; once the backlog falls back below RESUME_AT
+// we send { t: 'resume' }. The gap between them is hysteresis: a single
+// threshold would emit a pause/resume pair on every frame at the boundary.
+//
+// Degrades both ways. A sender too old to know 'pause' drops it as an
+// unrecognised control type and keeps sending -- today's unbounded behaviour,
+// so this is never a regression. A receiver too old to send 'pause' simply
+// never does, and the sender's gate stays open. The bound exists only when
+// both peers run this code.
+const PAUSE_AT = 4 * 1024 * 1024
+const RESUME_AT = 1 * 1024 * 1024
+
 /**
  * @param {object} args
  * @param {Channel} args.channel
@@ -54,6 +76,7 @@ const SENDER_REPLIES = ['accept', 'decline', 'done', 'error']
  *   handleFrame: (bytes: Bytes) => Promise<void>,
  *   readonly busy: boolean,
  *   readonly dropped: number,
+ *   readonly pending: number,
  * }}
  */
 export function createReceiver({
@@ -69,6 +92,13 @@ export function createReceiver({
   // the next report of this looks exactly like nothing happening.
   let dropped = 0
 
+  // Bytes handed to handleFrame() but not yet through sink.write(): the backlog
+  // the pause/resume pair bounds. Exposed as `pending` for the same reason
+  // `dropped` is -- so a memory problem under a slow sink is measurable rather
+  // than inferred from a heap that keeps climbing.
+  let pending = 0
+  let flowPaused = false
+
   /**
    * @type {{
    *   manifest: Manifest,
@@ -82,6 +112,38 @@ export function createReceiver({
 
   /** @type {(obj: ControlMessage) => Promise<void>} */
   const sendControl = async obj => channel.send(await sealControl(sendKey, nextControlIndex(), obj))
+
+  // pause/resume sends are serialised through this chain rather than fired
+  // straight at sendControl(). sendControl() takes its control index
+  // synchronously but then awaits sealing before it reaches channel.send(), so
+  // two overlapping calls could hand the channel their frames out of index
+  // order -- and a control frame that arrives out of order is fatal, not merely
+  // dropped (see open() in frame.js). Every other sendControl() call site here
+  // is driven from the serialised frame queue and so is already ordered; these
+  // two run from handleFrame() and its settle handler, which are not.
+  let flowSends = Promise.resolve()
+  /** @param {'pause' | 'resume'} t */
+  const signalFlow = t => {
+    flowSends = flowSends.then(() => sendControl({ t }).catch(() => {
+      // The channel is gone. The transfer surfaces that on its next frame; a
+      // rejection here must not escape the transport's unawaited handleFrame()
+      // call and become an unhandledRejection.
+    }))
+  }
+
+  // Re-checked after `pending` grows (considerPause) and after it shrinks
+  // (considerResume). Split rather than one function because the two are called
+  // from different places and the flag makes each edge fire exactly once.
+  function considerPause() {
+    if (flowPaused || pending < PAUSE_AT) return
+    flowPaused = true
+    signalFlow('pause')
+  }
+  function considerResume() {
+    if (!flowPaused || pending > RESUME_AT) return
+    flowPaused = false
+    signalFlow('resume')
+  }
 
 
   /**
@@ -223,6 +285,14 @@ export function createReceiver({
         // did not ask for.
         if (msg.t === 'path') return void onPeerPath?.(msg.path)
 
+        // 'pause' / 'resume' is the peer's sink asking our send loop to wait or
+        // carry on. Like 'path' it answers no request and nothing awaits it as
+        // a reply, so it is routed straight past the control queue -- sender.js
+        // consults control.flowGate() between chunks. The pure receiving side
+        // never sees this (it is the side that sends it); a misbehaving peer
+        // that sent one anyway would only toggle a gate no send loop reads.
+        if (msg.t === 'pause' || msg.t === 'resume') return void control.setFlow(msg.t)
+
         if (SENDER_REPLIES.includes(msg.t)) return void control.push(msg)
         if (msg.t === 'manifest') return void await handleManifest(msg)
         if (msg.t === 'complete') return void await handleComplete(msg)
@@ -297,16 +367,31 @@ export function createReceiver({
 
   /** @param {Bytes} bytes */
   function handleFrame(bytes) {
+    // Counted here, synchronously, because here is where the backlog forms:
+    // every call appends one closure to `queue` and returns, whether or not
+    // the frame before it has been written yet. considerPause() therefore sees
+    // the true depth of the chain, not the depth as of the last frame drained.
+    pending += bytes.length
+    considerPause()
+
     const next = queue.then(() => processFrame(bytes))
     // One frame failing must not break the chain for those behind it.
     queue = next.catch(() => {})
-    return next
+
+    // Decrement once this frame is through processFrame -- for a chunk that
+    // means past sink.write(). .finally keeps the returned promise settling
+    // exactly as `next` does, so callers that .catch() it are unaffected.
+    return next.finally(() => {
+      pending -= bytes.length
+      considerResume()
+    })
   }
 
   return {
     handleFrame,
     get busy() { return active !== null },
     get dropped() { return dropped },
+    get pending() { return pending },
   }
 }
 

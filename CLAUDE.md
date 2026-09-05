@@ -380,17 +380,29 @@ size even the raw-body path is ~5 MB/s, because ~3 ms of per-invoke cost dominat
 256 KiB gets ~34 MB/s, 1 MiB ~42 and then it flattens. Passing frames straight
 through is ~8× slower for no memory saving worth having (the buffer is one block).
 
-**A slow sink still has no backpressure to the transport, and this is a `src/core`
+**A slow sink is now throttled by the transport, and that mechanism is a `src/core`
 property, not a Tauri one.** `RTCDataChannel` delivers `onmessage` as fast as bytes
-arrive and `receiver.js` serialises them into a promise chain; if the sink drains
-slower than the channel fills, that chain accumulates the backlog in RAM. Measured at
-its worst with the app: the old 1.5 MB/s sink let a 1 GiB transfer grow the JS heap
-by 1 GiB. The same code runs behind the website — the gap is just masked there,
-because the Chromium `showSaveFilePicker` path drains far faster than a WebRTC
-transfer usually fills it, and the Firefox/Safari Blob path already buffers the whole
-file by design (see README "Known limitations"). So "the sink streams, therefore
-memory is bounded" is not unconditionally true on any face, and a genuine fix — a
-slow sink pausing the transport — would live in `src/core/receiver.js`.
+arrive and `receiver.js` serialises them into a promise chain; SCTP flow control
+never engages, because the receiver never stops reading. Before this was addressed, a
+sink that drained slower than the channel filled let that chain accumulate the whole
+file in RAM — measured at its worst with the app, the old 1.5 MB/s sink grew the JS
+heap by 1 GiB over a 1 GiB transfer. The website ran the same code and was latent
+only because the Chromium `showSaveFilePicker` path drains far faster than a WebRTC
+transfer usually fills it and the Firefox/Safari Blob path buffers the whole file by
+design anyway (see README "Known limitations").
+
+The fix is app-level flow control over the authenticated control stream.
+`receiver.js` tracks bytes accepted but not yet through `sink.write()` (exposed as
+`receiver.pending`); above `PAUSE_AT` it sends a `{ t: 'pause' }` control message and
+below `RESUME_AT` a `{ t: 'resume' }`. `sender.js`'s chunk loop consults
+`control.flowGate()` between frames — shaped exactly like `drain()` — and blocks on
+pause until resume, or until `PAUSE_TIMEOUT_MS` makes an indefinitely-paused transfer
+fail with a diagnostic rather than hang. Both messages are sealed and index-counted
+like every other control frame, so "authenticate, then trust" holds and a stranger
+cannot forge one. It degrades cleanly in both directions: a sender too old to act on
+`pause` drops it as an unrecognised control type and runs as it did before, and a
+receiver too old to send it simply never does. `test/backpressure.test.mjs` pins the
+bounded backlog under a deliberately slow sink and both old-peer paths.
 
 ## Code style
 

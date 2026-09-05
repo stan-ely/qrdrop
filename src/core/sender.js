@@ -26,6 +26,16 @@ import { EMPTY_CHAIN, chainHash, hex } from './digest.js'
 const HIGH_WATER = 4 * 1024 * 1024
 const LOW_WATER = 256 * 1024
 
+// A transfer the receiver has paused and never resumed must fail rather than
+// hang. This is the ceiling on that wait. Deliberately generous: a genuinely
+// slow sink -- a phone writing to slow storage, the desktop app's IPC sink
+// under load -- can legitimately hold the transfer for many seconds at a
+// stretch, and a tight bound would abort transfers that were about to finish.
+// An unbounded wait is the worse failure though: a receiver that pauses and
+// then crashes would park the sender here forever with nothing said, so the
+// wait is capped and the error names the cause.
+const PAUSE_TIMEOUT_MS = 2 * 60 * 1000
+
 /**
  * @param {Channel} channel
  * @returns {Promise<void> | null} null when there is nothing to wait for.
@@ -39,6 +49,45 @@ function drain(channel) {
     }
     channel.addEventListener('bufferedamountlow', onLow)
   })
+}
+
+/**
+ * Honours a { t: 'pause' } the receiver sent because its sink fell behind the
+ * chunks we were producing (see core/receiver.js). Shaped like drain(): returns
+ * without waiting when the peer has not paused us, otherwise blocks until it
+ * sends { t: 'resume' } -- or, if that never comes, until PAUSE_TIMEOUT_MS
+ * elapses and the transfer fails with a diagnostic instead of hanging.
+ *
+ * Where drain() watches bytes we have queued into our own send buffer, this
+ * watches bytes the receiver has accepted but not yet written -- the only
+ * signal that reaches back here when the far side's sink, not the wire, is the
+ * bottleneck.
+ *
+ * A receiver too old to send 'pause' leaves flowGate() null and this costs one
+ * function call per chunk. A sender too old to call it ignores the message
+ * entirely. The mechanism binds only when both peers have it.
+ *
+ * @param {ControlStream} control
+ * @returns {Promise<void>}
+ */
+async function flowControl(control) {
+  const gate = control.flowGate()
+  if (!gate) return
+
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer
+  /** @type {Promise<never>} */
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Peer paused the transfer and never resumed')),
+      PAUSE_TIMEOUT_MS,
+    )
+  })
+  try {
+    await Promise.race([gate, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -81,6 +130,7 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
   for (let index = 0; index < totalChunks; index++) {
     if (signal?.aborted) throw new Error('Transfer cancelled')
     await drain(channel)
+    await flowControl(control)
 
     const start = index * CHUNK_SIZE
     const chunk = await file.slice(start, Math.min(start + CHUNK_SIZE, file.size))
@@ -110,4 +160,4 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
   return { declined: false, digest: hex(digest) }
 }
 
-export const _internals = { drain, HIGH_WATER, LOW_WATER }
+export const _internals = { drain, HIGH_WATER, LOW_WATER, flowControl, PAUSE_TIMEOUT_MS }

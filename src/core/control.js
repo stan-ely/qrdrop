@@ -23,17 +23,31 @@ export function createControlStream() {
    */
   let waiter = null
 
+  // Application-level flow control, kept apart from the pending[] queue above.
+  //
+  // The peer sends { t: 'pause' } when its sink has fallen behind the chunks we
+  // are producing and { t: 'resume' } once it has caught up. This is not a
+  // reply the sender asked for -- routed through push()/next() like an accept
+  // or a done, it would sit in `pending` for some later next(['done']) to match
+  // by accident -- so it toggles a gate the send loop consults directly. Same
+  // treatment, same reason, as the 'path' message, which also never touches
+  // this queue.
+  let flowPaused = false
+  /** @type {(() => void) | null} Resolves the gate promise handed out below. */
+  let releaseFlow = null
+
   // 'error' matches regardless of seq: a failure means the peer's whole
   // connection state is suspect, not just one file, and the failing side may
   // not even know which file it was -- a malformed control frame has no seq.
   /** @type {(msg: ControlMessage, types: readonly ControlType[], seq?: number) => boolean} */
   const matches = (msg, types, seq) =>
-    // 'path' carries no seq -- it describes the connection, not a file -- and
-    // is routed straight to its callback before ever reaching this queue. The
-    // guard is here so the type of msg.seq stays honest rather than to catch a
-    // message that can actually arrive.
+    // 'path', 'pause' and 'resume' carry no seq -- they describe the connection,
+    // not a file -- and are routed straight past this queue (to their callback
+    // or to setFlow) before ever reaching it. The `'seq' in msg` guard is here
+    // so the type of msg.seq stays honest rather than to catch a message that
+    // can actually arrive.
     types.includes(msg.t) && (seq === undefined || msg.t === 'error'
-      || (msg.t !== 'path' && msg.seq === seq))
+      || ('seq' in msg && msg.seq === seq))
 
   return {
     push(msg) {
@@ -68,6 +82,27 @@ export function createControlStream() {
         waiter = null
         reject(error)
       }
+    },
+
+    /** @param {'pause' | 'resume'} kind */
+    setFlow(kind) {
+      if (kind === 'pause') {
+        flowPaused = true
+        return
+      }
+      flowPaused = false
+      // A 'resume' that arrives while the sender is parked on the gate promise
+      // releases it. One that arrives with nobody waiting just clears the flag,
+      // and the next flowGate() call returns null.
+      releaseFlow?.()
+      releaseFlow = null
+    },
+
+    flowGate() {
+      if (!flowPaused) return null
+      // The executor runs synchronously, so releaseFlow is set before this
+      // returns -- a 'resume' racing in on the next tick cannot miss it.
+      return new Promise(resolve => { releaseFlow = resolve })
     },
   }
 }

@@ -228,6 +228,24 @@ type ControlMessage =
    * needless data-cost warning but cannot suppress a real one.
    */
   | { t: 'path'; path: NetworkPath }
+  /**
+   * Application-level flow control, receiver to sender. 'pause' means "my sink
+   * is draining slower than your chunks arrive -- stop"; 'resume' means "the
+   * backlog has cleared, carry on". Carries no seq: like 'path' it is about the
+   * connection rather than any one file and answers no request, so it never
+   * enters the control reply queue -- core/receiver.js routes it straight to
+   * control.setFlow() and core/sender.js's chunk loop consults
+   * control.flowGate() between frames.
+   *
+   * Optional on both ends. A receiver from before this message existed never
+   * sends 'pause', so flowGate() stays null and the sender runs exactly as it
+   * did. A sender from before it existed drops the unrecognised type in its
+   * demux (the "Ignored, not fatal" arm of core/receiver.js) and keeps going
+   * -- the current unbounded behaviour, so no regression. The backlog is
+   * bounded only when both peers understand the message.
+   */
+  | { t: 'pause' }
+  | { t: 'resume' }
 
 type ControlType = ControlMessage['t']
 
@@ -252,6 +270,20 @@ interface ControlStream {
   ): Promise<ControlMessage>
   /** Rejects the parked waiter, if any. */
   fail(error: unknown): void
+  /**
+   * Records a 'pause' / 'resume' flow-control signal from the peer. Kept off
+   * the push()/next() queue on purpose: it is not a reply anything awaits, so
+   * parking it there would leave it for an unrelated next() to match by
+   * accident -- the same reasoning that routes 'path' past this queue.
+   */
+  setFlow(kind: 'pause' | 'resume'): void
+  /**
+   * Null unless the peer has sent 'pause' with no following 'resume';
+   * otherwise a promise that resolves when 'resume' arrives. sender.js's chunk
+   * loop awaits this between frames exactly as it awaits drain() -- both cost
+   * nothing when there is no backpressure to apply.
+   */
+  flowGate(): Promise<void> | null
 }
 
 // ---------------------------------------------------------------------------
