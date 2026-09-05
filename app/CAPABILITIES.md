@@ -164,21 +164,58 @@ never calls it.
 (`scripts/build-site.mjs`'s `channel === 'app'` branch points there instead of
 at `site/main.js`) rather than a runtime `if (isTauri)` branch inside
 `src/web/`, so the website's bundle carries no Tauri-only code at all. It
-registers `app/src/tauri-sink.js`: `@tauri-apps/plugin-dialog`'s `save()` for
-the destination, `@tauri-apps/plugin-fs`'s `create()`/`write()`/`close()` to
-stream bytes there. Deliberately not a hand-rolled `invoke('save_chunk', {
-data: [...] })` command -- plugin-fs's `write()` crosses the JS<->Rust
-boundary as raw bytes, not a JSON-stringified array of numbers, which is the
-difference between this scaling to a large file and not.
+registers `app/src/tauri-sink.js`: `@tauri-apps/plugin-dialog`'s `save()` picks
+the destination, and this crate's own `sink_open` / `sink_write` / `sink_close`
+/ `sink_abort` commands (`app/src-tauri/src/sink.rs`) stream the bytes to it.
 
-Verified so far: `cargo check` compiles clean with `tauri-plugin-dialog` and
-`tauri-plugin-fs` added, and a real `npx tauri dev` build launches the actual
-window with the new entry point wired in -- confirmed by screenshot, both
-that the UI renders (Windows still shows Send/Receive, matching Phase 0's
-`RTCPeerConnection` pass on WebView2) and that Linux's now-conditional choose
-screen logic (`view.js`, gated on `rtcAvailable`) does not accidentally fire
-on a platform that has WebRTC. **Not yet verified**: an actual end-to-end
-transfer through the native sink (save dialog appearing, bytes landing
-correctly on disk, a large-file throughput measurement) -- that needs a real
-two-peer transfer, not a single-window smoke test, and is the next thing to
-run before calling Phase 2 done rather than "wired up."
+### The sink does not use plugin-fs, and the throughput number is why
+
+`tauri-sink.js` shipped first on `@tauri-apps/plugin-fs`'s `create()` /
+`write()` / `close()`, on the stated belief that `write()` "crosses the
+JS<->Rust boundary as raw bytes, not a JSON-stringified array of numbers".
+**That is true on paper and false on WebView2.** Measured with a throwaway
+two-peer harness (a Node guest sending through the real `sendFile`, the app as
+host + receiver, the sink writing a fixed path):
+
+| write path | block size | throughput |
+| --- | --- | --- |
+| plugin-fs `write()` | 16 KiB … 4 MiB | **~2 MB/s, flat** |
+| raw-body `invoke` | 16 KiB | 5.4 MB/s |
+| raw-body `invoke` | 256 KiB | 33.8 MB/s |
+| raw-body `invoke` | 1 MiB | 41.5 MB/s |
+
+plugin-fs is bandwidth-bound at ~2 MB/s no matter how the bytes are chunked --
+its argument is not travelling the raw IPC path on this webview. A command that
+takes the bytes in the invoke request's **raw body** (`tauri::ipc::InvokeBody::Raw`)
+does, and reaches ~40 MB/s once the caller coalesces the 16 KiB transfer frames
+into >=256 KiB blocks (below that, ~3 ms of per-invoke cost dominates). So
+`sink.rs` is a dumb open/append/close over the raw body, and `tauri-sink.js`
+buffers to 1 MiB before each `invoke`.
+
+### End-to-end, 1 GiB, real two-peer transfer
+
+| | plugin-fs sink | raw-invoke sink + 1 MiB coalescing |
+| --- | --- | --- |
+| wall time | 716 s | **113 s** |
+| throughput | 1.5 MB/s | **9.5 MB/s (76 Mbps)** |
+| peak JS-heap growth | **~1.01 GiB** (the whole file) | **72 MB** |
+| digest match | yes | yes |
+
+Two things came out of this:
+
+1. **The old sink defeated its own purpose.** It streamed to disk, but it
+   drained so much slower than frames arrived that `src/core/receiver.js`'s
+   serialised `handleFrame` queue accumulated the entire 1 GiB in RAM -- the
+   exact whole-file-in-memory behaviour the native sink exists to avoid. The
+   faster sink keeps the queue bounded (~72 MB) on its own.
+2. **The 9.5 MB/s ceiling is now the transport, not the sink** (which does ~40
+   MB/s in isolation): `node-datachannel` <-> WebView2 WebRTC plus per-16 KiB
+   AEAD on both ends, over loopback. A real network is slower still, so on a
+   real transfer the sink is never the bottleneck and memory stays flat by
+   construction. There is still no explicit backpressure from a slow sink to
+   the transport -- see the CLAUDE.md invariant added for this phase.
+
+The harness itself is gone, like `app/spike/` before it; this table is the
+record. `cargo build` is clean, `mise run typecheck` and `mise run test` pass,
+and the built window renders today's UI unchanged (Windows still shows
+Send/Receive, matching Phase 0's `RTCPeerConnection` pass on WebView2).

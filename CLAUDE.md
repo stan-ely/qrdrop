@@ -331,6 +331,64 @@ copy — the same reasoning already governs `buildCSP`, which derives `connect-s
 CSS lives in `src/web/styles.js` as a JS string, not a `.css` file, because
 `exports["./web"]` serves raw ESM and consumers have no build step.
 
+## The Tauri app (`app/`)
+
+The desktop/mobile shell. It has its own `package.json` and `src-tauri/`, and its
+onboarding is recorded phase by phase in `app/CAPABILITIES.md` — read that for the
+measurements behind the rules below.
+
+**`app/` is not in the npm tarball, and `@tauri-apps/*` is not a root dependency.**
+The root `package.json` `files` array lists `src`, `types`, `site/dist` and nothing
+else; "no new runtime dependencies" (see `## Invariants`) is a root-package rule, so
+the Tauri API and CLI live in `app/package.json` only. A dependency added to the root
+to "share" it with the app breaks both at once.
+
+**The app version is `app/src-tauri/Cargo.toml`'s `version`, and it is deliberately
+not the npm package version.** `tauri.conf.json` omits its own `version` field so
+Tauri reads the crate's — two copies of one number drift. A webview-permission fix
+should ship an app release without republishing an unchanged library, which is why
+the two version lines are independent and `cargo-release` (tag `app-v{{version}}`)
+drives the app while `v*` tags drive npm.
+
+**`app/src-tauri/tauri.conf.json` and `Cargo.lock` are committed and generated.**
+`scripts/generate-tauri-config.mjs` fills the CSP in `tauri.conf.template.json` from
+`buildCSP(SIGNALING_URLS)` — the exact policy the website serves — so a relay added
+to `src/transport/room.js` reaches the app's `connect-src` with no second edit, same
+reasoning as `buildCSP` itself. Hand-editing `tauri.conf.json`'s `connect-src` is the
+drift this exists to prevent. `Cargo.lock` is committed because this is a binary.
+`app/dist/` is *not* committed (it is `dist/`-gitignored); `mise run app:dev` /
+`app:build` rebuild it from `--channel app`.
+
+**The platform seam must stay a seam.** `src/web/element.js` reads
+`getPlatform().createSink` from `src/web/platform.js` rather than importing
+`web/sink.js`. `registerPlatform()` is called by `app/src/main.js` and by nothing
+else — never `site/main.js` — so the deployed site cannot regress from a change made
+for the app. `platform.js` imports only `sink.js`; it ships in `qrdrop/web`.
+
+**The native sink does not use `plugin-fs`, and must not be "simplified" back to it.**
+On WebView2 `@tauri-apps/plugin-fs`'s `write()` moves bytes at ~2 MB/s regardless of
+block size — its argument is not travelling the raw IPC path, whatever the docs
+imply. `app/src-tauri/src/sink.rs`'s `sink_write` takes the bytes in the invoke
+request's raw body (`tauri::ipc::InvokeBody::Raw`) instead and does ~40 MB/s. The
+plugin is still registered for the throwaway harness's sake, but the sink's byte path
+is the custom command. A JSON-array `invoke('save_chunk', { data: [...] })` is the
+*other* wrong answer — a megabyte becomes a million stringified numbers.
+
+**`tauri-sink.js` coalesces frames to 1 MiB before each `invoke`, and that buffer is
+load-bearing.** `element.js` calls the sink once per 16 KiB transfer frame; at that
+size even the raw-body path is ~5 MB/s, because ~3 ms of per-invoke cost dominates.
+256 KiB gets ~34 MB/s, 1 MiB ~42 and then it flattens. Passing frames straight
+through is ~8× slower for no memory saving worth having (the buffer is one block).
+
+**A slow sink still has no backpressure to the transport.** `RTCDataChannel` delivers
+`onmessage` as fast as bytes arrive and `receiver.js` serialises them into a promise
+chain; if the sink drains slower than the channel fills, that chain accumulates the
+backlog in RAM. Measured once at its worst: the old 1.5 MB/s sink let a 1 GiB
+transfer grow the JS heap by 1 GiB. The faster sink keeps pace with a real network so
+memory stays flat in practice — but "the native sink streams, so memory is bounded"
+is not true unconditionally, and a genuine fix (a slow sink pausing the transport)
+would live in `src/core/receiver.js`, not here.
+
 ## Code style
 
 The house style is distinctive and worth matching before writing anything: two-space
