@@ -87,6 +87,32 @@ because the decision belongs to whoever reviews this phase, not to the spike:
    default. Not explored here; it is exactly the kind of "work around it
    silently" the onboarding brief said not to do without saying so.
 
+**Decision: option 1.** Cross-checked outside the CI runner before deciding,
+since ubuntu-latest's image is one specific build a real user is not
+guaranteed to have. The real, built Phase 1 app (`app/dist`, not the Phase 0
+spike page) was compiled and run under WSL2 (Ubuntu 24.04.2,
+`libwebkit2gtk-4.1` 2.52.3 -- newer than ubuntu-latest's CI image) against a
+real WSLg display, both directly and via `npx tauri dev`. `RTCPeerConnection`
+is `undefined` there too, confirming the CI result was not an artifact of that
+one runner image. (One dead end on the way there, noted so it is not repeated:
+forcing `GDK_BACKEND=x11` and relaunching the raw binary repeatedly, rather
+than through `tauri dev`, put the webview into a state where every navigation
+failed with WebKit's own "Operation was cancelled" error page before any
+content loaded -- unrelated to WebRTC, and it went away on a clean relaunch
+through `tauri dev` with no backend override.)
+
+Option 2 was also checked against public sources rather than left as a guess:
+[tauri-apps/tauri discussion #8426](https://github.com/tauri-apps/tauri/discussions/8426)
+gets WebRTC working in WebKitGTK on Linux, but only by compiling WebKit itself
+from source with `-DENABLE_MEDIA_STREAM=ON -DENABLE_WEB_RTC=ON`, patching Wry
+to enable the corresponding WebKitSettings and handle permission requests, and
+running it on NixOS with a custom flake. That is not a packaging gap Ubuntu or
+Debian will close upstream on their own schedule -- it is a from-source
+WebKit build this project would have to compile and maintain itself, on every
+target distro, indefinitely. Weighed against that cost, shipping Linux without
+WebRTC transfer (Beam and the CLI still work) is the honest option, not the
+lazy one.
+
 ## macOS (WKWebView, CI: macos-latest)
 
 UA reports WebKit's Safari/605.1.15 (WKWebView, no numbered Safari version --
