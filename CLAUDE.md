@@ -380,14 +380,17 @@ size even the raw-body path is ~5 MB/s, because ~3 ms of per-invoke cost dominat
 256 KiB gets ~34 MB/s, 1 MiB ~42 and then it flattens. Passing frames straight
 through is ~8× slower for no memory saving worth having (the buffer is one block).
 
-**A slow sink still has no backpressure to the transport.** `RTCDataChannel` delivers
-`onmessage` as fast as bytes arrive and `receiver.js` serialises them into a promise
-chain; if the sink drains slower than the channel fills, that chain accumulates the
-backlog in RAM. Measured once at its worst: the old 1.5 MB/s sink let a 1 GiB
-transfer grow the JS heap by 1 GiB. The faster sink keeps pace with a real network so
-memory stays flat in practice — but "the native sink streams, so memory is bounded"
-is not true unconditionally, and a genuine fix (a slow sink pausing the transport)
-would live in `src/core/receiver.js`, not here.
+**A slow sink still has no backpressure to the transport, and this is a `src/core`
+property, not a Tauri one.** `RTCDataChannel` delivers `onmessage` as fast as bytes
+arrive and `receiver.js` serialises them into a promise chain; if the sink drains
+slower than the channel fills, that chain accumulates the backlog in RAM. Measured at
+its worst with the app: the old 1.5 MB/s sink let a 1 GiB transfer grow the JS heap
+by 1 GiB. The same code runs behind the website — the gap is just masked there,
+because the Chromium `showSaveFilePicker` path drains far faster than a WebRTC
+transfer usually fills it, and the Firefox/Safari Blob path already buffers the whole
+file by design (see README "Known limitations"). So "the sink streams, therefore
+memory is bounded" is not unconditionally true on any face, and a genuine fix — a
+slow sink pausing the transport — would live in `src/core/receiver.js`.
 
 ## Code style
 
