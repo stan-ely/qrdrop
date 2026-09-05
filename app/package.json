@@ -1,0 +1,16 @@
+{
+  "name": "qrdrop-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Tauri desktop/mobile shell for qrdrop. Kept out of the root package.json on purpose -- see CLAUDE.md, \"no new runtime dependencies\" is a root-package invariant, not an app-directory one.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

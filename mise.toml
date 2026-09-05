@@ -6,8 +6,20 @@
 # Node 24 rather than 22 (the package's declared floor): the CLI relies on a
 # native WebSocket and a native File, both of which landed in 22, and 24 is
 # what this is developed against.
+#
+# Rust, the JDK, and cargo-release are pinned here too, even though only app/
+# needs them, for the same reason node is pinned above: a toolchain resolved
+# by whatever happens to be on PATH is not a toolchain anyone can reproduce.
+# All three track latest stable except the JDK: Temurin 25 is the newest LTS,
+# but the Android Gradle Plugin's own compatibility table has not certified
+# anything past 21 at time of writing, and a Phase 4 Android build failing on
+# an uncertified JDK is a worse trade than one version behind "latest". 21
+# stays until AGP's table says otherwise.
 [tools]
 node = "24"
+rust = "1.98.1"
+java = "temurin-21"
+cargo-release = "1.1.5"
 
 [tasks.test]
 description = "Run unit tests"
