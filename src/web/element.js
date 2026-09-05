@@ -45,7 +45,7 @@ import { createReceiver, sendPathVerdict } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
 import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED, pathDescription } from '../core/messages.js'
 import { bytes } from '../core/format.js'
-import { createSink, canStreamToDisk } from './sink.js'
+import { getPlatform } from './platform.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
 import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
@@ -355,7 +355,11 @@ export class QRDropElement extends HTMLElement {
       path: /** @type {NetworkPath | null} */ (null),
       pathDebug: /** @type {string | null} */ (null),
       cameraAvailable: cameraAvailable(),
-      capabilityNote: canStreamToDisk() ? null : CAPABILITY_NOTE,
+      // Read once per instance, same as cameraAvailable above -- neither
+      // capability changes mid-session, and platform.js's registration (if
+      // any) has already happened by the time this element is constructed.
+      rtcAvailable: typeof RTCPeerConnection !== 'undefined',
+      capabilityNote: getPlatform().canStreamToDisk() ? null : CAPABILITY_NOTE,
       sas: '',
       sasWords: /** @type {string[]} */ ([]),
       offer: /** @type {{ name: string, size: number } | null} */ (null),
@@ -826,7 +830,7 @@ export class QRDropElement extends HTMLElement {
       onFileDone,
       onError: e => this._failTransfer(e),
       onPeerPath: path => this._mergePeerPath(path),
-      createSink,
+      createSink: getPlatform().createSink,
     })
 
     // handleFrame serialises internally, so a burst of frames cannot race.
@@ -1209,7 +1213,7 @@ export class QRDropElement extends HTMLElement {
 
           this._setState({ busy: true })
 
-          sink = await createSink({
+          sink = await getPlatform().createSink({
             t: 'manifest', seq: 0, chunks: incoming.blocks,
             name: incoming.name, size: incoming.size, mime: incoming.mime,
           })

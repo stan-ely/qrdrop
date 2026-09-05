@@ -15,6 +15,7 @@
  */
 
 export { createSink, canStreamToDisk, safeFilename } from './sink.js'
+export { registerPlatform, getPlatform } from './platform.js'
 export { renderQR, scanQR, cameraAvailable } from './qr.js'
 export { fromFile } from './source.js'
 export { QRDropElement, defineQRDrop } from './element.js'

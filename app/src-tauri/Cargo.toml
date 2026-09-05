@@ -27,6 +27,14 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 tauri = { version = "2.11.5", features = [] }
+# The native sink (src-tauri has no custom commands for it -- see
+# app/src/tauri-sink.js): plugin-dialog's save() picks the destination,
+# plugin-fs's create()/write()/close() streams bytes to it. Both are official
+# Tauri plugins, not a hand-rolled invoke command, for the reason
+# tauri-sink.js's header gives -- plugin-fs's write() crosses the JS<->Rust
+# boundary as raw bytes, not a JSON-stringified array.
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 

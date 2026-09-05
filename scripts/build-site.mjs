@@ -270,11 +270,22 @@ export function buildCSP(signalingUrls) {
  * They cost bandwidth on a page that is otherwise tiny, and they reveal
  * nothing: every line of this is public already.
  *
+ * `entry` defaults to site/main.js -- the deployed website's own entry --
+ * and that default is what every channel except 'app' uses. The app channel
+ * points this at app/src/main.js instead (see main() below), which is the
+ * only place `registerPlatform()` (src/web/platform.js) is ever called: that
+ * file, not a build flag on this one, is what makes the Tauri shell's save
+ * dialog and streaming writes replace sink.js's showSaveFilePicker/Blob pair.
+ * Two entry points bundling the same src/web/* is the same shape as the two
+ * deployed trees this script already produces from one repo -- see the
+ * module comment.
+ *
  * @param {string} dist
+ * @param {string} entry
  */
-async function bundle(dist) {
+async function bundle(dist, entry) {
   const result = await esbuild.build({
-    entryPoints: [path.join(SITE, 'main.js')],
+    entryPoints: [entry],
     outdir: dist,
     bundle: true,
     minify: true,
@@ -290,16 +301,16 @@ async function bundle(dist) {
     absWorkingDir: ROOT,
   })
 
-  const mainJsRel = path.relative(ROOT, path.join(SITE, 'main.js')).split(path.sep).join('/')
+  const entryRel = path.relative(ROOT, entry).split(path.sep).join('/')
   /** @type {string | null} */
   let entryOutput = null
   for (const [outFile, info] of Object.entries(result.metafile.outputs)) {
-    if (info.entryPoint === mainJsRel) {
+    if (info.entryPoint === entryRel) {
       entryOutput = outFile
       break
     }
   }
-  if (!entryOutput) throw new Error('esbuild did not report an output for site/main.js')
+  if (!entryOutput) throw new Error(`esbuild did not report an output for ${entryRel}`)
 
   return {
     // Filename only: index.html's script src is relative to site/dist/.
@@ -336,7 +347,14 @@ async function main() {
   await rm(dist, { recursive: true, force: true })
   await mkdir(dist, { recursive: true })
 
-  const { entryFile, outputs } = await bundle(dist)
+  // The app channel is the one consumer of this repo that is not the
+  // deployed website: its entry registers a native sink (app/src/main.js)
+  // instead of running site/main.js's frame-refusal check and base-url
+  // wiring, neither of which mean anything inside a desktop/mobile shell.
+  const entry = channel === 'app'
+    ? path.join(ROOT, 'app', 'src', 'main.js')
+    : path.join(SITE, 'main.js')
+  const { entryFile, outputs } = await bundle(dist, entry)
 
   // jsqr must land in a chunk of its own, separate from the entry bundle --
   // see the comment on splitting above. A build that silently regressed back

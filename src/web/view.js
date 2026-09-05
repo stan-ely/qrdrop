@@ -84,6 +84,10 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {string | null} pathDebug TEMPORARY: the raw candidate-pair dump,
  *   populated only under `?debug=path`. Remove with collectPathEvidence.
  * @property {boolean} cameraAvailable
+ * @property {boolean} rtcAvailable whether this webview has RTCPeerConnection
+ *   at all. False on Linux/WebKitGTK as built today (app/CAPABILITIES.md) --
+ *   the choose screen hides the network transfer buttons rather than offer a
+ *   connection that cannot form. Beam and the CLI do not depend on this.
  * @property {string | null} capabilityNote
  * @property {string} sas
  * @property {string[]} sasWords
@@ -533,6 +537,35 @@ function screen(name, state, dispatch) {
  * @param {Dispatch} dispatch
  */
 function choose(state, dispatch) {
+  // No RTCPeerConnection at all (Linux/WebKitGTK today -- see
+  // app/CAPABILITIES.md) means the network path cannot form a connection,
+  // full stop, not "slower" or "sometimes". Offering "Send a file" /
+  // "Receive a file" anyway would be a button whose only possible outcome is
+  // a failure screen -- worse than not offering it, since it teaches that
+  // the button is unreliable rather than that this platform lacks it. Beam
+  // stops being the buried escape hatch and becomes the only choice, said
+  // plainly rather than left for someone to discover by opening a sheet
+  // titled for a situation ("no network") that is not the one they are in.
+  if (!state.rtcAvailable) {
+    return {
+      media: h('div', { class: `dropzone${state.dragging ? ' is-dragging' : ''}` }, [
+        h('p', {}, 'Drop a file here, or choose one below.'),
+      ]),
+      body: [
+        h('h2', { tabindex: '-1' }, 'Send or receive a file'),
+        h('p', { class: 'note' },
+          'This platform has no WebRTC, so network transfer is not available here. '
+          + 'Beam sends a file as an animated QR code instead — no network, no encryption.'),
+      ],
+      actions: [
+        h('button', { id: 'btn-beam', class: 'btn primary', onclick: () => dispatch('beam:pick') },
+          'Show it as a QR code'),
+        h('button', { id: 'btn-beam-receive', class: 'btn', onclick: () => dispatch('beam:scan') },
+          'Scan a beamed file'),
+      ],
+    }
+  }
+
   return {
     // The dropzone keeps the prose and the drag target; the two buttons that
     // used to sit inside it moved to the action bar. They read no differently

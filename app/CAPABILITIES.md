@@ -150,3 +150,35 @@ over `adb` or a local AVD emulator, whichever is available at the time.
 build-only target from Phase 4 onward (`macos-latest`, unsigned, ships
 nothing) -- there is no local iOS capability check to run from a Windows
 machine at any phase.
+
+## Phase 2: platform seam and native sink
+
+Built on the findings above rather than repeating them. `src/web/platform.js`
+is a new, dependency-free registry -- `element.js` now asks it for
+`createSink`/`canStreamToDisk` instead of importing `web/sink.js` directly,
+and it defaults to exactly that import until something calls
+`registerPlatform()`. Nothing about the deployed website changes: site/main.js
+never calls it.
+
+`app/src/main.js` does, and it is a new, second esbuild entry point
+(`scripts/build-site.mjs`'s `channel === 'app'` branch points there instead of
+at `site/main.js`) rather than a runtime `if (isTauri)` branch inside
+`src/web/`, so the website's bundle carries no Tauri-only code at all. It
+registers `app/src/tauri-sink.js`: `@tauri-apps/plugin-dialog`'s `save()` for
+the destination, `@tauri-apps/plugin-fs`'s `create()`/`write()`/`close()` to
+stream bytes there. Deliberately not a hand-rolled `invoke('save_chunk', {
+data: [...] })` command -- plugin-fs's `write()` crosses the JS<->Rust
+boundary as raw bytes, not a JSON-stringified array of numbers, which is the
+difference between this scaling to a large file and not.
+
+Verified so far: `cargo check` compiles clean with `tauri-plugin-dialog` and
+`tauri-plugin-fs` added, and a real `npx tauri dev` build launches the actual
+window with the new entry point wired in -- confirmed by screenshot, both
+that the UI renders (Windows still shows Send/Receive, matching Phase 0's
+`RTCPeerConnection` pass on WebView2) and that Linux's now-conditional choose
+screen logic (`view.js`, gated on `rtcAvailable`) does not accidentally fire
+on a platform that has WebRTC. **Not yet verified**: an actual end-to-end
+transfer through the native sink (save dialog appearing, bytes landing
+correctly on disk, a large-file throughput measurement) -- that needs a real
+two-peer transfer, not a single-window smoke test, and is the next thing to
+run before calling Phase 2 done rather than "wired up."
