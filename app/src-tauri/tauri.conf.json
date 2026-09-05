@@ -32,5 +32,22 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "qrdrop"
+        ]
+      },
+      "mobile": [
+        {
+          "host": "share.stan-ely.com",
+          "pathPrefix": [
+            "/"
+          ]
+        }
+      ]
+    }
   }
 }

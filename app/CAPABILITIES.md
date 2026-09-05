@@ -219,3 +219,79 @@ The harness itself is gone, like `app/spike/` before it; this table is the
 record. `cargo build` is clean, `mise run typecheck` and `mise run test` pass,
 and the built window renders today's UI unchanged (Windows still shows
 Send/Receive, matching Phase 0's `RTCPeerConnection` pass on WebView2).
+
+## Phase 3: camera permission and deep links
+
+### The pairing QR is now a universal / app link
+
+`app/src/main.js` sets `base-url` to `https://share.stan-ely.com/`, so the app's
+QR encodes `https://share.stan-ely.com/#qrdrop:<code>` instead of the bare
+`qrdrop:` form. One string, two audiences: the OS opens the installed app (it
+matches the registered app-link domain), and a device without the app loads
+share.stan-ely.com, where `site/main.js`'s `location.hash` path reads the same
+code. The manual-entry field still shows the bare form for a human to read
+aloud -- `element.js` keeps the two independent.
+
+`qrdrop:` stays registered as a custom URI scheme (`tauri.conf.json`'s
+`plugins.deep-link.desktop.schemes`), because that is what the CLI emits and
+what a person types by hand; a `qrdrop:` link anywhere on the device now opens
+the app too.
+
+### The fragment-only rule survives the deep-link path
+
+`decodeSecret` accepts the code only from a URL fragment -- the one part of a
+URL a browser never sends to a server, which is the whole reason a link may
+carry a key. A deep link is an attacker-influenced string arriving from
+outside the app, so `app/src/deep-link.js` (`secretFromDeepLink`) funnels every
+shape through `decodeSecret` and re-encodes to the bare form before the caller
+ever writes it anywhere -- and the only place it is written is `location.hash`.
+A `?code=` app link therefore throws exactly as a `?code=` paste does.
+`test/deeplink.test.mjs` pins that across the universal-link form, the bare
+scheme form, a scheme handed back with an `//` authority, and the query /
+path rejections.
+
+`element.js` grew a `hashchange` listener (`_consumeHashCode`) so the shell can
+hand a scanned link to an already-running window by setting `location.hash` --
+there is no fresh page load for the old `connectedCallback` read to catch. It
+is guarded to the choose screen, so it cannot interrupt a live transfer, and
+removed in `disconnectedCallback` like the paste listener. On the deployed site
+this also means a link pasted into the address bar mid-use is now honoured.
+
+### Camera permission, per platform, from Phase 0's findings
+
+| Platform | What Phase 0 found | What Phase 3 does |
+| --- | --- | --- |
+| Windows / WebView2 | `getUserMedia` rejected `NotAllowedError` immediately, no OS prompt | `src/lib.rs`'s `windows_camera::allow` attaches a `PermissionRequested` handler to the raw `ICoreWebView2` (via `with_webview`) that answers `ALLOW` for camera + microphone and leaves the OS privacy toggle as the real gate. `webview2-com` / `windows` are pinned to what `wry 0.55` already resolves. |
+| macOS / WKWebView | API present; needs a TCC usage string or the process is killed on first camera use | `app/src-tauri/Info.plist` carries `NSCameraUsageDescription`; Tauri merges it into the `.app` bundle. |
+| iOS / WKWebView | same as macOS (not run -- Phase 4) | `app/src-tauri/Info.ios.plist` carries the same string, committed now so it exists the first time `tauri ios init` runs. |
+| Linux / WebKitGTK | no `RTCPeerConnection` at all; camera path untested | no hook exposed by Tauri/wry today, and WebRTC is absent anyway -- left as a known gap, consistent with the Linux decision above. |
+| Android | not run -- Phase 4 | `<uses-permission android:name="android.permission.CAMERA"/>` plus a runtime request belong in `gen/android`'s manifest, which does not exist until `tauri android init` -- deferred to Phase 4. |
+
+### Gate
+
+`mise run typecheck` and `mise run test` pass (including the new
+`test/deeplink.test.mjs` and the `wellKnownFiles` cases in
+`test/build-site.test.mjs`). `cargo check` on `app/src-tauri` is clean --
+deep-link, single-instance and the Windows COM permission handler all compile.
+
+**`cargo build` / `mise run app:dev` could NOT be completed on this machine:**
+the disk filled during LLVM codegen (`rustc-LLVM ERROR: IO failure on output
+stream: no space on device`, ~1 GB free of 390 GB). `cargo check` -- which
+runs the full front end, macro expansion and borrow check over the crate and
+every dependency -- is clean, so this is an environment limit, not a code
+defect, but the "the app builds and runs with the deep link wired" half of the
+gate is unverified pending disk space. The OS-level checks that need a running
+build and real hardware -- a `qrdrop:` link actually launching the app, the
+WebView2 camera prompt, universal-link association -- are likewise unverified
+here.
+
+### The association files are inert until signing exists
+
+`scripts/build-site.mjs` now writes `apple-app-site-association` (root and
+`.well-known/`) and `.well-known/assetlinks.json` for every channel except
+`app`. Both are structurally complete and deliberately dead until a signing
+identity is fed in: `APPLE_TEAM_ID` defaults to the placeholder `TEAMID`, and
+`ANDROID_CERT_FINGERPRINT` defaults to an empty fingerprint list. "Unsigned
+artefacts only" (onboarding brief) means neither identity exists yet; the
+generator takes them as environment inputs so turning association on later is a
+workflow secret, not a code change. `wellKnownFiles` is pure and tested.

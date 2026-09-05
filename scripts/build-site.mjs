@@ -64,6 +64,15 @@ const ORIGIN = 'https://share.stan-ely.com'
 const REPO = 'https://github.com/stan-ely/qrdrop'
 
 /**
+ * The app's bundle / package identifier, shared by every target. Kept in step
+ * with app/src-tauri/tauri.conf.template.json's `identifier` and the Android
+ * `package_name` by being the same string typed once -- if that file's
+ * identifier ever changes, the digital-asset-links files below must move with
+ * it or a scanned universal link stops opening the installed app.
+ */
+const APP_IDENTIFIER = 'com.stan-ely.qrdrop'
+
+/**
  * Where the deployed site serves the bleeding build from main.
  *
  * A trailing slash, and it matters twice: as a directory name under the output
@@ -244,6 +253,77 @@ export function buildCSP(signalingUrls) {
 }
 
 /**
+ * The two digital-asset-links files that let a scanned universal / app link
+ * (`https://share.stan-ely.com/#qrdrop:…`) open the installed desktop/mobile
+ * app instead of the browser. When the app is not installed the same URL just
+ * loads the site and site/main.js reads the fragment -- so these files change
+ * nothing for a visitor without the app, and the QR stays a single string for
+ * both audiences (see app/src/main.js).
+ *
+ * They are served from the DEPLOYED SITE, never the app build: iOS and Android
+ * both fetch them from the domain root over HTTPS, and the app has no HTTP
+ * origin of its own. Emitted for every channel except 'app'.
+ *
+ * Both are structurally complete and deliberately INERT until a signing
+ * identity exists -- "unsigned artefacts only" (onboarding brief) means no
+ * Apple Team ID and no release keystore:
+ *
+ *   - apple-app-site-association names `${APPLE_TEAM_ID}.${APP_IDENTIFIER}`,
+ *     and iOS ignores an appID whose team prefix does not match a signed
+ *     build it can verify. APPLE_TEAM_ID defaults to the obvious-placeholder
+ *     `TEAMID`.
+ *   - assetlinks.json lists whatever SHA-256 fingerprints
+ *     ANDROID_CERT_FINGERPRINT carries (comma-separated) and otherwise an
+ *     empty array, which Android reads as "no app claims this domain".
+ *
+ * Both come alive the day a signed build ships with a matching identity and no
+ * change to this function -- the identity is an environment input, not a
+ * constant, precisely so turning signing on later is a workflow secret rather
+ * than a code edit.
+ *
+ * AASA matches on path, and the qrdrop code lives in the fragment, which no
+ * URL ever sends to a server (src/core/secret.js) and which AASA cannot see
+ * anyway -- so `components` is `"/": "*"`, every path, and the fragment does
+ * its work entirely client-side once the app is open.
+ *
+ * @param {{ appleTeamId: string, androidCertFingerprints: string[] }} identity
+ * @returns {Record<string, string>} relative path under the output dir -> file contents
+ */
+export function wellKnownFiles({ appleTeamId, androidCertFingerprints }) {
+  const aasa = JSON.stringify({
+    applinks: {
+      details: [
+        {
+          appIDs: [`${appleTeamId}.${APP_IDENTIFIER}`],
+          components: [{ '/': '*' }],
+        },
+      ],
+    },
+  }, null, 2) + '\n'
+
+  const assetlinks = JSON.stringify([
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: APP_IDENTIFIER,
+        sha256_cert_fingerprints: androidCertFingerprints,
+      },
+    },
+  ], null, 2) + '\n'
+
+  return {
+    // Root and .well-known both: modern iOS fetches the .well-known copy, and
+    // a plain file with no extension is what Apple expects (served as JSON,
+    // see MIME/serveDist). The root copy is back-compat for older clients and
+    // costs one extra write.
+    'apple-app-site-association': aasa,
+    '.well-known/apple-app-site-association': aasa,
+    '.well-known/assetlinks.json': assetlinks,
+  }
+}
+
+/**
  * Bundles site/main.js with esbuild's JS API (never the CLI -- the API keeps
  * this script a single `node scripts/build-site.mjs` with no separate esbuild
  * install step to document).
@@ -421,6 +501,23 @@ async function main() {
     await writeFile(path.join(dist, 'CNAME'), new URL(ORIGIN).host + '\n')
   }
 
+  // The universal / app link association files. Not for the app channel: the
+  // Tauri shell has no HTTPS origin to serve them from -- iOS and Android
+  // fetch them from share.stan-ely.com, which is the stable/edge deploy. See
+  // wellKnownFiles for why they are inert until a signing identity exists.
+  if (stamp.channel !== 'app') {
+    const identity = {
+      appleTeamId: process.env.APPLE_TEAM_ID || 'TEAMID',
+      androidCertFingerprints: (process.env.ANDROID_CERT_FINGERPRINT || '')
+        .split(',').map(s => s.trim()).filter(Boolean),
+    }
+    for (const [rel, contents] of Object.entries(wellKnownFiles(identity))) {
+      const target = path.join(dist, rel)
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, contents)
+    }
+  }
+
   const csp = buildCSP(SIGNALING_URLS)
   const template = await readFile(path.join(SITE, 'index.html'), 'utf8')
   // replaceAll, not replace: __ORIGIN__ appears three times (og:url and two
@@ -499,7 +596,12 @@ async function serveDist(dist) {
         return
       }
 
-      res.setHeader('Content-Type', MIME[path.extname(filePath)] ?? 'application/octet-stream')
+      // apple-app-site-association has no extension by Apple's convention but
+      // must be served as JSON, same as the .well-known copy beside it.
+      const contentType = path.basename(filePath) === 'apple-app-site-association'
+        ? 'application/json; charset=utf-8'
+        : MIME[path.extname(filePath)] ?? 'application/octet-stream'
+      res.setHeader('Content-Type', contentType)
       createReadStream(filePath).pipe(res)
     } catch (error) {
       res.writeHead(500)

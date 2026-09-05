@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  iOS Info.plist additions. Tauri v2 merges this into the generated
+  gen/apple/*/Info.plist during an iOS build (Phase 4); it is committed now so
+  the string exists the first time `tauri ios init` runs rather than being a
+  step someone has to remember.
+
+  Same reason as the macOS file beside it: WKWebView hands getUserMedia to the
+  OS, and an iOS app that asks for the camera with no NSCameraUsageDescription
+  is terminated by the system, not prompted.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>qrdrop uses the camera to scan a pairing QR code and to receive a beamed file.</string>
+</dict>
+</plist>

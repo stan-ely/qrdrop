@@ -27,16 +27,40 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 tauri = { version = "2.11.5", features = [] }
-# The native sink (src-tauri has no custom commands for it -- see
-# app/src/tauri-sink.js): plugin-dialog's save() picks the destination,
-# plugin-fs's create()/write()/close() streams bytes to it. Both are official
-# Tauri plugins, not a hand-rolled invoke command, for the reason
-# tauri-sink.js's header gives -- plugin-fs's write() crosses the JS<->Rust
-# boundary as raw bytes, not a JSON-stringified array.
+# The native sink: plugin-dialog's save() picks the destination, and this
+# crate's own sink_* commands (src/sink.rs) move the bytes -- NOT plugin-fs,
+# whose write() is bandwidth-bound at ~2 MB/s on WebView2 (app/CAPABILITIES.md
+# has the measurements). plugin-fs stays registered only for the throwaway
+# bench harness's sake.
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+# Phase 3: the pairing QR now encodes a universal / app link
+# (https://share.stan-ely.com/#qrdrop:<code>). This plugin registers the
+# `qrdrop` custom scheme and the share.stan-ely.com app-link domain so the OS
+# routes a scanned link to the app; app/src/deep-link.js turns the URL back
+# into a code, preserving the fragment-only rule.
+tauri-plugin-deep-link = "2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+
+# Windows and Linux deliver a deep link by launching a SECOND copy of the app
+# with the URL in argv; single-instance forwards that to the running window
+# instead (its `deep-link` feature wires the two plugins together). macOS and
+# the mobile targets deliver the URL to the live process directly and need
+# neither this plugin nor its cfg.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+# The camera-permission handler for WebView2 (src/lib.rs). WebView2 denies
+# getUserMedia with no prompt unless the host app answers its
+# PermissionRequested event (app/CAPABILITIES.md, Windows section), and that
+# event is only reachable through the raw ICoreWebView2 pointer. Versions are
+# pinned to what wry 0.55 / webview2-com 0.38 already resolve to in Cargo.lock
+# -- a mismatch here surfaces as duplicate-COM-type trait errors, not a clear
+# message.
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation"] }
 
 [[bin]]
 name = "qrdrop"

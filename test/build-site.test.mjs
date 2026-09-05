@@ -12,7 +12,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildCSP, buildStamp } from '../scripts/build-site.mjs'
+import { buildCSP, buildStamp, wellKnownFiles } from '../scripts/build-site.mjs'
 import { SIGNALING_URLS } from '../src/transport/room.js'
 
 test('connect-src lists every signalling origin plus self, and nothing else', () => {
@@ -104,6 +104,43 @@ test('the app channel carries no absolute URL at all', () => {
   assert.equal(stamp.ogUrl, '')
   assert.match(stamp.label, /abc1234/)
   assert.doesNotMatch(stamp.label, /1\.2\.3/)
+})
+
+/**
+ * The universal / app link association files. Structurally complete always,
+ * live only once a signing identity is fed in -- these pin both halves of
+ * that: the shape iOS/Android parse, and that the identity is a passed-in
+ * input rather than a baked constant.
+ */
+
+test('wellKnownFiles emits the three association paths as valid JSON', () => {
+  const files = wellKnownFiles({ appleTeamId: 'TEAMID', androidCertFingerprints: [] })
+  assert.deepEqual(Object.keys(files).sort(), [
+    '.well-known/apple-app-site-association',
+    '.well-known/assetlinks.json',
+    'apple-app-site-association',
+  ])
+  for (const contents of Object.values(files)) JSON.parse(contents)
+  // The root and .well-known AASA copies are byte-identical.
+  assert.equal(files['apple-app-site-association'], files['.well-known/apple-app-site-association'])
+})
+
+test('the AASA appID is team-prefix + the shared app identifier', () => {
+  const aasa = JSON.parse(wellKnownFiles({ appleTeamId: 'ABCDE12345', androidCertFingerprints: [] })['apple-app-site-association'])
+  assert.deepEqual(aasa.applinks.details[0].appIDs, ['ABCDE12345.com.stan-ely.qrdrop'])
+  // Every path: the code rides in the fragment, which AASA cannot match and
+  // does not need to.
+  assert.deepEqual(aasa.applinks.details[0].components, [{ '/': '*' }])
+})
+
+test('assetlinks carries the package name and only the fingerprints it is given', () => {
+  const empty = JSON.parse(wellKnownFiles({ appleTeamId: 'TEAMID', androidCertFingerprints: [] })['.well-known/assetlinks.json'])
+  assert.equal(empty[0].target.package_name, 'com.stan-ely.qrdrop')
+  assert.deepEqual(empty[0].target.sha256_cert_fingerprints, [])
+  assert.deepEqual(empty[0].relation, ['delegate_permission/common.handle_all_urls'])
+
+  const signed = JSON.parse(wellKnownFiles({ appleTeamId: 'TEAMID', androidCertFingerprints: ['AA:BB', 'CC:DD'] })['.well-known/assetlinks.json'])
+  assert.deepEqual(signed[0].target.sha256_cert_fingerprints, ['AA:BB', 'CC:DD'])
 })
 
 test('an unknown channel fails the build rather than defaulting', () => {

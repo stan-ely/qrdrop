@@ -236,6 +236,18 @@ link may carry a decryption key. Accepting `?code=` would silently start leaking
 to the host and every proxy in between. The bare `qrdrop:` form must also keep working
 forever — CLI↔browser interop depends on it.
 
+**Every deep-link entry into the Tauri app funnels through `decodeSecret`, and the app
+only ever writes a code into `location.hash`.** `app/src/deep-link.js`'s
+`secretFromDeepLink` is the one place a `qrdrop:` scheme URL or a
+`https://share.stan-ely.com/#qrdrop:…` app link becomes a secret; it delegates the
+fragment-only check above rather than parsing the URL itself, then re-encodes to the bare
+form so `app/src/main.js` can put it after a `#` and nowhere else. Unwrapping a deep link
+into a code any other way — reading `url.searchParams`, handing the raw URL to the
+element — reintroduces the `?code=` leak on a platform where the OS, not the user, chose
+to open the app. `test/deeplink.test.mjs` covers it. The `hashchange` listener in
+`element.js` (`_consumeHashCode`) is what makes a code set on the running window take
+effect; it is guarded to the choose screen so it cannot interrupt a live transfer.
+
 **CLI colour helpers must be the identity function when stdout is not a TTY**, or when
 `NO_COLOR` is set. `e2e/interop.e2e.mjs` parses stdout with it redirected. stdout and
 stderr have independent `isTTY`; `src/cli/style.js` decides per stream.

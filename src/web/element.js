@@ -172,6 +172,14 @@ export class QRDropElement extends HTMLElement {
     this._onPaste = null
 
     /**
+     * The window-level hashchange listener, kept for the same reason
+     * _onPaste is: disconnectedCallback takes it off so a detached component
+     * is not held alive. See connectedCallback for what it is for.
+     * @type {(() => void) | null}
+     */
+    this._onHashChange = null
+
+    /**
      * Whether the exchange has reached a terminal state.
      *
      * Both peers call room.close() once a transfer finishes, so each one sees
@@ -470,25 +478,45 @@ export class QRDropElement extends HTMLElement {
 
     // Auto-join: a code carried in the URL fragment (see core/secret.js's
     // encodeSecretURL) skips the "tap Receive" click, but not the SAS screen
-    // -- _startReceive below still stops there like every other path, so
-    // this never bypasses either safety gesture, only the click that gets a
-    // user to the same waiting room a scan or a pasted code would.
-    //
-    // The hash is cleared immediately, before the code inside it is even
-    // decoded, via replaceState rather than a normal navigation (which would
-    // add a history entry). A decryption key sitting in the address bar can
-    // be copied, bookmarked, or synced to another device's history without
-    // anyone realising it is sensitive -- the bare `qrdrop:` code never had
-    // that problem because it never went in a URL at all.
+    // -- _startReceive still stops there like every other path, so this never
+    // bypasses either safety gesture, only the click that gets a user to the
+    // same waiting room a scan or a pasted code would.
+    this._consumeHashCode()
+
+    // hashchange, not just the one read above, because the Tauri shell
+    // delivers a scanned universal link by setting location.hash on the
+    // already-running window (app/src/main.js -> app/src/deep-link.js): there
+    // is no fresh page load for the connectedCallback read to catch. On the
+    // deployed site this also means a link pasted into the address bar mid-use
+    // is honoured instead of silently ignored. Guarded to the choose screen
+    // inside _consumeHashCode so it cannot interrupt a transfer already in
+    // flight. Bound here and removed in disconnectedCallback like _onPaste,
+    // for the same detached-component reason.
+    this._onHashChange = () => this._consumeHashCode()
+    window.addEventListener('hashchange', this._onHashChange)
+  }
+
+  /**
+   * Reads a `#qrdrop:…` code out of location.hash, clears it, and starts a
+   * receive. A no-op unless the component is idle on the choose screen.
+   *
+   * The hash is cleared immediately, before the code inside it is even
+   * decoded, via replaceState rather than a normal navigation (which would add
+   * a history entry). A decryption key sitting in the address bar can be
+   * copied, bookmarked, or synced to another device's history without anyone
+   * realising it is sensitive -- the bare `qrdrop:` code never had that
+   * problem because it never went in a URL at all.
+   */
+  _consumeHashCode() {
+    if (this._state.screen !== 'choose') return
     const hash = location.hash.slice(1)
-    if (hash) {
-      history.replaceState(null, '', location.pathname + location.search)
-      try {
-        this._startReceive(decodeSecret(hash)).catch(e => this._fail(e))
-      } catch {
-        // Not a qrdrop code -- an ordinary in-page anchor, most likely.
-        // Nothing to do; this element does not own the rest of the page's hashes.
-      }
+    if (!hash) return
+    history.replaceState(null, '', location.pathname + location.search)
+    try {
+      this._startReceive(decodeSecret(hash)).catch(e => this._fail(e))
+    } catch {
+      // Not a qrdrop code -- an ordinary in-page anchor, most likely.
+      // Nothing to do; this element does not own the rest of the page's hashes.
     }
   }
 
@@ -503,6 +531,9 @@ export class QRDropElement extends HTMLElement {
     // (and the session it may still be holding) alive for the page's lifetime.
     if (this._onPaste) document.removeEventListener('paste', this._onPaste)
     this._onPaste = null
+
+    if (this._onHashChange) window.removeEventListener('hashchange', this._onHashChange)
+    this._onHashChange = null
 
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS bundle Info.plist additions. Tauri v2 merges this file into the
+  generated Info.plist when it builds the .app bundle -- no reference from
+  tauri.conf.json is needed.
+
+  NSCameraUsageDescription is load-bearing on macOS, not decorative: WKWebView
+  routes a getUserMedia call to the OS TCC prompt, and a bundle with no usage
+  string is killed by the system the instant it asks for the camera rather
+  than shown a prompt. The QR scanner (src/web/qr.js) and Beam both need it.
+  See app/CAPABILITIES.md for the per-platform camera findings.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>qrdrop uses the camera to scan a pairing QR code and to receive a beamed file.</string>
+</dict>
+</plist>
