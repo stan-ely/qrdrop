@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main window. Phase 0 only needs to call the one custom command the spike page uses; core:default is Tauri's own baseline (window handle, event listen) rather than anything this app added.",
+  "description": "Capabilities for the main window. core:default is Tauri's own baseline (window handle, no filesystem/dialog/shell access); nothing app-specific is needed until Phase 2 adds a native sink.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:event:default", "allow-log-capabilities"]
+  "permissions": ["core:default"]
 }

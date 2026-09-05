@@ -97,6 +97,15 @@ test('og:url names the page being previewed, per channel', () => {
   assert.equal(buildStamp({ channel: 'edge', ...META }).ogUrl, 'https://share.stan-ely.com/edge/')
 })
 
+test('the app channel carries no absolute URL at all', () => {
+  // Embedded in the Tauri shell, never served over HTTP -- asserting the
+  // website's domain here would be a build claiming to be a site it is not.
+  const stamp = buildStamp({ channel: 'app', ...META })
+  assert.equal(stamp.ogUrl, '')
+  assert.match(stamp.label, /abc1234/)
+  assert.doesNotMatch(stamp.label, /1\.2\.3/)
+})
+
 test('an unknown channel fails the build rather than defaulting', () => {
   // A typo in the workflow's --channel flag would otherwise deploy a second
   // copy of the stable page at /edge/, which is a silently wrong site rather

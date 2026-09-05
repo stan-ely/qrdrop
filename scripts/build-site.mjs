@@ -96,8 +96,8 @@ const EDGE_PATH = 'edge/'
  * @returns {{ channel: string, label: string, href: string, title: string, ogUrl: string }}
  */
 export function buildStamp({ channel, version, commit, date }) {
-  if (channel !== 'stable' && channel !== 'edge') {
-    throw new Error(`Unknown channel ${JSON.stringify(channel)} -- expected 'stable' or 'edge'`)
+  if (channel !== 'stable' && channel !== 'edge' && channel !== 'app') {
+    throw new Error(`Unknown channel ${JSON.stringify(channel)} -- expected 'stable', 'edge' or 'app'`)
   }
 
   if (channel === 'edge') {
@@ -107,6 +107,22 @@ export function buildStamp({ channel, version, commit, date }) {
       href: `${REPO}/commit/${commit}`,
       title: `Built from main at ${commit}, ${date}. This is the development build; it may be broken.`,
       ogUrl: `${ORIGIN}/${EDGE_PATH}`,
+    }
+  }
+
+  if (channel === 'app') {
+    // Embedded in the Tauri shell, never served over HTTP -- there is no
+    // domain for og:url or og:image to name, and asserting share.stan-ely.com
+    // here would be a build claiming to be a site it is not. ogUrl is empty
+    // rather than omitted so main()'s "every placeholder got replaced" guard
+    // stays meaningful: an app build with a real URL in it would be the bug
+    // this branch exists to prevent.
+    return {
+      channel,
+      label: `app · ${commit}`,
+      href: `${REPO}/commit/${commit}`,
+      title: `Built from main at ${commit}, ${date}, for the desktop/mobile app.`,
+      ogUrl: '',
     }
   }
 
@@ -401,12 +417,18 @@ async function main() {
   // origin either way, since the edge tree has no og.png of its own worth
   // making and the card is the same picture regardless of which build served
   // it. One placeholder covering both would have to be right twice.
+  // The app channel gets no absolute URLs at all -- see buildStamp's 'app'
+  // branch. Substituting ORIGIN there would put share.stan-ely.com into a
+  // build that is never served from it, which is exactly the "no absolute og
+  // URLs" the onboarding brief called for.
+  const origin = stamp.channel === 'app' ? '' : ORIGIN
+
   const html = template
     .replaceAll('__CSP__', csp)
     .replaceAll('__SCRIPT__', entryFile)
     .replaceAll('__STYLES__', cssFile)
     .replaceAll('__OG_URL__', stamp.ogUrl)
-    .replaceAll('__ORIGIN__', ORIGIN)
+    .replaceAll('__ORIGIN__', origin)
     .replaceAll('__CHANNEL__', stamp.channel)
     .replaceAll('__BUILD_LABEL__', stamp.label)
     .replaceAll('__BUILD_HREF__', stamp.href)

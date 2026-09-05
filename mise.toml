@@ -73,3 +73,33 @@ run = "node e2e/interop.e2e.mjs"
 description = "Open UI in browser with phone-sized viewport (390x844)"
 depends = ["build"]
 run = "node scripts/preview-phone.mjs"
+
+# --- app/ (Tauri desktop/mobile shell) ---
+#
+# First run needs `npm install` inside app/ once -- not a dependency of every
+# task below, since re-running npm install on every `mise run app:dev` would
+# slow the inner dev loop for a check that is almost always a no-op.
+
+[tasks."app:build-site"]
+description = "Build the website for the app channel into app/dist"
+run = "node scripts/build-site.mjs --channel app --out app/dist"
+
+[tasks."app:config"]
+description = "Regenerate app/src-tauri/tauri.conf.json's CSP from SIGNALING_URLS"
+run = "node scripts/generate-tauri-config.mjs"
+
+# The gate for Phase 1: this should open a window showing today's UI,
+# unchanged, against a live frontend -- `tauri dev`'s own file-watching only
+# covers app/src-tauri, so app/dist is built once up front rather than
+# reactively; re-run this task after editing anything under src/ or site/.
+[tasks."app:dev"]
+description = "Run the desktop app shell (mise run app:dev)"
+depends = ["app:build-site", "app:config"]
+dir = "app"
+run = "npx tauri dev"
+
+[tasks."app:build"]
+description = "Build an installer for this platform (mise run app:build -- --debug)"
+depends = ["app:build-site", "app:config"]
+dir = "app"
+run = "npx tauri build"

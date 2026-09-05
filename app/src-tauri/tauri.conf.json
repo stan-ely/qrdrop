@@ -3,25 +3,29 @@
   "productName": "qrdrop",
   "identifier": "com.stan-ely.qrdrop",
   "build": {
-    "frontendDist": "../spike"
+    "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
-        "title": "qrdrop -- Phase 0 capability spike",
+        "title": "qrdrop",
         "width": 480,
         "height": 720
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' wss://nos.lol; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' blob: mediastream:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' wss://nos.lol wss://relay.primal.net wss://relay.mostr.pub wss://purplerelay.com wss://nostr.data.haus wss://nostr-01.yakihonne.com wss://bucket.coracle.social wss://tracker.openwebtorrent.com wss://tracker.webtorrent.dev; base-uri 'none'; form-action 'none'; object-src 'none';"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "deb", "appimage", "dmg"],
+    "targets": [
+      "nsis",
+      "deb",
+      "appimage",
+      "dmg"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
