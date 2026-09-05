@@ -52,7 +52,14 @@ jobs:
         run: |
           xvfb-run -a ./src-tauri/target/debug/qrdrop &
           pid=$!
-          sleep 30
+          # 75s, not 30: on a run with no camera device, WebKitGTK's own
+          # media-capture negotiation ("Video capture was requested but no
+          # device was found") blocks well past this page's 5s JS-level
+          # getUserMedia timeout before it ever rejects the promise, so 30s
+          # cut the run off before log_capabilities was ever invoked. That
+          # blocking behaviour is itself the Phase 0 finding worth recording
+          # for this platform -- see app/CAPABILITIES.md.
+          sleep 75
           kill "$pid" 2>/dev/null || true
           echo "--- capabilities.json ---"
           cat src-tauri/target/debug/capabilities.json
