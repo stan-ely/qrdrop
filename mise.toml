@@ -21,6 +21,14 @@ rust = "1.98.1"
 java = "temurin-21"
 cargo-release = "1.1.5"
 
+# npm puts node_modules/.bin on PATH for the scripts it runs; mise does not, so
+# a task that mirrors `npm run typecheck` verbatim ("tsc -p ...") cannot find
+# tsc without this. Prepending the local bin dir is what makes `mise run
+# typecheck` / `build` behave the way the npm script they copy does, rather
+# than every task line growing an `npx` the package.json equivalent lacks.
+[env]
+_.path = ["node_modules/.bin"]
+
 [tasks.test]
 description = "Run unit tests"
 run = "node --test"
