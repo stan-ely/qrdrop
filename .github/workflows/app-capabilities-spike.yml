@@ -40,14 +40,20 @@ jobs:
         working-directory: app
 
       # xvfb-run: WebKitGTK needs a real X11 display to create a webview at
-      # all, and this runner has none. The spike writes its own result file
-      # and exits nothing on its own, so the run is bounded by `timeout`
-      # instead of waiting on the process -- 30s is comfortably past the
-      # slowest probe (ICE gather's own 15s ceiling) plus startup.
+      # all, and this runner has none. `-a` (not the invented
+      # `--auto-servername` this first shipped with) picks a free display
+      # number. The spike writes its own result file and never exits on its
+      # own, so it is bounded by backgrounding it and killing it after 30s --
+      # comfortably past the slowest probe (ICE gather's own 15s ceiling)
+      # plus startup -- rather than by a `timeout` wrapper, which does not
+      # play well with xvfb-run's own child-process handling.
       - name: run the spike under Xvfb
         working-directory: app
         run: |
-          xvfb-run --auto-servername timeout 30 ./src-tauri/target/debug/qrdrop || true
+          xvfb-run -a ./src-tauri/target/debug/qrdrop &
+          pid=$!
+          sleep 30
+          kill "$pid" 2>/dev/null || true
           echo "--- capabilities.json ---"
           cat src-tauri/target/debug/capabilities.json
 
@@ -73,11 +79,16 @@ jobs:
 
       # No Xvfb equivalent needed: macOS runners carry a real WindowServer
       # session, so a WKWebView-backed window can open same as it would on a
-      # developer's machine.
+      # developer's machine. `timeout` is a GNU coreutils command that does
+      # not exist on macOS's BSD userland -- background-and-kill instead,
+      # same as the Linux job.
       - name: run the spike
         working-directory: app
         run: |
-          timeout 30 ./src-tauri/target/debug/qrdrop || true
+          ./src-tauri/target/debug/qrdrop &
+          pid=$!
+          sleep 30
+          kill "$pid" 2>/dev/null || true
           echo "--- capabilities.json ---"
           cat src-tauri/target/debug/capabilities.json
 
