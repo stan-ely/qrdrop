@@ -137,19 +137,18 @@ no peer in a CI job).
 
 ## Android
 
-**Not run.** No Android SDK/NDK is installed on this machine yet, and
+**Not run in Phase 0.** No Android SDK/NDK was installed on this machine, and
 acquiring one is a multi-gigabyte download plus emulator or device setup --
-deliberately not done without confirming first, even though `mise.toml` will
-pin the toolchain per the onboarding brief once Phase 4 starts. This section
-gets filled in as part of that phase, run against either a physical device
-over `adb` or a local AVD emulator, whichever is available at the time.
+deliberately not done without confirming first. Phase 4 builds the toolchain
+config and leaves the on-device run to whoever has the phone; the checklist to
+fill in is in "Phase 4" below.
 
 ## iOS
 
 **Not run in Phase 0.** Per the onboarding brief this is a CI-only,
 build-only target from Phase 4 onward (`macos-latest`, unsigned, ships
 nothing) -- there is no local iOS capability check to run from a Windows
-machine at any phase.
+machine at any phase. Phase 4 adds that CI job; see below.
 
 ## Phase 2: platform seam and native sink
 
@@ -344,3 +343,213 @@ identity is fed in: `APPLE_TEAM_ID` defaults to the placeholder `TEAMID`, and
 artefacts only" (onboarding brief) means neither identity exists yet; the
 generator takes them as environment inputs so turning association on later is a
 workflow secret, not a code change. `wellKnownFiles` is pure and tested.
+
+## Phase 4: Android and iOS
+
+Everything below the toolchain notes is **expectation, not measurement**.
+Phase 4 lands the build configuration and the CI that compiles it; the
+on-device capability run is deliberately left open, and the checklists here
+are the form it gets filled into. Nothing in this section should be quoted as
+a finding until a result column says so -- the Phase 0 sections above are what
+measured results look like in this file.
+
+### The toolchain is an ambient prerequisite, not a mise pin
+
+`mise.toml` pins node, rust, the JDK and cargo-release, and the obvious
+symmetry would be to pin the Android SDK beside them. It does not, and the
+reason is in that file's comment: mise auto-installs a missing tool the first
+time any task needs one, and `[tools]` is global rather than per-task, so an
+`android-sdk` entry would let `mise run test` trigger a multi-gigabyte
+download on a machine that only wanted the unit suite. The SDK is therefore
+installed by hand, the way Xcode is for the iOS tasks. `JAVA_HOME` is left to
+mise's own `java` tool, and `ANDROID_HOME` is left unset rather than guessed
+at -- "ANDROID_HOME is not set" is a better error than "no SDK at the path we
+invented for you".
+
+One-time, after installing the command-line tools and setting `ANDROID_HOME`:
+
+```
+sdkmanager --licenses
+sdkmanager --install "platform-tools" "platforms;android-34" \
+                     "build-tools;34.0.0" "ndk;27.2.12479018"
+```
+
+Then set `NDK_HOME` to `$ANDROID_HOME/ndk/<that version>`. Tauri 2.11 builds
+against NDK r26 or r27; the build number above is r27c and should be checked
+against whatever `sdkmanager --list` currently offers rather than trusted
+because it is written here.
+
+The tasks are `app:android:init` (one-time scaffold), `app:android:dev`,
+`app:android:build`, and the `app:ios:*` equivalents. The `:targets` tasks add
+the Rust triples explicitly, before `tauri android init` would add them
+itself, so a missing target fails saying so instead of surfacing later as a
+linker error against a std that was never installed.
+
+### `gen/` is committed source now
+
+`app/src-tauri/gen/` was ignored whole, on the argument that
+`tauri android init` regenerates it in one command and a committed copy would
+be a second source of truth. That reasoning held while `gen/` contained only
+generated schemas. It does not survive Android: the build needs
+`<uses-permission android:name="android.permission.CAMERA"/>` in
+`gen/android`'s `AndroidManifest.xml`, and **`tauri.conf.json` has no field
+that can express it**. The delta exists only in `gen/`, so an ignored `gen/`
+means every re-init silently drops the camera permission and the scanner stops
+working with no diff to point at.
+
+A script that re-applied the delta after each init was the alternative
+considered, and rejected twice over: it moves the second source of truth into
+`scripts/` rather than removing it, and it cannot carry a Kotlin file -- which
+the open question below may well require. `gen/schemas/` stays ignored,
+because that part really is regenerated every build and never hand-edited.
+
+The manifest also gets
+`<uses-feature android:name="android.hardware.camera" android:required="false"/>`.
+`required="false"` is deliberate: a device with no camera can still send a
+file and still use the network transfer, and the UI already degrades honestly
+(`src/web/view.js` shows `NO_CAMERA_BEAM` and hides the scan path when
+`cameraAvailable()` is false). Marking the camera required would make the app
+uninstallable there to protect a path that already declines itself.
+
+### Open question: does the Android camera actually prompt?
+
+**This is the most likely thing to be wrong.** `getUserMedia` in the Android
+System WebView needs the app to hold `android.permission.CAMERA` at the OS
+level. The manifest entry is necessary and, on Android 6+, *not sufficient* --
+`CAMERA` is a "dangerous" permission requiring a runtime request
+(`ActivityCompat.requestPermissions`). Whether wry/Tauri 2.11 bridges the
+webview's `onPermissionRequest` to that OS request automatically is
+version-dependent and not reliably documented; historically wry granted the
+webview-level resource without raising the OS dialog.
+
+Phase 4 does not assume it works. If the device run shows `getUserMedia`
+failing with no prompt, the two forks are a small Kotlin runtime-permission
+request in `gen/android`'s `MainActivity`, or a community Tauri
+Android-permissions plugin added to `app/src-tauri/Cargo.toml` and
+`app/package.json` (both app-directory files -- the "no new runtime
+dependencies" rule is a root-package rule). This mirrors Windows exactly:
+there too the reactive, obvious mechanism turned out not to fire, and the fix
+was to grant up front.
+
+### Open question: the native sink on a `content://` URI
+
+`app/src-tauri/src/sink.rs`'s `sink_open` does `File::create(path)`. On
+Android, `@tauri-apps/plugin-dialog`'s `save()` goes through the Storage
+Access Framework and returns a **`content://` URI, not a filesystem path** --
+which `File::create` cannot open. The Phase 2 sink may therefore fail on the
+first real transfer, and the throughput measured there was WebView2-specific
+and says nothing about Android.
+
+Two fallbacks, to be chosen on evidence rather than in advance: write into the
+app's own documents directory and surface the path, or route mobile writes
+through `plugin-fs`, which is content-URI aware. Either belongs behind the
+existing platform seam (`src/web/platform.js`, `app/src/tauri-sink.js`), never
+as an `if (isAndroid)` inside `src/web/`.
+
+### What CI compiles
+
+`.github/workflows/app.yml` is build-only and ships nothing: a desktop
+`tauri build --debug --no-bundle` matrix over Linux/Windows/macOS, an unsigned
+Android debug APK, and an iOS simulator build. It has no tag trigger -- `v*`
+belongs to npm's `publish.yml` and to `pages.yml`, and app release plumbing is
+Phase 5.
+
+The iOS job does **not** run `tauri ios build`. That drives an archive and
+export, which wants a development team even for the `debugging` export method,
+so on a runner with no signing identity it fails for reasons that say nothing
+about the code. Building the simulator SDK with `CODE_SIGNING_ALLOWED=NO`
+compiles the Rust staticlib and links the Swift shell, which is the entire
+question the job exists to ask.
+
+Until this ran, nothing compiled the Rust crate on a pull request at all:
+`ci.yml` is Node-only and Phase 3's `cargo check` was a local habit. On a
+project with no Mac and no Android device in CI reach, that meant iOS and
+Android regressions surfaced never.
+
+### On-device checklist -- Android
+
+Run against a physical device over `adb` (or an AVD). Fill in the result
+column; report failures as findings, not as things to fix quietly.
+
+| Check | Expectation | Result |
+| --- | --- | --- |
+| `isSecureContext` | pass -- `http://tauri.localhost` is on wry's trustworthy list | |
+| `crypto.subtle` | pass | |
+| `showSaveFilePicker` | **absent** -- the native sink is the path | |
+| native sink round-trip + rough throughput | unmeasured on Android; see the `content://` question above | |
+| `BarcodeDetector` | likely **absent**, same component gap as WebView2 -> jsQR carries it | |
+| `getUserMedia` API present | pass | |
+| `getUserMedia` real-camera call -> live track | **open** -- see the permission question above | |
+| OS camera prompt appears | **open** -- this is the decider | |
+| `RTCPeerConnection` present | pass -- the WebView is evergreen Chromium | |
+| ICE gathering -> a host candidate | pass | |
+| full LAN transfer, digests match both ends | pass | |
+| `wss://` connect to a relay | pass | |
+| Beam send -- animated QR at ~10 Hz | pass | |
+| Beam receive -- decode at ~10 Hz from the camera | pending the camera result | |
+| deep link `qrdrop:<code>` reaches the verify screen | record | |
+| `https://share.stan-ely.com/#qrdrop:<code>` opens the app | **no** -- association needs signing, deferred as in Phase 3 | |
+
+That last row is worth stating plainly rather than discovering: until
+`assetlinks.json` carries a real signing-certificate fingerprint, a scanned QR
+on Android opens `share.stan-ely.com` in the browser rather than the installed
+app. That is exactly the behaviour Phase 3 verified end to end and is fine --
+but it means "receive by scanning into the native app" is not testable on
+Android this phase. Sending, and receiving via a pasted code, are.
+
+### On-device checklist -- iOS
+
+No Apple hardware exists on this project, so this table stays empty until
+someone with a device runs it. CI proves the target links; it cannot prove any
+row below.
+
+| Check | Expectation | Result |
+| --- | --- | --- |
+| `isSecureContext` | pass -- `tauri://localhost` | |
+| `crypto.subtle` | pass | |
+| `showSaveFilePicker` | **absent** -- native sink | |
+| `BarcodeDetector` | present on iOS 17+ | |
+| `getUserMedia` + TCC prompt | pass -- `Info.ios.plist` carries `NSCameraUsageDescription`, staged in Phase 3 and merged natively by Tauri, so no `gen/apple` edit is needed | |
+| `RTCPeerConnection` + ICE | pass -- Phase 0's macOS row found WKWebView has it, unlike WebKitGTK | |
+| full LAN transfer, digests match | pass | |
+| Beam send / receive at ~10 Hz | pass | |
+
+### The verdict on mobile Beam and WebRTC, stated as expectation
+
+The onboarding brief asks Phase 4 to decide honestly whether mobile Beam is
+achievable. The honest answer today is **"expected on both platforms, proven
+on neither"**, and the two platforms are expected for different reasons.
+
+**Android** runs an evergreen Chromium WebView, so `RTCPeerConnection` is
+present and the network transfer should work as-is -- Android is not Linux,
+where the absence of the constructor forced a whole shipping decision. Beam's
+camera side is the one real unknown, and it is a permissions question rather
+than a capability one. `BarcodeDetector` is likely absent as it is on
+WebView2, which makes the jsQR fallback in `src/web/qr.js` load-bearing again
+and puts decode cost at the 50-100 ms that set Beam's 10 Hz default in the
+first place -- so ~10 Hz is the right target, not a stretch.
+
+**iOS** inherits Phase 0's macOS finding: WKWebView has WebRTC with an
+immediate host candidate, and the two WebKit-family webviews are not
+equivalent. With `BarcodeDetector` present on iOS 17+, Beam should decode
+faster there than anywhere else.
+
+If Android's camera cannot be made to prompt and neither fork above is worth
+its cost, the fallback needs no code: `choose()` in `src/web/view.js` already
+hides the network buttons when `!rtcAvailable` and refuses Beam receive when
+`!cameraAvailable()`. The UI already tells the truth about a platform that
+cannot do something, which is why that seam was built before it was needed.
+Record which mode Android actually ships in.
+
+### Gate
+
+**Config-lands gate (this phase):** `.github/workflows/app.yml` green on all
+three jobs, `mise run typecheck` and `mise run test` clean, and
+`mise run app:config` producing no unexpected `tauri.conf.json` diff.
+
+**On-device verification is explicitly open and does not block Phase 5.** It
+completes when the checklists above are filled in from a real phone, including
+a full LAN transfer with matching digests and a Beam receive, and when the
+`gen/android` re-init cycle (`init` over a committed tree must not silently
+drop the camera permission -- CI asserts this once the tree is tracked) has
+been exercised once by hand.

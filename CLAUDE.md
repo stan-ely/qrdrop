@@ -372,6 +372,45 @@ drift this exists to prevent. `Cargo.lock` is committed because this is a binary
 `app/dist/` is *not* committed (it is `dist/`-gitignored); `mise run app:dev` /
 `app:build` rebuild it from `--channel app`.
 
+**`app/src-tauri/gen/` is committed source, except `gen/schemas/`.** It used to be
+ignored whole, and the reasoning was sound while it held nothing but generated
+schemas: `tauri android init` regenerates it in one command, so a committed copy
+would be a second source of truth. Android broke that. The build needs
+`<uses-permission android:name="android.permission.CAMERA"/>` in `gen/android`'s
+`AndroidManifest.xml` and **`tauri.conf.json` has no field that can express it**, so
+the delta lives only in `gen/` — where an ignored tree means every re-init silently
+drops the camera permission and the scanner stops working with nothing to diff. A
+script re-applying the delta after each init was the alternative; it relocates the
+second source of truth rather than removing it, and it cannot carry the Kotlin file
+that Android's runtime permission request may yet need. Do not re-run
+`tauri android init` over the committed tree to "refresh" it — that is the
+regeneration this arrangement exists to survive. iOS needs no such edit:
+`Info.ios.plist` is merged natively, which is why it was staged in Phase 3.
+
+**`bundle.targets` is desktop-only and that is not an oversight.** `tauri android
+build` and `tauri ios build` do not consult it; the mobile knobs are
+`bundle.android.minSdkVersion` and `bundle.iOS.minimumSystemVersion`, both stated
+explicitly in `tauri.conf.template.json` at Tauri's own defaults rather than
+inherited silently.
+
+**The Android SDK is deliberately not a mise `[tools]` pin,** unlike node, rust and
+the JDK beside it. mise auto-installs a missing tool the first time any task needs
+one and `[tools]` is global, so an `android-sdk` entry lets `mise run test` trigger a
+multi-gigabyte download on a machine that wanted the unit suite. It is an ambient
+prerequisite instead, like Xcode for `app:ios:*`, with the exact `sdkmanager` package
+strings in `app/CAPABILITIES.md`. `JAVA_HOME` comes from mise's `java`; `ANDROID_HOME`
+is left unset rather than defaulted, because "ANDROID_HOME is not set" debugs faster
+than "no SDK at the path we invented".
+
+**`.github/workflows/app.yml` compiles the shell and ships nothing** — a desktop
+`--no-bundle` matrix, an unsigned Android debug APK, and an iOS *simulator* build.
+It has no tag trigger on purpose: `v*` belongs to `publish.yml` and `pages.yml`, and
+app releases are a later phase. The iOS job runs `xcodebuild … -sdk iphonesimulator
+CODE_SIGNING_ALLOWED=NO`, **not** `tauri ios build` — that drives an archive and
+export which wants a development team even for the `debugging` export method, and so
+fails on an identity-less runner for reasons that say nothing about the code. Before
+this workflow, nothing compiled the Rust crate on a pull request at all.
+
 **The platform seam must stay a seam.** `src/web/element.js` reads
 `getPlatform().createSink` from `src/web/platform.js` rather than importing
 `web/sink.js`. `registerPlatform()` is called by `app/src/main.js` and by nothing
