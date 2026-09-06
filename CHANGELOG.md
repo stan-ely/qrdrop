@@ -3,6 +3,64 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
+## 0.4.0 — 2026-09-06
+
+**Privacy: the camera could stay on after a scan was cancelled.** `scanQRStream` registered
+its abort listener three awaits after opening the camera, so an abort arriving during
+`getUserMedia`, `video.play()` or `createDetector()` found no listener — and a signal that
+has already fired never fires again, so the scan promise never settled and the `finally`
+that stops the track never ran. The webcam then stayed on for the life of the page. The way
+in is ordinary rather than exotic: the hand-entered code field lives on the scanner screen,
+so **pairing by pasted code aborted mid-open every time**. It was found by a light on a
+laptop while the whole suite passed, because nothing headless can observe a camera that was
+never released. If you embed `<qr-drop>`, this is the reason to update.
+
+**Sending a file from a phone was between 12 and 18 times slower than it needed to be.**
+`fromFile` read once per 16 KiB frame, and on Android a `File` picked through the Storage
+Access Framework is backed by a `content://` provider — so every read was a Binder
+round-trip to another process, ~79 ms fixed plus ~3.7 ms per MiB. A 3 MB send spent 29.7 s
+of a 30.3 s transfer inside those reads: 98% of it, against 21 ms of AEAD and 9 ms of data
+channel. It now reads in 2 MiB blocks and issues the *next* block's read as soon as the
+current one lands, so the round-trip overlaps the ~128 frames still going out. Measured on
+a real device: 3 MB went 30.2 s → 3.34 s, and 64 MiB went to 16.8 s at 4.03 MB/s, where the
+per-frame path would have taken about eleven minutes. Across 31 block boundaries the
+read-ahead was late zero times, so reads now cost the transfer nothing.
+
+This was never a Tauri problem, which is why the fix is in `src/web/source.js` and reaches
+everyone: Chrome on the same phone passes the `content://` through the same way, so the
+deployed site had it too, at 0.22 MB/s for **every Android sender**. Desktop browsers were
+unaffected — a `File` there is backed by a real filesystem — and the CLI uses a different
+adapter entirely, which is exactly why it survived until someone pointed a phone at it.
+
+**A slow sink no longer buffers the whole file in memory.** `RTCDataChannel` delivers
+messages as fast as they arrive and the receiver serialised them into a promise chain, so
+SCTP flow control never engaged — the receiver never stopped reading. A sink that drained
+slower than the channel filled therefore grew the heap by the size of the transfer; measured
+at its worst, 1 GiB of heap over a 1 GiB file. The receiver now tracks bytes accepted but not
+yet written and sends an authenticated `pause` control message above a threshold, `resume`
+below one, with a timeout so an indefinitely-paused transfer fails with a diagnostic rather
+than hanging. Both directions degrade cleanly: a sender too old to act on `pause` drops it as
+an unrecognised control type, and a receiver too old to send one simply never does.
+
+**Fixes.** A sealed chunk now fits in one transport message. `CHUNK_SIZE` was a flat 16 KiB,
+which overshot the action wire's per-message budget by 66 bytes — and the transport does not
+reject an overshoot, it splits it, so every frame travelled as a full message plus a 102-byte
+runt (measured: 393 sends for 192 frames). Inbound tolerance is deliberately unchanged, since
+a peer on the old constant still sends 16414-byte frames.
+
+**New.** A platform seam (`qrdrop/web`'s `registerPlatform`) lets a host application supply
+its own file sink without the deployed site being able to regress from it. `<qr-drop>` now
+consumes a code set on `location.hash` after load, guarded to the choose screen so it cannot
+interrupt a live transfer — the mechanism behind opening a scanned link in an installed app.
+Both still take the code only from the fragment, never the query string.
+
+**A desktop and mobile app now exists**, built from this same code and released on its own
+`app-v*` tags with its own changelog. See [the README](README.md#the-app) for what each
+platform can and cannot do.
+
+**If you self-host the browser bundle, redeploy.** The camera fix and the mobile send
+performance both live in it.
+
 ## 0.3.1 — 2026-08-30
 
 **Security: a stranger in the rendezvous room could end a transfer.** Frame headers were
