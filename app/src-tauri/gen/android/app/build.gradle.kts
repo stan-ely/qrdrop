@@ -13,17 +13,45 @@ val tauriProperties = Properties().apply {
     }
 }
 
-// The release signing key, and the second hand-edit this committed gen/ tree
-// exists to carry (the first is the CAMERA permission in AndroidManifest.xml
-// -- see .gitignore for why the tree is source rather than generated output).
-// tauri.conf.json has no field for an Android signing config either.
+// The app version, from the one place it lives: src-tauri/Cargo.toml. Read
+// here rather than trusted to tauri.properties above, which is gitignored,
+// generated, and -- measured on this project -- simply not written by
+// `tauri android build`, because tauri.conf.json deliberately omits its own
+// `version` field so Tauri reads the crate's (see CLAUDE.md). The scaffold's
+// fallbacks are versionName "1.0" and versionCode 1, so without this every
+// release ships as the same version and Android refuses to install one over
+// another: an update needs a versionCode strictly greater than the installed
+// one, and 1 is never greater than 1. That is a bug you find on the second
+// release, from a user who cannot take it.
+//
+// Parsed with a regex over the first `version = "x.y.z"` line rather than a
+// TOML library, which matches how .github/workflows/app-release.yml checks the
+// tag against the same file. The dependency versions below it are all inside
+// inline tables and do not start a line.
+val crateVersion: String = rootProject.file("../../Cargo.toml").readLines()
+    .firstNotNullOfOrNull { Regex("""^version = "(.*)"$""").find(it)?.groupValues?.get(1) }
+    ?: "0.0.0"
+
+// Monotonic in the semver, with room for 999 of each component. Android wants
+// a single increasing integer and has no opinion about what it means; deriving
+// it means nobody has to remember to bump a second number by hand.
+val crateVersionCode: Int = crateVersion.split('.', limit = 4).let { parts ->
+    val n = { i: Int -> parts.getOrNull(i)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 0 }
+    n(0) * 1_000_000 + n(1) * 1_000 + n(2)
+}
+
+// The release signing key, and a hand-edit this committed gen/ tree exists to
+// carry -- like the CAMERA permission in AndroidManifest.xml, and like the
+// version above (see .gitignore for why the tree is source rather than
+// generated output). tauri.conf.json has no field for an Android signing
+// config either.
 //
 // keystore.properties is NOT committed and is not expected to exist: it is
 // written by .github/workflows/app-release.yml from repository secrets, for
-// the length of one job. Everything below is therefore conditional on the
-// file being there, so that `mise run app:android:build` on a machine with no
-// key keeps producing exactly the debug APK it always has. An unconditional
-// signingConfig fails the whole Gradle configuration phase with a null
+// the length of one job. Everything that reads it is therefore conditional on
+// the file being there, so that `mise run app:android:build` on a machine with
+// no key keeps producing exactly the APK it always has. An unconditional
+// signingConfig fails the whole Gradle configuration phase on a null
 // storeFile, which would make the key a requirement for building at all.
 val keystoreProperties = Properties().apply {
     val propFile = rootProject.file("keystore.properties")
@@ -40,8 +68,8 @@ android {
         applicationId = "com.stan_ely.qrdrop"
         minSdk = 24
         targetSdk = 36
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
-        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        versionCode = tauriProperties.getProperty("tauri.android.versionCode", crateVersionCode.toString()).toInt()
+        versionName = tauriProperties.getProperty("tauri.android.versionName", crateVersion)
     }
     signingConfigs {
         if (keystoreProperties.containsKey("storeFile")) {
