@@ -34,8 +34,14 @@ npx qrdrop web                 # or run the browser UI locally, from this copy
 ```
 
 `npx` stays the headline because it installs nothing. If you would rather have it
-on `PATH`: `brew install stan-ely/tap/qrdrop` on macOS and Linux, `npm i -g qrdrop`
-anywhere with Node 22 or newer.
+on `PATH`:
+
+```bash
+brew install stan-ely/tap/qrdrop                                   # macOS, Linux
+scoop bucket add stan-ely https://github.com/stan-ely/scoop-bucket  # Windows
+scoop install stan-ely/qrdrop
+npm i -g qrdrop                                                    # anywhere, Node 22+
+```
 
 A file sent from the CLI can be received in a browser, and the other way round.
 That interoperability is the reason this is one package rather than three.
@@ -558,6 +564,19 @@ knows how to open.
 Releases are tagged `app-v*` and carry the installers; the npm package moves on
 its own `v*` tags and its own version number, because a webview-permission fix
 should not republish an unchanged library.
+
+```bash
+brew install --cask stan-ely/tap/qrdrop-app                        # macOS, Apple silicon
+scoop bucket add stan-ely https://github.com/stan-ely/scoop-bucket  # Windows
+scoop install stan-ely/qrdrop-app
+```
+
+Both are updated by the release workflow and resolve to the files on the
+[Releases page](https://github.com/stan-ely/qrdrop/releases), which is also where
+the Android APK, the `.deb` and the AppImage live. Note `qrdrop-app` and not
+`qrdrop`: the latter is the CLI, in the same tap and the same bucket. The cask is
+Apple silicon only — one `.dmg` is built, on an arm64 runner — and it refuses to
+install on Intel rather than leaving you a bundle that cannot launch.
 
 | Platform | Send | Receive | Notes |
 | --- | --- | --- | --- |

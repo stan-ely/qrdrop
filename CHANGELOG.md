@@ -3,6 +3,15 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
+## Unreleased
+
+**The CLI installs from Scoop on Windows.** `scoop bucket add stan-ely
+https://github.com/stan-ely/scoop-bucket`, then `scoop install stan-ely/qrdrop`. The
+manifest points at the npm registry tarball and depends on `nodejs` from the main
+bucket, so it is the Homebrew formula's shape rather than a vendored runtime — which
+is what the README's "no winget" reasoning had ruled out, and Scoop is not that case:
+it has both the dependency and the install-hook that winget lacks.
+
 ## 0.4.0 — 2026-09-06
 
 **Privacy: the camera could stay on after a scan was cancelled.** `scanQRStream` registered

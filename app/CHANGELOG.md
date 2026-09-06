@@ -11,6 +11,27 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
+## Unreleased
+
+**The app installs from Homebrew and Scoop.** `brew install --cask
+stan-ely/tap/qrdrop-app` on Apple silicon, `scoop install stan-ely/qrdrop-app` on
+Windows; both are written by the release workflow and point at the same files the
+Releases page carries. The name is `qrdrop-app` rather than `qrdrop` because the CLI
+already holds that name in both places, and a formula and a cask sharing one token
+makes `brew install qrdrop` resolve to the formula with only a warning.
+
+The cask is Apple silicon only and refuses to install on Intel. One `.dmg` is built,
+on an arm64 runner, so the alternative was not an Intel install but a broken one.
+Its caveats repeat the unsigned-binary warning and the `xattr` line, because
+`brew install --cask` quarantines what it installs and that dialog should not arrive
+without explanation.
+
+Windows releases now also carry `qrdrop-<version>-x86_64-windows.zip`, the same
+binary the installer contains with no installer around it. It is what Scoop
+installs, and it is a reasonable direct download for anyone who would rather not run
+an unsigned setup program. Unlike the `.exe` it cannot fetch the Evergreen WebView2
+runtime, which matters only on Windows older than 10 21H2.
+
 ## 0.1.0
 
 The first release of the app. It is a shell around the same code the website

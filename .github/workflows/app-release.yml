@@ -100,6 +100,32 @@ jobs:
       - run: npx tauri build
         working-directory: app
 
+      # The portable Windows build, for Scoop. Scoop installs into a directory
+      # it owns and does not run installers, so it needs the binary rather than
+      # the NSIS package.
+      #
+      # Extracting the NSIS .exe with 7-Zip is the shortcut and it is the wrong
+      # one: what comes out is $PLUGINSDIR and an internal layout that belongs
+      # to the installer generator, not to us, so a manifest built on it breaks
+      # on an nsis-plugin change with nothing to read in the diff. Zipping the
+      # binary we already built costs a step and cannot drift.
+      #
+      # qrdrop.exe by name because the crate is `name = "qrdrop"` and
+      # tauri.conf.json sets no mainBinaryName -- the bundles are named from
+      # productName, the binary is named from Cargo.
+      #
+      # The one thing this loses against the installer: the NSIS package
+      # downloads the Evergreen WebView2 runtime when it is missing and a zip
+      # cannot. That is Windows 11 and Windows 10 21H2 or later out of the box,
+      # and the Release body says so.
+      - name: Zip the portable Windows binary
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p portable
+          cp app/src-tauri/target/release/qrdrop.exe portable/
+          (cd portable && 7z a "$GITHUB_WORKSPACE/qrdrop-${{ needs.check.outputs.version }}-x86_64-windows.zip" qrdrop.exe)
+
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}
@@ -109,6 +135,7 @@ jobs:
             app/src-tauri/target/release/bundle/deb/*.deb
             app/src-tauri/target/release/bundle/appimage/*.AppImage
             app/src-tauri/target/release/bundle/dmg/*.dmg
+            qrdrop-*-x86_64-windows.zip
 
   android:
     needs: check
@@ -205,9 +232,14 @@ jobs:
       - name: Assemble the artifacts
         run: |
           mkdir -p dist-release
-          find staging -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.apk' \) \
+          find staging -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.apk' -o -name '*.zip' \) \
             -exec cp {} dist-release/ \;
-          (cd dist-release && sha256sum ./* > SHA256SUMS)
+          # Bare names, not ./*. Scoop's autoupdate reads this file to find the
+          # hash of the artifact it is about to point at, matching on the
+          # filename, and its default pattern expects `<hash>  <basename>` --
+          # the conventional shape. A leading ./ is invisible to `sha256sum -c`
+          # and silently defeats that match.
+          (cd dist-release && sha256sum * > SHA256SUMS)
           cat dist-release/SHA256SUMS
 
       # The same posture publish.yml establishes for the npm tarball: a
@@ -224,6 +256,7 @@ jobs:
             dist-release/*.AppImage
             dist-release/*.dmg
             dist-release/*.apk
+            dist-release/*.zip
 
       # The changelog entry is the notes, extracted not generated (see
       # scripts/release-notes.mjs). What is appended is the part that belongs
@@ -241,7 +274,25 @@ jobs:
 
           ---
 
+          ### Installing
+
+          ```
+          brew install --cask stan-ely/tap/qrdrop-app          # macOS, Apple silicon
+          scoop bucket add stan-ely https://github.com/stan-ely/scoop-bucket
+          scoop install stan-ely/qrdrop-app                     # Windows
+          ```
+
+          Both resolve to the files below, and both are updated by this workflow.
+          Everything else on this page is a direct download.
+
           ### About these files
+
+          `qrdrop-<version>-x86_64-windows.zip` is the portable Windows build --
+          the same binary the installer carries, with no installer around it.
+          It is what Scoop installs. Unlike the `.exe`, it cannot fetch the
+          **Evergreen WebView2 runtime** if your machine has none; that ships
+          with Windows 11 and Windows 10 21H2 or later, so this only matters on
+          something older.
 
           The **Android APK** is signed with the project's release key. Its
           certificate fingerprint is the one published at
@@ -271,3 +322,211 @@ jobs:
             --notes-file notes.md \
             --verify-tag \
             dist-release/*
+
+  # The two package managers, updated from the Release that job just made.
+  #
+  # A Homebrew CASK rather than a formula: this installs a .app bundle, not a
+  # binary built from source. Casks live in Casks/ in the same tap that already
+  # carries Formula/qrdrop.rb, and the two are named apart -- qrdrop is the CLI,
+  # qrdrop-app is this. A formula and a cask sharing one token in one tap is
+  # legal and makes `brew install qrdrop` warn and quietly resolve to the
+  # formula, which is a trap for whoever typed the other one.
+  #
+  # Two secrets because there are two taps: HOMEBREW_TAP_TOKEN is the fine-
+  # grained PAT publish.yml already uses, and SCOOP_BUCKET_TOKEN is its
+  # counterpart scoped to stan-ely/scoop-bucket. Widening one PAT to cover both
+  # was the alternative and was rejected: its name would then say less than it
+  # opens, and one leaked token would move two package indexes instead of one.
+  tap:
+    needs: [check, release]
+    runs-on: ubuntu-latest
+    # A prerelease should still get a Release page, but it must not move what
+    # `brew install` and `scoop install` resolve to. Same guard, same reason as
+    # publish.yml's tap job.
+    if: ${{ !contains(needs.check.outputs.version, '-') }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+    steps:
+      # Hash what the manifests point at, not what the release job had on disk.
+      # It is the same reasoning publish.yml's tap job writes down about hashing
+      # the registry's tarball rather than a local `npm pack`: the URL in a
+      # manifest is what somebody's install actually fetches, so those are the
+      # bytes whose hash has to be right, and if the two ever disagree this is
+      # the place to find out.
+      - name: Hash the published artifacts
+        id: hash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg="qrdrop_${VERSION}_aarch64.dmg"
+          zip="qrdrop-${VERSION}-x86_64-windows.zip"
+          curl -fsSL "$BASE/$dmg" -o "$dmg"
+          curl -fsSL "$BASE/$zip" -o "$zip"
+          {
+            echo "dmg=$dmg"
+            echo "zip=$zip"
+            echo "dmg_sha=$(sha256sum "$dmg" | cut -d' ' -f1)"
+            echo "zip_sha=$(sha256sum "$zip" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: stan-ely/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: brew
+
+      - uses: actions/checkout@v7
+        with:
+          repository: stan-ely/scoop-bucket
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          path: scoop
+
+      # arm64 only, and `depends_on arch:` is what makes that a refusal rather
+      # than a broken install. macos-latest is an Apple-silicon runner and the
+      # desktop job builds exactly one dmg from it, so without this stanza an
+      # Intel Mac installs a bundle that cannot launch and says nothing useful
+      # about why. Building an x86_64 dmg as well was the alternative: a cold
+      # second Rust build every release, for hardware Apple no longer sells.
+      #
+      # The caveats are not optional politeness. `brew install --cask` applies
+      # the quarantine attribute, so this app -- which nobody has signed -- will
+      # be refused on first launch. The Release body explains that to anyone who
+      # downloads the dmg by hand; a tap that installs the same bytes silently
+      # would be routing people around the one warning this project goes out of
+      # its way to make legible.
+      - name: Write the cask
+        env:
+          DMG: ${{ steps.hash.outputs.dmg }}
+          DMG_SHA: ${{ steps.hash.outputs.dmg_sha }}
+        run: |
+          mkdir -p brew/Casks
+          cat > brew/Casks/qrdrop-app.rb <<RUBY
+          # Generated by .github/workflows/app-release.yml in stan-ely/qrdrop.
+          # Hand edits here are overwritten on the next release; change the
+          # template in that workflow instead.
+          cask "qrdrop-app" do
+            version "$VERSION"
+            sha256 "$DMG_SHA"
+
+            url "$BASE/$DMG",
+                verified: "github.com/stan-ely/qrdrop/"
+            name "qrdrop"
+            desc "Send a file straight from one device to another, end-to-end encrypted"
+            homepage "https://github.com/stan-ely/qrdrop"
+
+            # The desktop job builds one dmg, on an Apple-silicon runner.
+            depends_on arch: :arm64
+            depends_on macos: ">= :big_sur"
+
+            app "qrdrop.app"
+
+            zap trash: [
+              "~/Library/Saved Application State/com.stan-ely.qrdrop.savedState",
+              "~/Library/WebKit/com.stan-ely.qrdrop",
+            ]
+
+            caveats <<~EOS
+              qrdrop is not code-signed. There is no Apple Developer account behind
+              this project, so macOS will refuse to open it the first time and say
+              it cannot check the app for malicious software.
+
+              If you decide to trust it:
+
+                xattr -d com.apple.quarantine /Applications/qrdrop.app
+
+              That warning is accurate -- nobody has vouched for this binary. The
+              dmg does carry a build provenance attestation, which is a verifiable
+              claim about where it was built and not a signature:
+
+                gh attestation verify <file> --repo stan-ely/qrdrop
+            EOS
+          end
+          RUBY
+          cat brew/Casks/qrdrop-app.rb
+
+      # Built by piping JS into node through a QUOTED heredoc, and both halves
+      # of that are load-bearing. A scoop manifest's autoupdate block is written
+      # in scoop's own placeholders -- $version, $basename -- which are bash
+      # variables too, so an unquoted heredoc silently empties them; <<'JS'
+      # passes bytes through untouched. Building the object in JS and
+      # JSON.stringify-ing it is what makes invalid JSON unrepresentable.
+      #
+      # The first draft of this step used `node -e '...'` and lost the
+      # backslashes out of a Windows path to shell quoting. That produced
+      # perfectly valid JSON containing a broken command, which is a failure no
+      # amount of JSON checking can see.
+      #
+      # `shortcuts` is the stanza that matters for a GUI app -- it is what puts
+      # qrdrop in the Start Menu. A bare `bin` shim is right for a CLI and would
+      # leave this installed with no way to launch it but a path.
+      #
+      # checkver carries an explicit app-v regex because the default github
+      # strategy reads whatever release is newest, and this repository
+      # alternates npm tags with app tags -- left to itself scoop's updater
+      # would resolve v0.4.0 and build a download URL for a release that has no
+      # such file.
+      - name: Write the scoop manifest
+        env:
+          ZIP: ${{ steps.hash.outputs.zip }}
+          ZIP_SHA: ${{ steps.hash.outputs.zip_sha }}
+        run: |
+          mkdir -p scoop/bucket
+          node <<'JS' > scoop/bucket/qrdrop-app.json
+          const releases = 'https://github.com/stan-ely/qrdrop/releases/download'
+          process.stdout.write(JSON.stringify({
+            '##': 'Generated by .github/workflows/app-release.yml in stan-ely/qrdrop. Hand edits here are overwritten on the next release.',
+            version: process.env.VERSION,
+            description: 'Send a file straight from one device to another, end-to-end encrypted',
+            homepage: 'https://github.com/stan-ely/qrdrop',
+            license: 'MIT',
+            architecture: {
+              '64bit': { url: `${process.env.BASE}/${process.env.ZIP}`, hash: process.env.ZIP_SHA }
+            },
+            bin: 'qrdrop.exe',
+            shortcuts: [['qrdrop.exe', 'qrdrop']],
+            checkver: { github: 'https://github.com/stan-ely/qrdrop', regex: 'app-v([0-9.]+)' },
+            autoupdate: {
+              architecture: {
+                '64bit': {
+                  url: `${releases}/app-v$version/qrdrop-$version-x86_64-windows.zip`,
+                  hash: { url: `${releases}/app-v$version/SHA256SUMS` }
+                }
+              }
+            }
+          }, null, 2) + '\n')
+          JS
+          cat scoop/bucket/qrdrop-app.json
+
+      # The staging order below is deliberate and is copied from publish.yml's
+      # tap job rather than reinvented. `git diff` compares the index against
+      # the working tree and ignores untracked files entirely, so on the release
+      # that first ADDS a file it reports no change and the step exits 0 having
+      # done nothing -- a green tick over a no-op, which is exactly how 0.3.1
+      # shipped with the tap left empty. Staging first, then --cached against
+      # HEAD, sees an added file and a modified one alike. The fetch-and-diff
+      # afterwards proves the file that is now in the tap is the one written
+      # above.
+      - name: Commit and push
+        run: |
+          push_one() {
+            dir="$1"; file="$2"
+            cd "$GITHUB_WORKSPACE/$dir"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$file"
+            if git diff --cached --quiet -- "$file"; then
+              echo "$dir/$file already at $VERSION; nothing to push."
+              return 0
+            fi
+            git commit -m "qrdrop-app $VERSION"
+            git push
+            git fetch origin
+            if ! git diff --quiet origin/HEAD -- "$file"; then
+              echo "$file did not land in $dir as written" >&2
+              return 1
+            fi
+            echo "$file is at $VERSION in $dir."
+          }
+          push_one brew Casks/qrdrop-app.rb
+          push_one scoop bucket/qrdrop-app.json

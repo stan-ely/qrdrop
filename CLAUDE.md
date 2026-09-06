@@ -162,12 +162,13 @@ root; a second one inside `edge/` is inert but reads like a binding to whoever f
 A `v*` tag runs both `.github/workflows/publish.yml` (below) and `pages.yml` (above),
 independently and in parallel.
 
-`publish.yml` is three jobs in a chain:
+`publish.yml` is four jobs in a chain:
 `publish` (suite, typecheck, build, tag-matches-`package.json`, `npm publish` over OIDC),
 then `release` (a GitHub Release whose body is the CHANGELOG section for that version,
 carrying the npm tarball, `qrdrop-site-<version>.zip`, `SHA256SUMS`, and a build
 provenance attestation), then `tap` (rewrites `Formula/qrdrop.rb` in `stan-ely/homebrew-tap`
-from a template in that file).
+from a template in that file), then `scoop` (the same for `bucket/qrdrop.json` in
+`stan-ely/scoop-bucket`).
 
 **Never rename `publish.yml`.** npm Trusted Publishing is configured on npmjs.com against a
 repository *and a workflow filename*. The file has long since grown past what its name says
@@ -176,11 +177,38 @@ asking for a token this repo deliberately does not have. For the same reason the
 and tap steps are jobs in that one file rather than a second workflow on the same tag: two
 runs would both `npm ci`, both run the suite, and race the version check.
 
-The one secret is `HOMEBREW_TAP_TOKEN`, a fine-grained PAT with `contents: write` scoped to
-the tap and nothing else. `GITHUB_TOKEN` cannot stand in — it is scoped to this repository,
-and a cross-repository write is what it is not allowed to do. The tap already serves another
+Two secrets, one per tap: `HOMEBREW_TAP_TOKEN` and `SCOOP_BUCKET_TOKEN`, each a
+fine-grained PAT with `contents: write` scoped to its own repository and nothing else.
+`GITHUB_TOKEN` cannot stand in for either — it is scoped to this repository, and a
+cross-repository write is what it is not allowed to do. The tap already serves another
 project under a secret of the same name; secrets are per-repository, so that one is invisible
-here.
+here. Widening one PAT to cover both taps was the alternative and is worse than it looks: a
+secret called `HOMEBREW_TAP_TOKEN` that also writes a Scoop bucket cannot be reasoned about
+from the workflow that uses it, and one leak then moves two package indexes.
+
+**Scoop is not the winget case** (below), and that distinction is the whole reason
+`bucket/qrdrop.json` exists. Scoop has `depends` and `post_install`, so the manifest pulls
+`nodejs` from the main bucket and runs `npm install` in the package directory — the same
+shape `Formula/qrdrop.rb` already has, not a new posture. What it does not have is a way to
+run a `.js` file: **Scoop's shim generator switches on extension** — `.exe`/`.com`,
+`.cmd`/`.bat`, `.ps1`, `.jar`, `.py` — and `.js` is not among them, falling through to a
+generic branch that tries to translate the path for WSL or Cygwin. Pointing `bin` at
+`src/cli.js` installs cleanly, writes a shim, and fails the moment anyone runs it, so
+`post_install` writes a two-line `qrdrop.cmd` and `bin` shims that. It uses forward slashes
+deliberately: `cmd.exe` and node both accept them, and the manifest is then free of
+backslashes for a shell to eat.
+
+Both manifests are built by piping JS into `node` through a **quoted** heredoc (`<<'JS'`),
+not `node -e`. A scoop manifest is written in scoop's own `$version`, `$dir` and `$basename`
+placeholders, which are bash variables too — an unquoted heredoc empties them silently. The
+first draft used `node -e '…'` and lost a Windows path's backslashes to shell quoting, which
+produced entirely valid JSON containing a broken command. That is a failure no JSON check can
+see, which is why the generator is shaped this way rather than more simply.
+
+The CLI manifest's `autoupdate` carries **no `hash` block**, so scoop downloads the new
+tarball and hashes it. The registry's `dist.shasum` is the obvious field to point at and is
+wrong: it is SHA-1, and scoop would compare it against a SHA-256 and refuse every update.
+`dist.integrity` is SHA-512 in base64 where scoop wants hex.
 
 Release notes are extracted, not generated: `scripts/release-notes.mjs <version>` prints the
 matching `## <version>` section of `CHANGELOG.md` and exits non-zero if there is none. The
@@ -196,8 +224,12 @@ otherwise fine release.
 No winget. It has no npm step and its `PackageDependencies` field is only partly honoured by
 the client, so a real Windows package means shipping a self-contained ~58 MB bundle (Node
 runtime, `src/`, `site/dist`, platform-correct `node_modules`) plus a launcher shim, per
-target. Windows users get `npx`, `npm i -g`, or the deployed site. If that changes, it is one
-more job in the same file, not a rewrite.
+target. **This paragraph is about winget specifically and not about Windows package managers
+generally** — it read that way for a while, and Scoop is the counterexample: it has both of
+the things winget lacks, which is why the `scoop` job above is a manifest pointing at the
+registry tarball rather than a vendored runtime. Windows users get `scoop install`, `npx`,
+`npm i -g`, or the deployed site. If winget changes, it is one more job in the same file, not
+a rewrite.
 
 ## Invariants
 
@@ -484,6 +516,42 @@ back instead (`0.1.0-app`) and an app release starts an npm publish. `cargo-rele
 first, and stamps `app/CHANGELOG.md`'s `## Unreleased` heading — the notes are
 extracted from that file by `scripts/release-notes.mjs --file app/CHANGELOG.md`,
 never generated from commit subjects, exactly as `publish.yml` does for npm.
+
+**The app is installable from both taps, as `qrdrop-app` and never as `qrdrop`.** A
+`tap` job in `app-release.yml` writes `Casks/qrdrop-app.rb` to `stan-ely/homebrew-tap` and
+`bucket/qrdrop-app.json` to `stan-ely/scoop-bucket`, beside the CLI's formula and manifest in
+the same two repositories. The name is what keeps them apart: a formula and a cask sharing
+one token in one tap is legal, and it makes `brew install qrdrop` warn and quietly resolve to
+the formula — a trap for whoever meant the app. That job hashes the dmg and the zip
+**downloaded from the Release**, not the copies the `release` job had on disk, for the reason
+`publish.yml` gives about hashing the registry's tarball: the URL in a manifest is what an
+install actually fetches.
+
+The cask is `depends_on arch: :arm64`, and that is a refusal rather than a precaution.
+`macos-latest` is an Apple-silicon runner and the desktop job builds exactly one dmg from it,
+so without that stanza an Intel Mac installs a bundle that cannot launch and says nothing
+useful about why. Adding an `x86_64-apple-darwin` build was the alternative: a second cold
+Rust compile every release, for hardware Apple no longer sells. Its `caveats` must keep
+saying the app is unsigned and give the `xattr` line, because `brew install --cask` applies
+the quarantine attribute — a tap that installs these bytes silently routes people around the
+one warning the Release notes go out of their way to make legible.
+
+**Scoop gets a portable zip of `qrdrop.exe`, not the NSIS installer.** Scoop installs into a
+directory it owns and does not run installers. Extracting the `.exe` with 7-Zip is the
+shortcut and the wrong one: what comes out is `$PLUGINSDIR` and a layout belonging to the
+installer generator, so a manifest built on it breaks on an nsis-plugin change with nothing
+to read in the diff. The `desktop` job zips the binary it already built instead. The one
+thing that loses: the NSIS package downloads the Evergreen WebView2 runtime when it is
+missing and a zip cannot — that is Windows 11 and Windows 10 21H2 or later out of the box,
+and the Release body says so. `shortcuts` in that manifest is what puts a GUI app in the
+Start Menu; a bare `bin` shim is right for a CLI and would leave this launchable only by
+path. Its `checkver` carries an explicit `app-v` regex because the default `github` strategy
+reads whatever release is newest, and this repository alternates npm tags with app tags.
+
+`SHA256SUMS` in the app release is written with bare filenames (`sha256sum *`, not `./*`)
+because scoop's autoupdate reads that file to find the hash of the artifact it is about to
+point at, matching on the basename. A leading `./` is invisible to `sha256sum -c` and
+silently defeats that match.
 
 **The APK is signed and everything else is not, and the Release body must keep saying
 so.** There is no Windows certificate and no Apple Developer account, so macOS
