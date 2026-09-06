@@ -1,0 +1,200 @@
+# Compiles the Tauri shell on every platform it targets. Build-only: nothing
+# here is signed, uploaded, or released -- that is Phase 5's job and it will
+# live in its own file on an `app-v*` tag.
+#
+# There is no tag trigger on purpose. `v*` belongs to npm (publish.yml, whose
+# FILENAME is a contract with npm trusted publishing) and to pages.yml; adding
+# a tag trigger here is how those two would start racing a third run.
+#
+# Why this exists at all: until now nothing compiled the Rust crate on a pull
+# request. ci.yml is Node-only, and Phase 3's `cargo check` was something
+# someone remembered to run locally. An app regression therefore surfaced
+# whenever the next person happened to run `mise run app:build`, which on a
+# project with no Mac and no Android device in reach meant iOS and Android
+# regressions surfaced never.
+name: app
+
+# The two path lists are duplicated rather than shared through a YAML anchor:
+# GitHub's workflow parser does not support anchors, and a file that is valid
+# YAML but not a valid workflow fails at dispatch time with a message that does
+# not mention aliases.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'scripts/build-site.mjs'
+      - 'scripts/generate-tauri-config.mjs'
+      - 'mise.toml'
+      - '.github/workflows/app.yml'
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'scripts/build-site.mjs'
+      - 'scripts/generate-tauri-config.mjs'
+      - 'mise.toml'
+      - '.github/workflows/app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A second push to the same branch makes the first one's answer worthless, and
+# these jobs are long (a cold Rust build on three OSes plus two mobile
+# toolchains). Cancel rather than queue.
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The regression net for the everyday case. `--no-bundle` stops short of the
+  # installer: bundling is slow, needs signing identities on two of these three
+  # OSes, and proves nothing about the code that the compile and link did not.
+  desktop:
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      # mise rather than setup-node + a pinned rust-toolchain action: mise.toml
+      # already pins node, rust and the JDK, and a second copy of those
+      # versions in this file is precisely the drift the rest of the repo goes
+      # out of its way to avoid (see tokens.js, buildCSP, tauri.conf.template).
+      - uses: jdx/mise-action@v2
+
+      - name: Install Linux webview dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - run: npm ci
+      - run: npm ci --prefix app
+
+      # app/dist and the CSP in tauri.conf.json are inputs to the Rust build
+      # (frontendDist, generate_context!), so they have to exist first.
+      - run: mise run app:build-site
+      - run: mise run app:config
+
+      # --debug because this is a compile check and release codegen roughly
+      # doubles it for no extra signal.
+      - run: npx tauri build --debug --no-bundle
+        working-directory: app
+
+  # iOS is compiled here and nowhere else -- there is no Mac on this project,
+  # so without this job "does the iOS target still link" has no answer.
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v2
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      # The simulator target, not the device one: the device slice cannot link
+      # without a signing identity, and this job deliberately has none.
+      - run: rustup target add aarch64-apple-ios-sim
+
+      - run: npm ci
+      - run: npm ci --prefix app
+      - run: mise run app:build-site
+      - run: mise run app:config
+
+      # gen/apple is committed once it exists (see .gitignore). Until then, and
+      # on any future Tauri CLI bump that needs a re-scaffold, init fills it in
+      # rather than failing -- but never over a committed tree, which would
+      # overwrite hand-made project settings with a fresh scaffold.
+      - name: Scaffold gen/apple if absent
+        run: '[ -d src-tauri/gen/apple ] || npx tauri ios init --ci'
+        working-directory: app
+
+      # Informational: names the real scheme in the log, so a scheme rename in
+      # a future CLI version is a one-line fix here rather than a guess.
+      - run: xcodebuild -list -project app/src-tauri/gen/apple/qrdrop.xcodeproj
+
+      # NOT `tauri ios build`. That drives an archive + export, which wants a
+      # development team even for the "debugging" export method -- so it fails
+      # on a runner with no identity for reasons that say nothing about the
+      # code. Building the simulator SDK with signing switched off compiles the
+      # Rust staticlib and links the Swift shell, which is the whole question
+      # this job asks. It produces a .app nobody keeps.
+      - name: Build for the simulator, unsigned
+        run: |
+          xcodebuild build \
+            -project app/src-tauri/gen/apple/qrdrop.xcodeproj \
+            -scheme qrdrop_iOS \
+            -configuration debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+  # A compile check, not a substitute for running it on a phone. It catches
+  # Gradle, manifest and NDK-link breakage on every PR; whether the camera
+  # actually opens is a question only a real device answers, and that run is
+  # recorded in app/CAPABILITIES.md.
+  #
+  # This does not contradict "the SDK download stays off the dev machine": a
+  # runner is throwaway, and fetching it here is what keeps it optional there.
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v2
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      # One ABI. Building all four quadruples the job for a check that is
+      # about "does it compile and link at all", and arm64 is what every phone
+      # this decade actually runs.
+      - run: rustup target add aarch64-linux-android
+
+      - run: npm ci
+      - run: npm ci --prefix app
+      - run: mise run app:build-site
+      - run: mise run app:config
+
+      - name: Scaffold gen/android if absent
+        run: '[ -d src-tauri/gen/android ] || npx tauri android init --ci'
+        working-directory: app
+
+      # The camera permission is the one edit tauri.conf.json cannot express,
+      # and it is the whole reason gen/ is committed rather than ignored. Losing
+      # it silently ships an app whose scanner does nothing, which is a bug that
+      # would otherwise be found by a person holding a phone.
+      #
+      # Only assert it once gen/android is actually tracked. Before that the
+      # step above scaffolded a fresh tree, which correctly has no such line,
+      # and a hard failure there would just be this job reporting that Phase 4
+      # is mid-flight.
+      - name: Assert the camera permission survived
+        run: |
+          manifest=app/src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          if git ls-files --error-unmatch "$manifest" >/dev/null 2>&1; then
+            grep -q 'android.permission.CAMERA' "$manifest"
+          else
+            echo "::warning::gen/android is not committed yet -- skipping the camera-permission assertion."
+          fi
+
+      # The runner image ships an NDK and points this at it, which is steadier
+      # than pinning a build number here that has to be bumped by hand.
+      - name: Build an unsigned debug APK
+        run: npx tauri android build --apk --debug --target aarch64
+        working-directory: app
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
