@@ -552,8 +552,8 @@ Tauri debug build exposes; the same CDP technique used on Windows in Phase 3.
 | `BarcodeDetector` | likely absent | **PRESENT** -- expectation was wrong |
 | `showSaveFilePicker` | absent | **PRESENT** -- expectation was wrong |
 | `plugin-dialog` `save()` | returns a `content://` URI | **confirmed** -- `content://com.android.providers.downloads.documents/document/1512` |
-| native sink accepts that path | suspected failure | **FAIL** -- `sink_open` -> `No such file or directory (os error 2)` |
-| full LAN transfer, digests match | pass | **not run** -- blocked by the sink failure above |
+| native sink accepts that path (Android as *receiver*) | suspected failure | **FAIL** -- `sink_open` -> `No such file or directory (os error 2)` |
+| full LAN transfer, Android as *sender* -> Windows | pass | **pass** -- 3.0 MB, digest `cf7dc838...380747`, identical to the Phase 3 value for the same file. Direct LAN path: TURN never allocated once (every request 400'd), so nothing was relayed. |
 | Beam send / Beam receive at ~10 Hz | pass | **not run** |
 | deep link `qrdrop:<code>` -> verify screen | record | **not run** |
 | `https://share.stan-ely.com/#qrdrop:<code>` opens the app | no, needs signing | **not run** -- association still inert |
@@ -599,7 +599,36 @@ that is the right outcome given the sink is the fast path on desktop. But the
 comment overstates its case and the platform seam is load-bearing for a reason
 that is no longer "the API does not exist here".
 
-#### The sink is broken on Android, and this is what blocks a transfer
+#### The first real transfer found a CSP bug, not an Android bug
+
+The phone-to-desktop transfer failed twice before it worked, and the cause was
+on the **Windows** side and had nothing to do with Android: the generated CSP
+did not allow `http://ipc.localhost`, so Tauri's invoke fetch was refused,
+Tauri silently fell back to a JSON body, and `sink_write` rejected the first
+chunk. Fixed in `buildCSP(..., { ipc: true })`; the reasoning is in that
+function's comment and the commit.
+
+It is recorded here because of *how* it presented, which is the transferable
+lesson. The visible error was "the two devices lost track of each other" -- a
+message about the network, produced by a CSP directive, three layers from the
+cause. `receiver.js`'s `abortActive` nulls `active` on the first failure, and
+every chunk still in flight then throws `Chunk arrived with no accepted file`,
+each one overwriting the displayed message. The real error appeared once, four
+milliseconds before a storm of thirteen. It was recovered by hooking the
+element's `_fail` over CDP and reading the whole ordered sequence.
+
+`receiver.js` already anticipated the storm -- its comment names it -- but the
+fix made stray frames non-fatal without making the *first* error the one the
+user sees. That reporting gap is a real finding and is not addressed here.
+
+Throughput measured on the same debug binary, writing 32 MiB per block size:
+4.0 MB/s at 16 KiB, 20.7 at 256 KiB, 24.1 at 1 MiB. The shape matches the
+Phase 2 curve (small blocks starve on per-invoke cost, and it flattens after
+256 KiB), and the absolute numbers are below Phase 2's 34/42 because this is an
+unoptimized debug build. At 24 MB/s the sink moves a 3 MB file in about a
+tenth of a second, so it is not what makes a transfer feel slow.
+
+#### The sink is broken on Android as a receiver, and this is what blocks that direction
 
 Confirmed rather than suspected. `save()` opens the Storage Access Framework
 picker and returns a **`content://` URI**, and `sink.rs`'s `sink_open` does
