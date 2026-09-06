@@ -4,13 +4,19 @@
   and the value is changed here by hand for the same reason the CAMERA
   permission in AndroidManifest.xml is: tauri.conf.json has no field that can
   express it, so the delta lives in this committed gen/ tree. Re-running
-  `tauri icon` resets it to white -- check this file in the diff.
+  `tauri icon` resets it to white, so check this file in the diff.
 
-  a8462d is --accent-rgb from src/web/tokens.js, which is where the colour
-  actually lives. The foreground PNG is full-bleed accent already, so this
+  a8462d is the accent token in src/web/tokens.js, which is where the colour
+  actually lives. The foreground PNG is full bleed accent already, so this
   layer is only visible in the parallax a launcher applies when it shifts the
   two layers against each other; white there flashes a pale edge on an
   otherwise solid tile.
+
+  Note that no two-hyphen sequence appears anywhere above. XML forbids it
+  inside a comment, and this repo's prose style reaches for it as an em dash
+  constantly. Android's manifest merger reports the result as a bare "Error
+  parsing" with no line number, which is a slow thing to find twice, and this
+  file is the second time.
 -->
 <resources>
   <color name="ic_launcher_background">#a8462d</color>

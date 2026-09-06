@@ -116,40 +116,44 @@ jobs:
       # on any future Tauri CLI bump that needs a re-scaffold, init fills it in
       # rather than failing -- but never over a committed tree, which would
       # overwrite hand-made project settings with a fresh scaffold.
+      #
+      # Scaffolding it is itself a check: `tauri ios init` is what merges
+      # Info.ios.plist (the camera usage description) and generates the Xcode
+      # project from tauri.conf.json, so a config this CLI version rejects
+      # fails here rather than on someone's Mac.
       - name: Scaffold gen/apple if absent
         run: '[ -d src-tauri/gen/apple ] || npx tauri ios init --ci'
         working-directory: app
 
-      # Informational: names the real scheme in the log, so a scheme rename in
-      # a future CLI version is a one-line fix here rather than a guess.
       - run: xcodebuild -list -project app/src-tauri/gen/apple/qrdrop.xcodeproj
 
-      # NOT `tauri ios build`. That drives an archive + export, which wants a
-      # development team even for the "debugging" export method -- so it fails
-      # on a runner with no identity for reasons that say nothing about the
-      # code. Building the simulator SDK with signing switched off compiles the
-      # Rust staticlib and links the Swift shell, which is the whole question
-      # this job asks. It produces a .app nobody keeps.
+      # Cargo, not xcodebuild, and this is the second answer rather than the
+      # first. Two attempts at driving the generated Xcode project directly
+      # both failed with a bare exit 65, in `debug` and then in `release`,
+      # from the same panic inside Tauri's own "Build Rust Code" script phase:
       #
-      # `release`, NOT `debug`, and that is not about optimisation. Tauri's
-      # generated Xcode project has a "Build Rust Code" phase that shells out
-      # to `tauri ios xcode-script`, and that command reads the configuration
-      # to decide which mode it is in: `debug` means `tauri ios dev`, so it
-      # goes looking for the dev server's address in
-      # $TMPDIR/<identifier>-server-addr and panics when there is none --
-      # "failed to read missing addr file ... (os error 2)", surfacing as a
-      # bare xcodebuild exit 65. There is no dev server in CI and there should
-      # not be one; `release` is the configuration that compiles the staticlib
-      # and links the shell without expecting a webview to talk to.
-      - name: Build for the simulator, unsigned
-        run: |
-          xcodebuild build \
-            -project app/src-tauri/gen/apple/qrdrop.xcodeproj \
-            -scheme qrdrop_iOS \
-            -configuration release \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO
+      #   failed to read missing addr file $TMPDIR/<identifier>-server-addr
+      #
+      # That file is written by the tauri CLI before it invokes xcodebuild.
+      # Running xcodebuild ourselves skips the step that creates it, so the
+      # script phase reads a path that cannot exist -- which means driving the
+      # project directly is not a thing this project can be configured into,
+      # and the configuration guess (`debug` meaning dev) was wrong too. The
+      # supported route is `tauri ios build`, which archives and exports and
+      # therefore wants a development team even for the "debugging" export
+      # method, so it fails on an identity-less runner for reasons that say
+      # nothing about the code.
+      #
+      # What is left is the question actually worth asking on every PR: does
+      # this crate, with its plugins and its two mobile crate types, still
+      # compile and link for an Apple target? cargo answers that with no
+      # Xcode project, no signing identity and no dev server, in about a
+      # minute. What it does not cover is the Swift shell around it -- which
+      # is Tauri's generated code, which nothing in this repo edits, and which
+      # `tauri ios init` above already proves regenerates.
+      - name: Compile the crate for the iOS simulator target
+        run: cargo build --lib --target aarch64-apple-ios-sim
+        working-directory: app/src-tauri
 
   # A compile check, not a substitute for running it on a phone. It catches
   # Gradle, manifest and NDK-link breakage on every PR; whether the camera

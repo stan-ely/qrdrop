@@ -49,6 +49,29 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The signing identities behind the app-association files. build-site.mjs's
+    # wellKnownFiles() has read these since Phase 3 and has been emitting an
+    # empty fingerprint list -- which Android reads as "no app claims this
+    # domain" -- because no signing key existed yet. One now does, so the
+    # variable is what turns .well-known/assetlinks.json live, with no code
+    # change, which is exactly the seam that function was written for.
+    #
+    # A repository VARIABLE and not a secret, deliberately: a certificate
+    # fingerprint is published, by design, at a well-known URL on this very
+    # domain. Storing a public value as a secret costs nothing and teaches that
+    # the secret list is a place things go to feel safe.
+    #
+    # APPLE_TEAM_ID stays unset and apple-app-site-association stays inert:
+    # there is no Apple Developer account, and an appID whose team prefix does
+    # not match a signed build is ignored by iOS anyway.
+    #
+    # Note which half of the site this reaches. Both trees are built here, but
+    # the STABLE one comes from the latest v* tag, and a tag cut before
+    # wellKnownFiles existed emits no association files at all. Android fetches
+    # them from the domain root, i.e. the stable tree -- so association goes
+    # live at /edge/ immediately and at / on the next npm release.
+    env:
+      ANDROID_CERT_FINGERPRINT: ${{ vars.ANDROID_CERT_FINGERPRINT }}
     steps:
       # fetch-depth: 0 because the stable half of the deploy is found with
       # `git describe --tags`, and the default shallow clone has no tags to

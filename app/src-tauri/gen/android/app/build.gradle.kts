@@ -13,6 +13,25 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// The release signing key, and the second hand-edit this committed gen/ tree
+// exists to carry (the first is the CAMERA permission in AndroidManifest.xml
+// -- see .gitignore for why the tree is source rather than generated output).
+// tauri.conf.json has no field for an Android signing config either.
+//
+// keystore.properties is NOT committed and is not expected to exist: it is
+// written by .github/workflows/app-release.yml from repository secrets, for
+// the length of one job. Everything below is therefore conditional on the
+// file being there, so that `mise run app:android:build` on a machine with no
+// key keeps producing exactly the debug APK it always has. An unconditional
+// signingConfig fails the whole Gradle configuration phase with a null
+// storeFile, which would make the key a requirement for building at all.
+val keystoreProperties = Properties().apply {
+    val propFile = rootProject.file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     compileSdk = 36
     namespace = "com.stan_ely.qrdrop"
@@ -23,6 +42,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (keystoreProperties.containsKey("storeFile")) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +66,14 @@ android {
             }
         }
         getByName("release") {
+            // Left unsigned when there is no keystore.properties, rather than
+            // falling back to the debug key. A release APK signed with the
+            // debug certificate installs and looks fine, and its signature
+            // means nothing -- the debug key is generated per machine, shared
+            // by every Android project on it, and its fingerprint can never go
+            // in assetlinks.json. Better to produce something that plainly
+            // will not install than something that quietly attests to nothing.
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

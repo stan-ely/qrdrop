@@ -8,6 +8,14 @@
  *
  *   node scripts/release-notes.mjs 0.3.1
  *   node scripts/release-notes.mjs v0.3.1     # a leading v is fine
+ *   node scripts/release-notes.mjs --file app/CHANGELOG.md 0.1.0
+ *
+ * There are two changelogs, because there are two things released on two tags
+ * from one repository: `v*` publishes the npm package and reads CHANGELOG.md,
+ * `app-v*` releases the Tauri shell and reads app/CHANGELOG.md. The app's
+ * version is its crate version and deliberately unrelated to the package's
+ * (see CLAUDE.md), so one file covering both would be a single list of
+ * headings in two unrelated sequences.
  *
  * Exits non-zero, loudly, when the section is missing. A Release with an empty
  * body is worse than a failed job: the job can be re-run after the changelog is
@@ -57,9 +65,25 @@ export function sectionFor(changelog, version) {
  * @returns {Promise<void>}
  */
 async function main(argv) {
-  const raw = argv[0]
+  // Parsed by hand rather than with parseArgs: one optional flag, and the
+  // whole point of this script is that a release workflow can call it without
+  // anything having to be installed first.
+  let file = 'CHANGELOG.md'
+  const rest = [...argv]
+  const flag = rest.indexOf('--file')
+  if (flag !== -1) {
+    const value = rest[flag + 1]
+    if (!value) {
+      process.stderr.write('--file needs a path\n')
+      process.exit(2)
+    }
+    file = value
+    rest.splice(flag, 2)
+  }
+
+  const raw = rest[0]
   if (!raw) {
-    process.stderr.write('usage: node scripts/release-notes.mjs <version>\n')
+    process.stderr.write('usage: node scripts/release-notes.mjs [--file <changelog>] <version>\n')
     process.exit(2)
   }
 
@@ -67,19 +91,23 @@ async function main(argv) {
   // workflow can pass GITHUB_REF_NAME straight through.
   const version = raw.replace(/^v/, '')
 
-  const changelog = await readFile(path.join(ROOT, 'CHANGELOG.md'), 'utf8')
+  // Resolved against the repository root, not the working directory: the two
+  // workflows that call this run from different places, and a relative read
+  // that depends on the caller's cwd is a failure that only shows up on a
+  // release day.
+  const changelog = await readFile(path.join(ROOT, file), 'utf8')
   const section = sectionFor(changelog, version)
 
   if (section === null) {
     process.stderr.write(
-      `CHANGELOG.md has no "## ${version}" section.\n`
+      `${file} has no "## ${version}" section.\n`
       + 'Write the entry before tagging -- the release notes come from it.\n',
     )
     process.exit(1)
   }
 
   if (section === '') {
-    process.stderr.write(`CHANGELOG.md's "## ${version}" section is empty.\n`)
+    process.stderr.write(`${file}'s "## ${version}" section is empty.\n`)
     process.exit(1)
   }
 
