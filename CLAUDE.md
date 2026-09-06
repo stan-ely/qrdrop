@@ -26,16 +26,29 @@ node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
 ```
 
-Three image generators, all hand-run and none of them in `npm run build` — that
+Four image generators, all hand-run and none of them in `npm run build` — that
 runs in CI and in `prepublishOnly`, where downloading a browser is not
 acceptable. Their output is committed; run the relevant one when the palette,
 the card copy, or a diagram source changes:
 
 ```bash
 node scripts/make-og.mjs                                 # site/og.png, the social card       (mise run img:og)
+node scripts/make-icon.mjs                               # the app mark + site/favicon.png    (mise run img:icon)
 node scripts/make-diagrams.mjs                           # docs/diagrams/*.png from the .mmd sources (mise run img:diagrams)
 npm run build && node scripts/make-screenshots.mjs       # docs/screenshots/*.png              (mise run img:screenshots, which builds first)
 ```
+
+`make-icon.mjs` writes `app/src-tauri/icons/source.png` and stops there; the
+fan-out to every platform size is `npx tauri icon app/src-tauri/icons/source.png`,
+deliberately a second command because it writes into `app/src-tauri/gen/`, which
+is committed source. **Read that diff.** It resets the adaptive-icon background
+colour in `gen/android/.../values/ic_launcher_background.xml` to white every
+time, and that file is a hand-edit — one of two in `gen/`, the other being the
+camera permission. The mark occupies the middle 47% of the canvas and that is
+arithmetic, not taste: the same image becomes Android's adaptive-icon
+foreground, a launcher masks it to the central 66.7%, and the largest square
+inside that circle is 47.1%. At 64% the corner eyes are outside the mask on any
+phone with round icons, which is invisible in a file browser.
 
 `make-screenshots.mjs` produces the README's pictures and **only** those: three
 screens, at one 760px-wide viewport. This file used to claim it drove `_setState`
@@ -442,13 +455,65 @@ the SDK version appears twice in `mise.toml`; those two lines move together.
 `JAVA_HOME` comes from mise's `java` and wins over any system JDK.
 
 **`.github/workflows/app.yml` compiles the shell and ships nothing** — a desktop
-`--no-bundle` matrix, an unsigned Android debug APK, and an iOS *simulator* build.
-It has no tag trigger on purpose: `v*` belongs to `publish.yml` and `pages.yml`, and
-app releases are a later phase. The iOS job runs `xcodebuild … -sdk iphonesimulator
-CODE_SIGNING_ALLOWED=NO`, **not** `tauri ios build` — that drives an archive and
-export which wants a development team even for the `debugging` export method, and so
-fails on an identity-less runner for reasons that say nothing about the code. Before
-this workflow, nothing compiled the Rust crate on a pull request at all.
+`--no-bundle` matrix, an unsigned Android debug APK, and an iOS compile. It has no
+tag trigger on purpose: `v*` belongs to `publish.yml` and `pages.yml`, and releasing
+the app is `app-release.yml`'s job (below). Before this workflow, nothing compiled
+the Rust crate on a pull request at all.
+
+**The iOS job runs `cargo build --lib --target aarch64-apple-ios-sim`, and both of
+the more ambitious things it tried first are dead ends.** `tauri ios build` archives
+and exports, which wants a development team even for the `debugging` export method,
+so it fails on an identity-less runner for reasons that say nothing about the code.
+Driving the generated Xcode project with `xcodebuild` directly fails too, and less
+obviously: the project's "Build Rust Code" phase shells out to `tauri ios
+xcode-script`, which panics reading `$TMPDIR/<identifier>-server-addr` — a file the
+tauri CLI writes just before *it* invokes xcodebuild. Skipping the CLI skips the step
+that creates it, so the path can never exist. It surfaces as a bare `exit 65`. The
+configuration is not the variable: it fails identically in `debug` and `release`, so
+"debug means dev mode" is a plausible reading of that panic and a wrong one. What is
+left covers the crate, its plugins and both mobile crate types; it does not cover the
+Swift shell, which is generated code nothing here edits and which the `tauri ios init`
+step already proves regenerates.
+
+**`.github/workflows/app-release.yml` is the app's release, on `app-v*`, and the tag
+prefix is load-bearing.** A workflow's `tags:` glob is anchored at the start, so `v*`
+matches `v0.3.1` and does *not* match `app-v0.1.0` — which is the whole reason the
+npm and app releases can live in one repository without racing. Put the prefix on the
+back instead (`0.1.0-app`) and an app release starts an npm publish. `cargo-release`
+(`app/src-tauri/release.toml`) produces the tag, `push = false` so a human looks at it
+first, and stamps `app/CHANGELOG.md`'s `## Unreleased` heading — the notes are
+extracted from that file by `scripts/release-notes.mjs --file app/CHANGELOG.md`,
+never generated from commit subjects, exactly as `publish.yml` does for npm.
+
+**The APK is signed and everything else is not, and the Release body must keep saying
+so.** There is no Windows certificate and no Apple Developer account, so macOS
+quarantines the `.dmg` and SmartScreen warns about the installer. Those warnings are
+accurate and the notes give the incantation for each rather than letting someone meet
+them cold — a tool whose subject is authenticating the other end is the worst possible
+place to teach people to click through a publisher warning. Build provenance
+attestations are on every file, which is a verifiable claim about origin and not a
+code signature; do not describe it as one.
+
+**The Android signing key never enters the repository.** `ANDROID_KEYSTORE_BASE64`
+and its three passwords are repository secrets, written into `RUNNER_TEMP` and a
+`keystore.properties` for the length of one job. `gen/android/app/build.gradle.kts`
+reads that file *if it exists* and leaves the release build unsigned if it does not,
+which is what keeps a keyless `mise run app:android:build` working — and is also
+exactly how an unsigned APK could reach a Release unnoticed, so the workflow runs
+`apksigner verify --print-certs` rather than trusting it. It deliberately does not
+fall back to the debug key: a release APK signed with a per-machine debug certificate
+installs, looks fine, and attests to nothing.
+
+**`ANDROID_CERT_FINGERPRINT` is a repository *variable*, not a secret**, read by
+`pages.yml` into `build-site.mjs`'s `wellKnownFiles`. A certificate fingerprint is
+published by design at a well-known URL on that very domain; storing a public value
+as a secret teaches that the secret list is where things go to feel safe. Setting it
+is what makes `.well-known/assetlinks.json` non-empty, and therefore what makes a
+scanned code open the installed app. Note *which* half of the site: both trees are
+built in that job, but the stable one at `/` comes from the latest `v*` tag, and a tag
+cut before `wellKnownFiles` existed emits no association files at all. Android reads
+them from the domain root, so association goes live at `/edge/` immediately and at `/`
+on the next npm release.
 
 **The platform seam must stay a seam.** `src/web/element.js` reads
 `getPlatform().createSink` from `src/web/platform.js` rather than importing

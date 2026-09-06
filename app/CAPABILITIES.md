@@ -972,6 +972,142 @@ hides the network buttons when `!rtcAvailable` and refuses Beam receive when
 cannot do something, which is why that seam was built before it was needed.
 Record which mode Android actually ships in.
 
+
+## Phase 5: releasing the app
+
+The shell worked and there was no way to get it. No release workflow, no
+changelog, no version -- the crate was still `0.0.0` -- and no icon anyone had
+chosen: the desktop bundle carried a placeholder that commit `85cfe27` names as
+such in its own subject, and the Android launcher showed Tauri's scaffold logo.
+
+### `app.yml`'s first real run, which is what the Phase 4 gate was waiting for
+
+Item 5 below was "the workflow is committed but unpushed, so all three jobs are
+unproven". Pushed, and two of them were wrong. Both failures are worth keeping,
+because both were invisible to every local check.
+
+**The iOS job could not have worked as written.** It drove `xcodebuild` against
+the generated Xcode project, and that project's "Build Rust Code" phase shells
+out to `tauri ios xcode-script`, which panics:
+
+```
+failed to read missing addr file $TMPDIR/com.stan-ely.qrdrop-server-addr
+```
+
+The tauri CLI writes that file just before *it* invokes xcodebuild. Running
+xcodebuild ourselves skips the step that creates it, so the path can never
+exist, and the whole thing surfaces as a bare `exit 65` with nothing in it that
+points at a cause.
+
+The first fix guessed that `debug` was what put the script into dev mode and
+switched to `release`. It failed identically -- which is the useful part of the
+attempt: the configuration is not the variable, and a plausible reading of that
+panic was simply wrong. The supported route is `tauri ios build`, which archives
+and exports and wants a development team even for the `debugging` export method,
+which is exactly why the job avoided it in the first place.
+
+So the job now runs `cargo build --lib --target aarch64-apple-ios-sim`, and the
+claim it makes is smaller and true: the crate, its plugins and both mobile crate
+types still compile and link for an Apple target. It does not cover the Swift
+shell -- generated code nothing in this repo edits, and which the `tauri ios
+init` step above it already proves regenerates. Claiming less and passing is
+worth more than claiming to link the whole app and failing on every push.
+
+**The Android job broke on a lesson already written down here.** XML forbids the
+two-hyphen sequence inside a comment; the house prose style reaches for it as an
+em dash constantly; and the new adaptive-icon background file carried two.
+Android's resource merger reports it with a line number this time, but the
+manifest merger's version of the same failure has none. Second occurrence. The
+comment in that file now says so, in prose containing no such sequence.
+
+Everything else was green first time: three desktop bundles, and the Android APK
+including the camera-permission assertion.
+
+### The app mark
+
+`scripts/make-icon.mjs` renders a 1024px source from `tokensCSS(':root')`, and
+`npx tauri icon` fans it out. Hand-run and committed, for the reason
+`make-og.mjs` states: `npm run build` runs in CI and in `prepublishOnly`, and
+neither may download a browser.
+
+The mark is the three finder patterns of a QR code. The wordmark could not be
+it -- it is pure CSS type with no logo file behind it, and type at the 48px an
+Android launcher draws is mud. The finder patterns are the part of a code that
+survives being shrunk, which is why a scanner looks for them first. It is not a
+scannable code: `make-og.mjs` argues a decorative fake QR is a small lie, and
+that argument is about something *claiming* to be scannable. Three eyes claim
+nothing.
+
+**One measurement rather than a taste judgement.** The mark occupies the middle
+47% of the canvas. `tauri icon` emits the same image as Android's adaptive-icon
+foreground, a launcher masks that to the central 72 of 108 dp -- 66.7% -- and
+the largest square inside that circle is 0.667 / sqrt(2) = 47.1% of the width.
+The first render used 64%, which looks correct in a file browser and puts the
+top-left eye's corner outside the mask on any phone with round icons.
+
+Two hand-edits to the committed `gen/` tree came with it, which is the second
+and third use of the arrangement Phase 4 set up: the adaptive background colour,
+which `tauri icon` rewrites to `#fff` on every run, and the deletion of the two
+scaffold drawables the new `anydpi-v26` icon no longer references.
+
+The site had no favicon at all -- no `<link rel="icon">` in `index.html` -- so a
+tab, a bookmark and a phone home screen all showed a blank sheet for a tool
+whose subject is a recognisable square. It is the same mark from the same
+script, drawn at 512 rather than downsampled from 1024, because a border and two
+nested radii round differently when the layout engine resolves them at the
+target size than when a resampler averages them down.
+
+### Signing, and assetlinks finally going live
+
+A 4096-bit RSA release keystore now exists. It is not in the repository and
+never will be: its base64 is a repository secret, and `app-release.yml` writes
+it and a `keystore.properties` into the runner for the length of one job.
+`gen/android/app/build.gradle.kts` reads that file *if it exists* and leaves the
+release build unsigned if it does not, which is what keeps a keyless local
+`mise run app:android:build` working -- and is also precisely how an unsigned
+APK could reach a Release with nothing failing, so the workflow runs `apksigner
+verify --print-certs` rather than trusting the arrangement.
+
+It deliberately does not fall back to the debug key. A release APK signed with a
+per-machine debug certificate installs, looks fine, and attests to nothing, and
+its fingerprint can never go in `assetlinks.json`.
+
+The certificate's SHA-256 is a repository **variable**, not a secret: a
+fingerprint is published by design at a well-known URL on the very domain it
+describes, and storing a public value as a secret teaches that the secret list
+is where things go to feel safe. `build-site.mjs`'s `wellKnownFiles` has read
+`ANDROID_CERT_FINGERPRINT` since Phase 3 and has been emitting an empty array --
+which Android reads as "no app claims this domain" -- because no key existed.
+Setting the variable turns it on with no code change, which is the seam that
+function was written for.
+
+**One thing that does not follow from that, and would have been assumed.**
+`pages.yml` builds both trees, but the stable one at `/` comes from the latest
+`v*` tag, and a tag cut before `wellKnownFiles` existed emits no association
+files at all. Android fetches them from the domain root. So association goes
+live at `/edge/` immediately and at `/` only on the next npm release -- setting
+the variable is necessary and, for the stable site, not yet sufficient.
+
+### What the release ships, and what it admits
+
+`app-release.yml` on `app-v*`. The tag prefix is load-bearing: a workflow's
+`tags:` glob is anchored at the start, so `v*` matches `v0.3.1` and does not
+match `app-v0.1.0`, which is what lets the npm release and the app release share
+a repository without racing. `0.1.0-app` would not have.
+
+The version gate and the changelog check run first and cost seconds, so a tag
+that disagrees with `Cargo.toml` fails while it can still be deleted rather than
+after a Release page exists. `cargo-release` (`app/src-tauri/release.toml`)
+produces the tag with `push = false`, so a human looks at it first.
+
+Only the APK is signed. macOS will quarantine the `.dmg` and SmartScreen will
+warn about the installer, and the Release body says so with the incantation for
+each rather than letting someone meet it cold. That is not politeness: a tool
+whose entire subject is authenticating the other end is the worst possible place
+to train people to click through a publisher warning. Build provenance
+attestations go on every file, which is a verifiable claim about origin and not
+a code signature, and the notes do not offer it as one.
+
 ### Gate
 
 **Config-lands gate (this phase):** `.github/workflows/app.yml` green on all
@@ -1006,5 +1142,18 @@ above. None of it blocks the config gate.
    for four milliseconds. Not addressed.
 4. **The unrun checklist rows**: Beam send, Beam receive at ~10 Hz, and the
    deep-link `qrdrop:<code>` path on Android.
-5. **`app.yml` has never run.** The workflow is committed but unpushed, so all
-   three jobs are unproven.
+5. ~~**`app.yml` has never run.**~~ **Closed.** Pushed and green on all five
+   jobs (run `34038984977`): three desktop bundles, the Android APK with its
+   camera-permission assertion, and iOS. It took three runs to get there and
+   the two failures are written up in the Phase 5 section above -- the iOS job
+   could not have worked as written, and the Android one broke on the
+   two-hyphen XML rule this file had already recorded once.
+6. **`app-release.yml` has never run either**, which is the same shape of gap
+   one level up. It is committed, its secrets exist, and no `app-v*` tag has
+   been pushed -- so the desktop bundle step, the keystore restore and the
+   Release assembly are all unproven. Cutting `app-v0.1.0` is what proves them.
+7. **The stable site's `assetlinks.json` is still empty**, even with
+   `ANDROID_CERT_FINGERPRINT` set: `/` is built from the last `v*` tag, which
+   predates `wellKnownFiles`. App-link association therefore works from
+   `/edge/` and not from the domain root until the next npm release. Nothing
+   to fix -- something to know before concluding the fingerprint did not take.
