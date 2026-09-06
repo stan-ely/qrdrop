@@ -528,29 +528,97 @@ file now says so in place.
 None of this is a capability result. The APK builds; whether it *runs*, and
 whether the camera opens, is the checklist below and needs a device.
 
-### On-device checklist -- Android
+### On-device checklist -- Android: MEASURED
 
-Run against a physical device over `adb` (or an AVD). Fill in the result
-column; report failures as findings, not as things to fix quietly.
+Run 2026-09-06 on a Realme RMX3868, **Android 16 (API 36), arm64-v8a** --
+the same API level the app targets, so this is the strictest current runtime
+permission behaviour rather than a lenient old one. Driven over `adb` plus
+the WebView's own DevTools socket
+(`adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`), which a
+Tauri debug build exposes; the same CDP technique used on Windows in Phase 3.
 
-| Check | Expectation | Result |
+| Check | Expected | Result |
 | --- | --- | --- |
-| `isSecureContext` | pass -- `http://tauri.localhost` is on wry's trustworthy list | |
-| `crypto.subtle` | pass | |
-| `showSaveFilePicker` | **absent** -- the native sink is the path | |
-| native sink round-trip + rough throughput | unmeasured on Android; see the `content://` question above | |
-| `BarcodeDetector` | likely **absent**, same component gap as WebView2 -> jsQR carries it | |
-| `getUserMedia` API present | pass | |
-| `getUserMedia` real-camera call -> live track | **open** -- see the permission question above | |
-| OS camera prompt appears | **open** -- this is the decider | |
-| `RTCPeerConnection` present | pass -- the WebView is evergreen Chromium | |
-| ICE gathering -> a host candidate | pass | |
-| full LAN transfer, digests match both ends | pass | |
-| `wss://` connect to a relay | pass | |
-| Beam send -- animated QR at ~10 Hz | pass | |
-| Beam receive -- decode at ~10 Hz from the camera | pending the camera result | |
-| deep link `qrdrop:<code>` reaches the verify screen | record | |
-| `https://share.stan-ely.com/#qrdrop:<code>` opens the app | **no** -- association needs signing, deferred as in Phase 3 | |
+| app installs and launches | pass | **pass** -- no crash, real UI renders |
+| `isSecureContext` | pass | **pass**, origin `http://tauri.localhost` as documented |
+| `crypto.subtle` | pass | **pass** |
+| `RTCPeerConnection` present | pass | **pass** -- UA is Chrome/151, evergreen |
+| ICE gather -> host candidate | pass | **pass** -- `192.168.1.2 ... typ host` |
+| `wss://` connect to a relay | pass | **pass** -- connected to `wss://nos.lol` |
+| choose screen shows the network buttons | pass | **pass** -- so `rtcAvailable` is true and `choose()` did not degrade |
+| `getUserMedia` API present | pass | **pass** |
+| `getUserMedia` real-camera call | open question | **pass** -- live track, `camera 0, facing back` |
+| OS camera prompt appears | **the decider** | **pass** -- see below |
+| `BarcodeDetector` | likely absent | **PRESENT** -- expectation was wrong |
+| `showSaveFilePicker` | absent | **PRESENT** -- expectation was wrong |
+| `plugin-dialog` `save()` | returns a `content://` URI | **confirmed** -- `content://com.android.providers.downloads.documents/document/1512` |
+| native sink accepts that path | suspected failure | **FAIL** -- `sink_open` -> `No such file or directory (os error 2)` |
+| full LAN transfer, digests match | pass | **not run** -- blocked by the sink failure above |
+| Beam send / Beam receive at ~10 Hz | pass | **not run** |
+| deep link `qrdrop:<code>` -> verify screen | record | **not run** |
+| `https://share.stan-ely.com/#qrdrop:<code>` opens the app | no, needs signing | **not run** -- association still inert |
+
+#### The camera question is answered: wry raises the OS prompt
+
+This was the item flagged as most likely to be wrong, and it is not.
+`navigator.permissions.query({name:'camera'})` reports **`prompt`** on Android,
+not the `denied` that WebView2 returns, so the reactive path that failed on
+Windows is live here. Calling `getUserMedia` produced a real Android runtime
+permission dialog, and after it was granted the call returned a live rear
+camera track. `dumpsys package` confirms the OS-level grant:
+
+```
+android.permission.CAMERA: granted=true,
+  flags=[ USER_SET|USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED|ONE_TIME ]
+```
+
+`USER_SET` and `ONE_TIME` are the tell: a human answered a dialog, and chose a
+one-time grant. So the manifest `<uses-permission>` plus wry's own bridging is
+sufficient, and **neither fork contemplated for this phase is needed** -- no
+Kotlin `requestPermissions` shim, no third-party permissions plugin. Note that
+because `ONE_TIME` grants lapse, `permissions.query` reads `prompt` again
+afterwards; that is correct Android behaviour, not a regression.
+
+#### Two expectations this file got wrong
+
+Recorded because the reasoning that produced them is still in the file above
+and should not be trusted the next time it is reused.
+
+**`BarcodeDetector` is present.** The prediction reasoned by analogy from
+WebView2, where the Shape Detection API is missing because WebView2 does not
+carry the component that provides it. The Android System WebView does carry
+it. jsQR is therefore a fallback on Android rather than the only path, and
+Beam's decode budget is the fast one, not the 50-100 ms jsQR case that set the
+10 Hz default.
+
+**`showSaveFilePicker` is present.** `app/src/tauri-sink.js`'s header states it
+is "absent from every webview Tauri embeds", and that is now false for this
+one. It changes nothing in practice -- `app/src/main.js` calls
+`registerPlatform()` unconditionally, so the Tauri sink is used regardless, and
+that is the right outcome given the sink is the fast path on desktop. But the
+comment overstates its case and the platform seam is load-bearing for a reason
+that is no longer "the API does not exist here".
+
+#### The sink is broken on Android, and this is what blocks a transfer
+
+Confirmed rather than suspected. `save()` opens the Storage Access Framework
+picker and returns a **`content://` URI**, and `sink.rs`'s `sink_open` does
+`File::create(path)` on it:
+
+```
+sink_open FAILED -> No such file or directory (os error 2)
+```
+
+A receiver on Android therefore cannot write a file, which is why the LAN
+transfer row above is "not run" rather than failed: there is no point running
+it until this is fixed. Sending is unaffected, since the sender never opens a
+sink.
+
+The two candidate fixes are unchanged (write into the app's own documents
+directory and surface the path, or resolve the content URI Rust-side through
+Android's `ContentResolver`, which is what `plugin-fs` does). Choosing between
+them is a real decision about where files land on a phone, and belongs behind
+the existing platform seam either way.
 
 That last row is worth stating plainly rather than discovering: until
 `assetlinks.json` carries a real signing-certificate fingerprint, a scanned QR
@@ -582,14 +650,19 @@ The onboarding brief asks Phase 4 to decide honestly whether mobile Beam is
 achievable. The honest answer today is **"expected on both platforms, proven
 on neither"**, and the two platforms are expected for different reasons.
 
-**Android** runs an evergreen Chromium WebView, so `RTCPeerConnection` is
-present and the network transfer should work as-is -- Android is not Linux,
-where the absence of the constructor forced a whole shipping decision. Beam's
-camera side is the one real unknown, and it is a permissions question rather
-than a capability one. `BarcodeDetector` is likely absent as it is on
-WebView2, which makes the jsQR fallback in `src/web/qr.js` load-bearing again
-and puts decode cost at the 50-100 ms that set Beam's 10 Hz default in the
-first place -- so ~10 Hz is the right target, not a stretch.
+**Android is now measured, not expected, and the answer is yes on capability.**
+Every primitive Beam and the WebRTC transfer need is present and working on a
+real device: `RTCPeerConnection` with a host candidate, `wss://` to a relay,
+WebCrypto, a live camera behind a real OS permission prompt, and a native
+`BarcodeDetector` that makes decode cheaper than the jsQR budget the 10 Hz
+default was sized against. Nothing here is capped by the webview.
+
+What is *not* yet demonstrated is a completed transfer, and the reason is a
+bug in this project rather than a limit of the platform: the native sink
+cannot open the `content://` URI Android hands back (above). Beam send, Beam
+receive and the deep-link paths are simply not run yet. So the honest status
+is "capability confirmed, end-to-end unproven", and the gap is work, not a
+platform decision like the Linux one.
 
 **iOS** inherits Phase 0's macOS finding: WKWebView has WebRTC with an
 immediate host candidate, and the two WebKit-family webviews are not
