@@ -34,10 +34,33 @@
  * key. See the comment on those checks for the failure it actually produced.
  */
 
-export const CHUNK_SIZE = 16 * 1024 // SCTP-safe across browsers; 64 KiB is modern-only
 export const HEADER_BYTES = 14
 export const TAG_BYTES = 16
-export const MAX_FRAME_BYTES = HEADER_BYTES + CHUNK_SIZE + TAG_BYTES
+
+// One SCTP message is 16 KiB -- safe across browsers, where 64 KiB is
+// modern-only -- and the transport spends 36 bytes of every one of them on its
+// own framing (@trystero-p2p/core's action wire: a 32-byte action type, a
+// 2-byte nonce, a tag byte and a progress byte). What is left is ours.
+//
+// CHUNK_SIZE used to be a flat 16 * 1024, which made a sealed frame
+// 14 + 16384 + 16 = 16414 bytes and overshot that budget by exactly 66. The
+// transport does not reject the overshoot, it SPLITS it, so every frame went
+// out as two SCTP messages: one full one and a 102-byte runt carrying the last
+// 66 bytes. Measured on a real transfer, that doubled the send count (393
+// sends for 192 frames) for 0.4% more payload. It cost only 9 ms there and was
+// never the reason that transfer was slow -- see src/web/source.js for what
+// was -- but a frame that fits in one message is free to arrange, so arrange
+// it.
+const WIRE_BUDGET = 16 * 1024 - 36
+export const CHUNK_SIZE = WIRE_BUDGET - HEADER_BYTES - TAG_BYTES // 16318
+
+// Deliberately NOT derived from CHUNK_SIZE, and that is the whole point of
+// spelling out 16 * 1024 again here. This is the INBOUND tolerance, and a peer
+// running the previous constant still seals 16414-byte frames; deriving this
+// from the new CHUNK_SIZE would drop it to 16348 and make every frame such a
+// peer sends fail open() with 'Frame exceeds maximum size'. Shrinking what we
+// send is a local decision, shrinking what we accept is a wire break.
+export const MAX_FRAME_BYTES = HEADER_BYTES + 16 * 1024 + TAG_BYTES
 
 export const TYPE_CONTROL = 0
 export const TYPE_CHUNK = 1

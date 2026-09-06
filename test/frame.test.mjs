@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   seal, open, sealControl, openControl, decodeHeader, UnauthenticatedFrame,
-  TYPE_CHUNK, CHUNK_SIZE, HEADER_BYTES, MAX_FRAME_BYTES,
+  TYPE_CHUNK, CHUNK_SIZE, HEADER_BYTES, TAG_BYTES, MAX_FRAME_BYTES,
 } from '../src/core/frame.js'
 
 const key = async () =>
@@ -150,11 +150,29 @@ test('oversized and undersized frames are rejected before decryption', async () 
   assert.ok(await rejects(() => open(k, new Uint8Array(MAX_FRAME_BYTES + 1), null)))
 })
 
-test('a full-size chunk stays within the SCTP-safe frame budget', async () => {
+// The number that matters is 16 KiB MINUS the 36 bytes the transport spends on
+// its own action-wire header, because a frame one byte over that is not
+// rejected, it is silently split into a second SCTP message. This asserted
+// frame.length === MAX_FRAME_BYTES while CHUNK_SIZE was 16 * 1024, which held
+// but pinned the wrong property: it passed happily at 16414 bytes, 66 over the
+// real budget, for as long as that bug existed.
+test('a full-size chunk fits in ONE transport message, not two', async () => {
   const k = await key()
   const frame = await seal(k, { type: TYPE_CHUNK, fileSeq: 0, index: 0 }, body(CHUNK_SIZE))
-  assert.equal(frame.length, MAX_FRAME_BYTES)
+  assert.equal(frame.length, 16 * 1024 - 36, 'a sealed full chunk must fit the action-wire budget')
   assert.ok(frame.length < 64 * 1024)
+})
+
+// The other half, and the one a well-meaning "derive this properly" edit would
+// break: we send smaller frames than we accept, on purpose, so that a peer
+// still running CHUNK_SIZE = 16 * 1024 keeps working.
+test('inbound tolerance still admits a peer on the previous chunk size', async () => {
+  const k = await key()
+  const legacyFrameLength = HEADER_BYTES + 16 * 1024 + TAG_BYTES
+  assert.ok(
+    legacyFrameLength <= MAX_FRAME_BYTES,
+    'MAX_FRAME_BYTES must not be narrowed to the new CHUNK_SIZE',
+  )
 })
 
 test('chunk indices beyond 2^32 still produce distinct nonces', async () => {
