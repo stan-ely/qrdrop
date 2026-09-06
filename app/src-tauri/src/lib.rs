@@ -58,13 +58,12 @@ pub fn run() {
                 let _ = app.deep_link().register_all();
             }
 
-            // WebView2 refuses getUserMedia outright -- no OS prompt -- unless
-            // the host answers its PermissionRequested event
-            // (app/CAPABILITIES.md, Windows section). The QR scanner and Beam
-            // both need the camera, and the user has already chosen Receive /
-            // Scan by the time this fires, so the handler answers ALLOW and
-            // lets the real gate be the OS camera-privacy setting. macOS/iOS
-            // route through Info.plist instead; Linux/WebKitGTK has no
+            // WebView2 refuses getUserMedia outright, with no OS prompt, until
+            // the host grants camera to our origin (app/CAPABILITIES.md, Windows
+            // section). The QR scanner and Beam both need it, and the user has
+            // already chosen Receive / Scan by the time it matters, so grant it
+            // up front and let the OS camera-privacy setting be the real gate.
+            // macOS/iOS route through Info.plist instead; Linux/WebKitGTK has no
             // exposed hook yet (and no WebRTC either -- see CAPABILITIES.md).
             #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {
@@ -83,29 +82,84 @@ pub fn run() {
 #[cfg(target_os = "windows")]
 mod windows_camera {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2PermissionRequestedEventArgs, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+        ICoreWebView2Profile4, ICoreWebView2_13, ICoreWebView2PermissionRequestedEventArgs,
+        COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
         COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
     };
-    use webview2_com::PermissionRequestedEventHandler;
+    use webview2_com::{PermissionRequestedEventHandler, SetPermissionStateCompletedHandler};
+    use windows::core::{Interface, HSTRING};
 
-    /// Installs a PermissionRequested handler on the window's WebView2 that
-    /// allows camera and microphone and leaves every other permission to
-    /// WebView2's default. Best effort: a failure here degrades to "the
-    /// scanner does not work on Windows", which is logged, not fatal.
+    /// The web content's origin inside the WebView2 window. Tauri serves the
+    /// bundle from the `http://tauri.localhost` custom-scheme origin on Windows
+    /// -- macOS and Linux differ, but this module is Windows-only. If a future
+    /// `tauri.conf.json` opts into the https scheme this string has to change
+    /// with it.
+    const ORIGIN: &str = "http://tauri.localhost";
+
+    /// Grants camera + microphone to our origin in the window's WebView2.
+    ///
+    /// The obvious approach -- a `PermissionRequested` handler that answers
+    /// ALLOW -- does **not** work here: WebView2's default content setting for
+    /// camera on this origin is "deny", and a denied default is resolved
+    /// *without* raising `PermissionRequested` at all (only the "ask" state
+    /// routes through the event). Verified from the field: with a correctly
+    /// installed handler the event never fired and `getUserMedia` still threw
+    /// `NotAllowedError`. `ICoreWebView2Profile4::SetPermissionState` writes the
+    /// content setting directly, which is what actually unblocks the call.
+    ///
+    /// The reactive handler is still installed as a forward-compatible
+    /// fallback: if a later runtime moves the default to "ask", the event will
+    /// start firing and we answer it rather than regressing to a silent deny.
+    ///
+    /// Best effort throughout -- every failure degrades to "the scanner does
+    /// not work on Windows", logged, never fatal.
     pub fn allow(window: &tauri::WebviewWindow) {
-        let installed = window.with_webview(|webview| unsafe {
-            let core = match webview.controller().CoreWebView2() {
-                Ok(core) => core,
-                Err(e) => {
-                    eprintln!("qrdrop: no CoreWebView2 to attach a permission handler to: {e}");
-                    return;
-                }
+        let reached = window.with_webview(|webview| unsafe {
+            let Ok(core) = webview.controller().CoreWebView2() else {
+                eprintln!("qrdrop: no CoreWebView2 to grant camera permission on");
+                return;
             };
+
+            // Proactive grant. Needs ICoreWebView2Profile4 (WebView2 Runtime
+            // >= 1.0.2210, mid-2023); an older runtime falls through to the
+            // reactive handler below.
+            match core
+                .cast::<ICoreWebView2_13>()
+                .and_then(|w| w.Profile())
+                .and_then(|p| p.cast::<ICoreWebView2Profile4>())
+            {
+                Ok(profile) => {
+                    let origin = HSTRING::from(ORIGIN);
+                    for kind in [
+                        COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+                        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+                    ] {
+                        let done = SetPermissionStateCompletedHandler::create(Box::new(
+                            |hr: windows::core::Result<()>| {
+                                if let Err(e) = hr {
+                                    eprintln!("qrdrop: SetPermissionState reported {e}");
+                                }
+                                Ok(())
+                            },
+                        ));
+                        if let Err(e) = profile.SetPermissionState(
+                            kind,
+                            &origin,
+                            COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                            &done,
+                        ) {
+                            eprintln!("qrdrop: SetPermissionState call failed: {e}");
+                        }
+                    }
+                }
+                Err(e) => eprintln!("qrdrop: no ICoreWebView2Profile4 for camera permission: {e}"),
+            }
+
             let mut token = Default::default();
             let handler = PermissionRequestedEventHandler::create(Box::new(
                 |_sender, args: Option<ICoreWebView2PermissionRequestedEventArgs>| {
                     let Some(args) = args else { return Ok(()) };
-                    let mut kind = Default::default();
+                    let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
                     args.PermissionKind(&mut kind)?;
                     if kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
                         || kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
@@ -119,7 +173,7 @@ mod windows_camera {
                 eprintln!("qrdrop: add_PermissionRequested failed: {e}");
             }
         });
-        if let Err(e) = installed {
+        if let Err(e) = reached {
             eprintln!("qrdrop: could not reach the platform webview for camera permission: {e}");
         }
     }

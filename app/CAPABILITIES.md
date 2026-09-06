@@ -261,11 +261,49 @@ this also means a link pasted into the address bar mid-use is now honoured.
 
 | Platform | What Phase 0 found | What Phase 3 does |
 | --- | --- | --- |
-| Windows / WebView2 | `getUserMedia` rejected `NotAllowedError` immediately, no OS prompt | `src/lib.rs`'s `windows_camera::allow` attaches a `PermissionRequested` handler to the raw `ICoreWebView2` (via `with_webview`) that answers `ALLOW` for camera + microphone and leaves the OS privacy toggle as the real gate. `webview2-com` / `windows` are pinned to what `wry 0.55` already resolves. |
+| Windows / WebView2 | `getUserMedia` rejected `NotAllowedError` immediately, no OS prompt | `src/lib.rs`'s `windows_camera::allow` **grants camera + microphone up front** via `ICoreWebView2Profile4::SetPermissionState` for the `http://tauri.localhost` origin, and leaves the OS privacy toggle as the real gate. A `PermissionRequested` handler is also installed but only as a forward-compat fallback -- see below for why it is not the mechanism. `webview2-com` / `windows` are pinned to what `wry 0.55` already resolves. |
 | macOS / WKWebView | API present; needs a TCC usage string or the process is killed on first camera use | `app/src-tauri/Info.plist` carries `NSCameraUsageDescription`; Tauri merges it into the `.app` bundle. |
 | iOS / WKWebView | same as macOS (not run -- Phase 4) | `app/src-tauri/Info.ios.plist` carries the same string, committed now so it exists the first time `tauri ios init` runs. |
 | Linux / WebKitGTK | no `RTCPeerConnection` at all; camera path untested | no hook exposed by Tauri/wry today, and WebRTC is absent anyway -- left as a known gap, consistent with the Linux decision above. |
 | Android | not run -- Phase 4 | `<uses-permission android:name="android.permission.CAMERA"/>` plus a runtime request belong in `gen/android`'s manifest, which does not exist until `tauri android init` -- deferred to Phase 4. |
+
+#### Why a `PermissionRequested` handler is not enough on Windows
+
+The first cut of `windows_camera::allow` did only the obvious thing: attach a
+`PermissionRequested` handler that answers `ALLOW` for camera and microphone.
+It compiles, the handler installs with no error -- and `getUserMedia` still
+throws `NotAllowedError` with no prompt, exactly as Phase 0 found with no
+handler at all. Traced with the WebView2 devtools protocol
+(`--remote-debugging-port`, `Runtime.evaluate`) plus temporary `eprintln`
+tracing inside the closure: the handler is reached, `add_PermissionRequested`
+returns `S_OK`, and **the event never fires**. `navigator.permissions.query`
+reports camera as `denied`, not `prompt`.
+
+WebView2's default content setting for camera on this origin is *deny*, and a
+denied default is resolved synchronously without ever raising
+`PermissionRequested` -- only the `prompt` ("ask") state routes through the
+event. So a reactive handler has nothing to react to; it can never move the
+setting off `deny`. Confirmed from the other direction: a CDP
+`Browser.grantPermissions(['videoCapture'])` -- which writes the Chromium
+content setting directly -- makes `getUserMedia` return a live `HD Camera`
+track on the same build, proving the OS privacy toggle and the hardware were
+never the blocker.
+
+`ICoreWebView2Profile4::SetPermissionState(kind, origin, ALLOW, handler)` is
+the write that the CDP call was doing, exposed as a real API. `allow()` now
+calls it for `CAMERA` and `MICROPHONE` against `http://tauri.localhost` in the
+`with_webview` closure, reached by `cast`-ing the `ICoreWebView2` up to
+`ICoreWebView2_13` for `Profile()` and the profile to `ICoreWebView2Profile4`.
+An older WebView2 runtime without `Profile4` (< 1.0.2210, mid-2023) falls
+through to the reactive handler, which is kept for that case and in case a
+future runtime moves the default to `ask`. The origin string is hardcoded and
+assumes the Windows-default `http://` custom scheme; a `tauri.conf.json` that
+opts into the https scheme has to change it.
+
+Verified on a real build: `permissions.query` -> `granted`, `getUserMedia` ->
+live `HD Camera` track, viewfinder painting in the Receive screen, and a full
+3 MiB transfer from this app to a phone browser over the LAN with matching
+verification digests on both ends.
 
 ### Gate
 
@@ -274,16 +312,27 @@ this also means a link pasted into the address bar mid-use is now honoured.
 `test/build-site.test.mjs`). `cargo check` on `app/src-tauri` is clean --
 deep-link, single-instance and the Windows COM permission handler all compile.
 
-**`cargo build` / `mise run app:dev` could NOT be completed on this machine:**
-the disk filled during LLVM codegen (`rustc-LLVM ERROR: IO failure on output
+**`cargo build` / `mise run app:dev` could NOT be completed at first:** the
+disk filled during LLVM codegen (`rustc-LLVM ERROR: IO failure on output
 stream: no space on device`, ~1 GB free of 390 GB). `cargo check` -- which
 runs the full front end, macro expansion and borrow check over the crate and
-every dependency -- is clean, so this is an environment limit, not a code
-defect, but the "the app builds and runs with the deep link wired" half of the
-gate is unverified pending disk space. The OS-level checks that need a running
-build and real hardware -- a `qrdrop:` link actually launching the app, the
-WebView2 camera prompt, universal-link association -- are likewise unverified
-here.
+every dependency -- was clean, so this was an environment limit, not a code
+defect.
+
+**Resolved on a later pass.** Disk was freed, but the same cleanup had removed
+the MSVC C++ toolchain (only the VC++ *runtime* redists were left), so the
+first build then failed with `error: linker link.exe not found`. Installing
+**Build Tools for Visual Studio 2026** (the current line -- there is no VS
+newer than what the "2022" download page now serves; MSVC 14.51 + Windows SDK
+10.0.26100) fixed it. `npx tauri build --debug --no-bundle`, run from a
+`vcvars64.bat` shell, then built clean in ~5 min cold. The running app renders
+today's UI, the `qrdrop:` scheme registers itself in `HKCU` and a
+`qrdrop:<code>` link routes to the running instance via single-instance, the
+camera works (see the Windows row above), and a 3 MiB transfer to a phone
+browser over the LAN completed with matching digests. The only Phase 3 item
+still unverified is universal-link **association** -- the OS opening the
+installed app for an `https://share.stan-ely.com/#qrdrop:...` link -- which
+needs a signing identity and is deferred with the association files below.
 
 ### The association files are inert until signing exists
 
