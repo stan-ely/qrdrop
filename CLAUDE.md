@@ -223,6 +223,21 @@ auto-advance past either, never auto-focus either button, and keep Accept's hand
 losing its user activation behind an `await`. `--yes` skips the accept prompt and must
 never skip the SAS.
 
+**The camera track is released on every path out of `scanQRStream`, including an
+abort that lands while the camera is still opening.** `src/web/qr.js` checks
+`signal.aborted` before `getUserMedia` *and* again after it, `video.play()` and
+`createDetector()`, and `stop()` is defined the moment the stream exists with
+everything after it inside the `try`. The second check is the one that looks
+redundant and is not: an abort arriving during those awaits finds no listener yet,
+and a signal that has already fired never fires again, so the scan promise never
+settles and its `finally` never runs. That left the webcam on for the life of the
+page. The way in is ordinary rather than exotic -- the hand-entered code field is
+on the scanner screen, and `_submitManualCode` aborts exactly this signal, so
+pairing by pasted code aborts mid-open every time. It was caught by a light on a
+laptop while every test passed, because nothing headless can see a camera that was
+never released; `test/qr.test.mjs` asserts both that the track ends and that the
+call settles.
+
 **The ECDH keypair is generated per `joinVia` call and never cached.** `src/transport/room.js`
 is the only place `createEphemeralKeypair()` is called, and its result must stay a local.
 `openRoom` races two strategies, so one pairing generates two keypairs and discards one —
@@ -458,7 +473,12 @@ another process: ~79 ms fixed plus ~3.7 ms per MiB, measured on-device across
 which made a 3 MB Android send 192 round-trips and 29.7 s of a 30.3 s transfer --
 98% of it, against 21 ms of AEAD and 9 ms of data channel. Blocks took that to
 3.34 s, and 64 MiB to 23.6 s (2.72 MB/s) where the per-frame read would have taken
-about eleven minutes.
+about eleven minutes. The read-ahead then took the same 64 MiB to **16.8 s
+(4.03 MB/s)**, measured on the device with both sides rebuilt from one commit.
+Note total read time *rose* there, 5,988 ms to 7,475 ms: a read that runs against
+a busy main thread is slower in wall time and cheaper in cost, so "share of the
+window spent reading" stopped being a cost measure at that point and must not be
+quoted as one.
 
 **This was never Tauri-specific, and `src/web/source.js` is the right home for the
 fix because of it.** Chrome 152 on the same phone, same file, same SAF dialog,

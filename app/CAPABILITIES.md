@@ -807,11 +807,85 @@ block N+1 is already in flight after the first frame of block N, and that a
 read-ahead which *fails* is retried by the call that eventually wants those
 bytes rather than rejecting into nowhere.
 
-**What is not here is a device measurement.** The 25% figure above is the
-before; there is no after. The mechanism is sound and pinned in tests, but
-whether it removes 25% or 15% of a 64 MiB Android send is unmeasured, and the
-instrumentation to settle it is the same CDP hook that produced every table in
-this section. Do not quote a post-prefetch number until that has been run.
+Measured on the device, same rig as the baseline in every respect that could
+move the number: the same 64 MiB `qrdrop-large.bin`, the same phone, the same
+debug APK and debug Windows receiver, both sides rebuilt from the same commit.
+
+| | blocks only | + read-ahead |
+| --- | --- | --- |
+| chunk-loop window | 23.56 s | **16.80 s** |
+| throughput | 2.72 MB/s | **4.03 MB/s** |
+| reads | 33 | 32 |
+| frames per read | ~125 | 128.6 |
+| AEAD | 344 ms (1.5%) | 350 ms (2.1%) |
+| `dc.send` | 97 ms (0.4%) | 100 ms (0.6%) |
+
+**29% off the wall time, 1.48x the throughput**, digests matching both ends.
+The window is the chunk loop, not the session: the manifest goes out long
+before the receiver's human has accepted and chosen a destination, and this run
+spent 31 s and 10 s on exactly those two waits. Both baselines were taken the
+same way, so they compare.
+
+Two things about that result are worth more than the headline, and both cut
+against the obvious reading.
+
+**Total read time went UP, and that is the mechanism working.** 7,475 ms over
+32 reads (234 ms each) against 5,988 ms over 33 (181 ms each) -- a read now
+runs against a busy main thread and a full send buffer instead of in the
+silence it used to create for itself. Per-read wall time rising while the
+transfer gets a third faster is what overlap looks like from outside. It also
+means "time in reads as a share of the window" -- the 25% this section quoted
+before -- is no longer a cost at all, and quoting it as one after this change
+would be wrong: it is now 44.5%, on a transfer that finished sooner.
+
+**The split underneath the total is not measurable from outside `fromFile`,
+and the honest thing is to say so.** The probe attributes any send-silence
+overlapping a read to that read, which gives 5,638 ms -- but `drain()` waiting
+on the channel and a read running are *concurrent by design*, so that figure
+counts backpressure as read cost and is an upper bound, not a measurement.
+There is another 7,275 ms of silence across 871 gaps that no read overlaps at
+all, and `bufferedAmount` peaked at 58,734 against the 65,535 threshold, so the
+transport is now near its own limit and is a plausible next bottleneck. What
+would settle it is instrumenting the await inside `fromFile` rather than
+`Blob.prototype.arrayBuffer` from the outside. **The 23.56 -> 16.80 s is the
+number to trust; the decomposition under it is not.**
+
+One incidental note in the result's favour: the Windows receiver spent this
+entire transfer decoding a live camera stream, because of the bug below. That
+can only have cost throughput, so 16.80 s is if anything pessimistic.
+
+#### The webcam stayed on, and only a human could have caught it
+
+Found by the light on the receiving laptop, not by any check in this
+repository: the Windows receiver held its camera open for the whole 64 MiB
+transfer and after it, long after the scanner screen was gone.
+
+The cause is a lifecycle gap in `src/web/qr.js`, and it is a webview-agnostic
+bug in shared code rather than anything about Tauri or Android.
+`scanQRStream` checks `signal.aborted` before opening the camera, then
+registers its abort listener three awaits later -- after `getUserMedia`,
+`video.play()` and `createDetector()`. An abort landing in that window finds
+no listener, and since a signal that has already fired never fires again, the
+scan promise never settles, its `finally` never runs, and the track is never
+stopped.
+
+The path in is ordinary. The hand-entered code field lives *on* the scanner
+screen, and `element.js`'s `_submitManualCode` calls `_teardown()`, which
+aborts that very signal -- so pairing by pasted code rather than by scanning
+aborts mid-open every time. `getUserMedia` also spans the OS permission prompt
+on a first run, which widens the window from milliseconds to however long the
+person takes to decide.
+
+Two lessons, both about what a test suite can see. The function's own doc
+comment already promised the camera is "always" stopped "including on error
+and on cancel", so the contract was stated and the code silently disagreed
+with it -- prose is not a check. And nothing headless can observe a camera
+that was never released: the transfer completed, the digests matched, and
+every assertion in the suite passed while the hardware stayed on.
+`test/qr.test.mjs` now asserts the release directly, including that the call
+*settles* -- the old failure was a promise that hung forever, so a test
+checking only the track would have hung with it rather than failing. Verified
+against the unfixed file, where it fails.
 
 ### On-device checklist -- iOS
 
@@ -880,11 +954,13 @@ been exercised once by hand.
 Named here so it is a list rather than a set of remarks buried in the sections
 above. None of it blocks the config gate.
 
-1. **Measure the read-ahead on the device.** The prefetch itself is done (see
-   above) and pinned by `test/web-source.test.mjs`, but every number in this
-   file predates it. Re-run the 64 MiB send with the same CDP instrumentation
-   and record what the 25% read share actually became; until then this section
-   has a before and no after.
+1. **Instrument the read from inside `fromFile`.** The read-ahead is measured
+   end to end (23.56 -> 16.80 s, above) but the split between "blocked on a
+   read" and "blocked on backpressure" is not: from outside, at
+   `Blob.prototype.arrayBuffer`, the two are concurrent and indistinguishable.
+   The transport is the more likely next bottleneck now -- `bufferedAmount`
+   peaked at 58,734 against a 65,535 threshold -- and deciding that needs the
+   await inside the adapter timed, not the platform call.
 2. **The `content://` sink**, so Android can receive at all. Two candidate
    fixes, both behind the existing platform seam; see the section above.
 3. **First-error-versus-last-error reporting.** `abortActive` nulls `active` on
