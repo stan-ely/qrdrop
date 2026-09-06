@@ -143,3 +143,68 @@ description = "Build an installer for this platform (mise run app:build -- --deb
 depends = ["app:build-site", "app:config"]
 dir = "app"
 run = "npx tauri build"
+
+# --- mobile (Phase 4) ---
+#
+# The Android SDK and NDK are deliberately NOT pinned in [tools] above, which
+# is a departure from how node/rust/java are handled and needs the reason
+# written down. mise auto-installs a missing tool the first time any task
+# needs one, and the tools table is global rather than per-task -- so an
+# `android-sdk` entry there would make `mise run test` capable of triggering a
+# multi-gigabyte SDK download on a machine that only wanted to run the unit
+# suite. That is a bad trade for a toolchain exactly one of these tasks uses.
+# (The asdf-backed android-sdk plugin is also shell-script based, which is its
+# own coin-flip on Windows.) The SDK is therefore an ambient prerequisite,
+# same as Xcode is for the iOS tasks, and the exact package strings live in
+# app/CAPABILITIES.md so the install is still reproducible.
+#
+# Requires: ANDROID_HOME and NDK_HOME set, and `sdkmanager` having installed
+# the packages CAPABILITIES.md lists. JAVA_HOME is NOT set here -- mise's own
+# `java` tool exports it, and a second copy would be the drift this file
+# avoids everywhere else. ANDROID_HOME is likewise left to the environment
+# rather than guessed at: a wrong default turns "ANDROID_HOME is not set" into
+# "no SDK at C:\some\path\we\invented", which is a worse error to debug.
+
+[tasks."app:android:targets"]
+description = "Add the four Android Rust targets"
+run = "rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android"
+
+# `tauri android init` adds these targets itself, but doing it explicitly
+# first means a missing target fails here, saying so, rather than surfacing
+# later as a linker error against a std that was never installed.
+[tasks."app:android:init"]
+description = "Scaffold app/src-tauri/gen/android (one-time; commit the result)"
+depends = ["app:config", "app:android:targets"]
+dir = "app"
+run = "npx tauri android init"
+
+[tasks."app:android:dev"]
+description = "Run the app on an attached Android device or emulator"
+depends = ["app:build-site", "app:config"]
+dir = "app"
+run = "npx tauri android dev"
+
+[tasks."app:android:build"]
+description = "Build an Android APK (mise run app:android:build -- --debug)"
+depends = ["app:build-site", "app:config"]
+dir = "app"
+run = "npx tauri android build --apk"
+
+# macOS only -- these need Xcode and CocoaPods, so on any other host they
+# exist to document the command, not to be run. CI (.github/workflows/app.yml)
+# is the only place iOS is compiled at all; there is no Mac on this project.
+[tasks."app:ios:targets"]
+description = "Add the iOS Rust targets (macOS only)"
+run = "rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios"
+
+[tasks."app:ios:init"]
+description = "Scaffold app/src-tauri/gen/apple (macOS only; one-time, commit the result)"
+depends = ["app:config", "app:ios:targets"]
+dir = "app"
+run = "npx tauri ios init"
+
+[tasks."app:ios:build"]
+description = "Build the iOS app (macOS only; needs a signing identity)"
+depends = ["app:build-site", "app:config"]
+dir = "app"
+run = "npx tauri ios build"

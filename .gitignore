@@ -32,11 +32,26 @@ docs/screenshots/layout/
 
 # The Tauri app. Cargo.lock IS committed on purpose -- this is a binary, not
 # a library, so the whole point of a lockfile is to pin it (see CLAUDE.md).
-# gen/ is what `tauri android init` / `tauri ios init` scaffold from
-# tauri.conf.json; regenerating it is one command, and committing it would
-# mean two sources of truth for the same Android/Xcode project settings.
+#
+# gen/ used to be ignored whole, on the argument that `tauri android init` /
+# `tauri ios init` regenerate it from tauri.conf.json in one command and a
+# committed copy would be a second source of truth for the same settings.
+# That held while gen/ contained nothing but generated schemas. Phase 4 broke
+# it: the Android build needs `<uses-permission android:name=
+# "android.permission.CAMERA"/>` in gen/android's AndroidManifest.xml, and
+# tauri.conf.json has no field that can express it -- so the delta lives only
+# in gen/, and an ignored gen/ means every re-init silently drops the camera
+# permission and the scanner stops working with no diff to explain it. The
+# runtime permission request Android 6+ wants for a "dangerous" permission
+# may yet need hand-written Kotlin in MainActivity, which is the same problem
+# again and larger. A patch script that re-applied the delta after each init
+# was the alternative; it just moves the second source of truth into
+# scripts/, and it cannot carry a Kotlin file.
+#
+# So gen/ is committed source now, except schemas/ -- those really are
+# regenerated on every build and nothing is ever hand-edited in them.
 app/src-tauri/target/
-app/src-tauri/gen/
+app/src-tauri/gen/schemas/
 
 # tauri-build writes this from build.rs's AppManifest every build ("DO NOT
 # EDIT" is in the file itself) -- fully reproducible from build.rs, so
