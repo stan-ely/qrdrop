@@ -192,17 +192,39 @@ export async function scanQRStream({ video, onCode, signal }) {
     audio: false,
   })
 
-  video.srcObject = stream
-  video.setAttribute('playsinline', '')  // iOS otherwise takes the video fullscreen
-  await video.play()
-
-  const detect = await createDetector()
+  // Defined the instant the camera exists, and EVERYTHING after it wrapped in
+  // the try below, because from here on there is hardware to release on every
+  // path out. It used to be defined thirty lines lower, after `video.play()`
+  // and `createDetector()`, and that gap was a real leak rather than a tidiness
+  // question: an abort arriving during any of those awaits found no listener
+  // registered yet (see the note at the top of this function -- a signal that
+  // has already fired never fires again), so the promise below never settled,
+  // its `finally` never ran, and the camera stayed on for the life of the page.
+  //
+  // That is not a corner case. element.js's `_submitManualCode` calls
+  // `_teardown()`, which aborts exactly this signal, and the code field lives
+  // ON the scanner screen -- so anyone who pastes a code instead of scanning
+  // aborts mid-open. It was found by a webcam light staying on through an
+  // entire transfer.
   const stop = () => {
     for (const track of stream.getTracks()) track.stop()
     video.srcObject = null
   }
 
   try {
+    video.srcObject = stream
+    video.setAttribute('playsinline', '')  // iOS otherwise takes the video fullscreen
+    await video.play()
+
+    const detect = await createDetector()
+
+    // Re-checked after the awaits above, for the same reason the check at the
+    // top of the function exists: an abort that landed while the camera was
+    // opening has already fired, so registering the listener below would wait
+    // forever. Everything from here to that listener is synchronous, so this
+    // is the last moment the signal can be missed.
+    if (signal.aborted) return
+
     await new Promise(resolve => {
       let stopped = false
       // The beam plays codes at roughly 10 fps against a camera sampling at
