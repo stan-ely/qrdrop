@@ -134,6 +134,14 @@ run = "node scripts/preview-phone.mjs"
 description = "Render site/og.png (run when the wordmark, palette, or card copy changes)"
 run = "node scripts/make-og.mjs"
 
+# Renders the app mark and the site favicon. The fan-out to every platform
+# size is deliberately NOT chained on here: `npx tauri icon
+# app/src-tauri/icons/source.png` writes into app/src-tauri/gen/, which is
+# committed source, and that diff wants reading rather than running.
+[tasks."img:icon"]
+description = "Render the app mark (then run `npx tauri icon` by hand)"
+run = "node scripts/make-icon.mjs"
+
 [tasks."img:diagrams"]
 description = "Render docs/diagrams/*.png from the .mmd sources"
 run = "node scripts/make-diagrams.mjs"

@@ -524,6 +524,14 @@ async function main() {
   // is willing to take on for an image that changes about never.
   await copyFile(path.join(SITE, 'og.png'), path.join(dist, 'og.png'))
 
+  // The app mark, doubling as the site's favicon -- same script
+  // (scripts/make-icon.mjs), same committed-output reasoning as og.png above.
+  // One 512px PNG rather than an .ico with four sizes in it: every browser
+  // that is not IE downsamples a PNG happily, and the tab icon and the
+  // Android launcher being provably the same image is the point of drawing
+  // them from one source.
+  await copyFile(path.join(SITE, 'favicon.png'), path.join(dist, 'favicon.png'))
+
   // Stable only. CNAME is what binds the custom domain, and GitHub Pages reads
   // exactly one of them, at the root of the deployed artifact -- the edge tree
   // is a subdirectory of that same artifact, so a CNAME inside it is not a

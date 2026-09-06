@@ -83,6 +83,15 @@
 -->
 <meta http-equiv="Content-Security-Policy" content="__CSP__">
 
+<!-- The app mark, rendered by scripts/make-icon.mjs from the same design tokens
+     as everything else and shared with the Tauri app's launcher icon. This page
+     had no icon at all until then, which meant a browser tab, a bookmark and a
+     phone home screen all showed a blank sheet for a tool whose entire subject
+     is a recognisable square. Not content-hashed: a favicon is requested by
+     convention and cached politely, and the URL is worth keeping stable. -->
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="favicon.png">
+
 <!-- href is rewritten by scripts/build-site.mjs to the content-hashed stylesheet
      filename, for the same reason the script src below is. -->
 <link rel="stylesheet" href="__STYLES__">
