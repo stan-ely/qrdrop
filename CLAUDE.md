@@ -458,9 +458,16 @@ another process: ~79 ms fixed plus ~3.7 ms per MiB, measured on-device across
 which made a 3 MB Android send 192 round-trips and 29.7 s of a 30.3 s transfer --
 98% of it, against 21 ms of AEAD and 9 ms of data channel. Blocks took that to
 3.34 s, and 64 MiB to 23.6 s (2.72 MB/s) where the per-frame read would have taken
-about eleven minutes. An in-memory `Blob` reads in 0.98 ms, so no desktop browser
-shows this and no benchmark without a real picked file will either: Phase 2
-measured over loopback, Phase 3 had the desktop as sender.
+about eleven minutes.
+
+**This was never Tauri-specific, and `src/web/source.js` is the right home for the
+fix because of it.** Chrome 152 on the same phone, same file, same SAF dialog,
+measures ~72 ms fixed + ~1.8 ms/MiB -- it does not copy the picked file into its
+cache, it passes the `content://` through like wry. So the deployed site had this
+for every Android sender too, at 0.22 MB/s on a 16 KiB frame. Desktop browsers were
+fine because a `File` there is backed by a real filesystem, which is exactly why it
+survived: the sender was always a desktop or the Node CLI (`src/node/source.js`, a
+different adapter entirely) until a phone was pointed at it.
 
 Two traps in that constant. It does **not** match `tauri-sink.js`'s 1 MiB -- the
 write side amortises a ~3 ms invoke and flattens after 256 KiB, this amortises a

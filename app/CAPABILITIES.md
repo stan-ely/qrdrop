@@ -726,6 +726,42 @@ BLOCK_BYTES makes those gaps fewer and longer for double the memory each time.
 Prefetching the next block while the current one transmits is what removes them,
 and is the next thing worth doing here.
 
+#### It was not a Tauri bug: the website had it too
+
+Worth running before concluding this was about wry, and the answer changes who
+was affected. The deployed site was served to the same phone over
+`adb reverse` and opened in **Chrome 152**, and the same file was picked
+through the same SAF dialog and swept the same way:
+
+| block | Chrome ms/read | Chrome | wry ms/read |
+| --- | --- | --- | --- |
+| **16 KiB** | **71.72** | **0.22 MB/s** | ~86 |
+| 256 KiB | 77.85 | 3.21 MB/s | 80.2 |
+| 1 MiB | 80.68 | 12.40 MB/s | 87.4 |
+| 2 MiB | 85.37 | 23.43 MB/s | 97.6 |
+| 4 MiB | 86.38 | 46.31 MB/s | 114.2 |
+| 8 MiB | 98.10 | 81.55 MB/s | 126.3 |
+| 16 MiB | 100.90 | 158.57 MB/s | 138.3 |
+
+Chrome fits ~72 ms fixed + ~1.8 ms per MiB against wry's ~79 + ~3.7 -- slightly
+better on both terms, identical in kind. **Chrome does not copy the picked file
+into its own cache**; it passes the `content://` through exactly as wry does.
+
+So `share.stan-ely.com` had this for every Android user who ever sent a file,
+at **0.22 MB/s** on the 16 KiB frame it actually used -- a 64 MiB send would
+have spent about nine minutes in reads alone. Desktop browsers were unaffected
+because a `File` there is backed by a real filesystem.
+
+That is also the whole explanation for how it survived this long. The sender
+was always a desktop browser, WebView2, or the Node CLI -- and the CLI uses
+`src/node/source.js`, a different adapter with a file descriptor and a reused
+buffer, so it could not have shown this even in principle. No test in the suite
+uses a real picked file, because there is no way to; the unit tests read
+in-memory `Blob`s at 0.98 ms. An Android device as *sender* was the one
+configuration nobody had run, and it is the only one that could have caught it.
+The fix lives in `src/web/source.js` and so ships to the site and to
+`qrdrop/web`, not only to the app.
+
 Two suspects were cleared in the process. Trystero's backpressure gate never
 fired at all (`bufferedAmount` peaked at 16,620 against a 65,535 threshold, and
 `waitForBufferedAmountLow` was reached zero times -- still true at 64 MiB, where

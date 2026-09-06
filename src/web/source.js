@@ -39,9 +39,18 @@
  * 3 MB transfer was 192 of those round-trips: 29.7 seconds out of a 30.3
  * second transfer, 98% of the wall time, while AEAD accounted for 21 ms and
  * the data channel 9 ms. It looked like a slow network and was nothing of the
- * kind. The same file read from an in-memory Blob takes 0.98 ms a block, which
- * is why no desktop browser ever showed this and why the bug survived every
- * measurement made before a phone was involved.
+ * kind. The same file read from an in-memory Blob takes 0.98 ms a block.
+ *
+ * This is NOT a Tauri problem, and reading it as one is the mistake to avoid.
+ * Chrome 152 on the same phone, picking the same file through the same SAF
+ * dialog, measures ~72 ms fixed + ~1.8 ms per MiB -- marginally better than
+ * wry's ~79 + ~3.7, and the same pathology. Chrome does not copy the picked
+ * file into its own cache first; it hands the content:// through exactly as
+ * wry does. So the deployed WEBSITE had this too, at 0.22 MB/s for the 16 KiB
+ * frame it actually used, for every Android user who ever sent a file. Desktop
+ * browsers were fine because a File there is backed by a real filesystem, and
+ * that is the whole of why this survived: the sender was always a desktop or
+ * the Node CLI until a phone was pointed at it.
  *
  * This is the read-side twin of app/src/tauri-sink.js's write-side coalescing:
  * a fixed per-call cost is beaten by making fewer, larger calls.
