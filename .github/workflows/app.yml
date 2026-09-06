@@ -130,12 +130,23 @@ jobs:
       # code. Building the simulator SDK with signing switched off compiles the
       # Rust staticlib and links the Swift shell, which is the whole question
       # this job asks. It produces a .app nobody keeps.
+      #
+      # `release`, NOT `debug`, and that is not about optimisation. Tauri's
+      # generated Xcode project has a "Build Rust Code" phase that shells out
+      # to `tauri ios xcode-script`, and that command reads the configuration
+      # to decide which mode it is in: `debug` means `tauri ios dev`, so it
+      # goes looking for the dev server's address in
+      # $TMPDIR/<identifier>-server-addr and panics when there is none --
+      # "failed to read missing addr file ... (os error 2)", surfacing as a
+      # bare xcodebuild exit 65. There is no dev server in CI and there should
+      # not be one; `release` is the configuration that compiles the staticlib
+      # and links the shell without expecting a webview to talk to.
       - name: Build for the simulator, unsigned
         run: |
           xcodebuild build \
             -project app/src-tauri/gen/apple/qrdrop.xcodeproj \
             -scheme qrdrop_iOS \
-            -configuration debug \
+            -configuration release \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO
