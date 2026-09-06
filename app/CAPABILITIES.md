@@ -1152,8 +1152,31 @@ above. None of it blocks the config gate.
    one level up. It is committed, its secrets exist, and no `app-v*` tag has
    been pushed -- so the desktop bundle step, the keystore restore and the
    Release assembly are all unproven. Cutting `app-v0.1.0` is what proves them.
-7. **The stable site's `assetlinks.json` is still empty**, even with
-   `ANDROID_CERT_FINGERPRINT` set: `/` is built from the last `v*` tag, which
-   predates `wellKnownFiles`. App-link association therefore works from
-   `/edge/` and not from the domain root until the next npm release. Nothing
-   to fix -- something to know before concluding the fingerprint did not take.
+7. **App-link association: fixed twice, and still not live at the root.**
+   Setting the fingerprint was necessary and, it turned out, nowhere near
+   sufficient. Checking the served URL rather than the built tree found two
+   independent faults, either of which alone would have produced the same
+   symptom -- a scanned link opening the browser, with no diagnostic anywhere.
+
+   (a) **The deploy was not serving the file.** `upload-pages-artifact` v4
+   stopped including hidden files, and `.well-known/` is one. Measured live,
+   from a single build: `/edge/apple-app-site-association` returned 200 and
+   `/edge/.well-known/assetlinks.json` returned 404. Android reads assetlinks
+   only from the dotted path and has no root fallback. The comment directly
+   above that upload step had predicted this exact failure, named
+   `.well-known/` as the likely cause, and named `include-hidden-files: true`
+   as the fix -- and it sat there for two phases, because a prediction in a
+   comment is not a check.
+
+   (b) **The package name was wrong.** The file published
+   `com.stan-ely.qrdrop`; the APK is `com.stan_ely.qrdrop`, because an Android
+   package name is a Java package name and cannot contain a hyphen. The test
+   covering it asserted the hyphenated value, so the suite agreed with the
+   bug -- it pinned `build-site.mjs` against a constant in `build-site.mjs`.
+   It now reads `applicationId` out of `build.gradle.kts` instead.
+
+   Both fixed and verified on the live site. What remains is not a fault:
+   `/` is built from the latest `v*` tag, which predates `wellKnownFiles`
+   entirely, so association works from `/edge/` and reaches the domain root
+   on the next npm release. Until then, do not read a failed app link on a
+   device as evidence that the fingerprint or the signature is wrong.

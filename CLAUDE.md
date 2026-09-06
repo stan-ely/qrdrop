@@ -508,12 +508,32 @@ installs, looks fine, and attests to nothing.
 `pages.yml` into `build-site.mjs`'s `wellKnownFiles`. A certificate fingerprint is
 published by design at a well-known URL on that very domain; storing a public value
 as a secret teaches that the secret list is where things go to feel safe. Setting it
-is what makes `.well-known/assetlinks.json` non-empty, and therefore what makes a
-scanned code open the installed app. Note *which* half of the site: both trees are
-built in that job, but the stable one at `/` comes from the latest `v*` tag, and a tag
-cut before `wellKnownFiles` existed emits no association files at all. Android reads
-them from the domain root, so association goes live at `/edge/` immediately and at `/`
-on the next npm release.
+is what makes `.well-known/assetlinks.json` non-empty — but on its own it was not
+close to enough, and the two things it was hiding are worth knowing before debugging
+a failed app link.
+
+**`.well-known/` is a hidden directory, and `upload-pages-artifact` drops those unless
+`include-hidden-files: true` says otherwise.** Measured live from one build:
+`/edge/apple-app-site-association` served 200 while `/edge/.well-known/assetlinks.json`
+served 404. Android reads assetlinks *only* from the dotted path, with no root
+fallback. The comment above that step had predicted this failure and named the fix, and
+it still shipped — so `pages.yml` now asserts the file is in `_site` rather than trusting
+prose.
+
+**The Android package name is not the bundle identifier.** `com.stan_ely.qrdrop`, with
+underscores: a package name is a Java package name and cannot contain a hyphen, so Tauri
+rewrites the configured `identifier` when it generates the Gradle project. `build-site.mjs`
+derives it rather than restating it. Android matches it exactly and says nothing when it
+does not match — the link just keeps opening the browser, which is indistinguishable from
+association not being set up at all.
+
+Note *which* half of the site the variable reaches: both trees are built in that job, but
+the stable one at `/` comes from the latest `v*` tag, and a tag cut before `wellKnownFiles`
+existed emits no association files at all. So association is live at `/edge/` and reaches
+the domain root on the next npm release.
+
+The lesson under all three: **check the served URL, not the built tree.** Everything here
+was generated correctly in `site/dist/` the whole time.
 
 **The platform seam must stay a seam.** `src/web/element.js` reads
 `getPlatform().createSink` from `src/web/platform.js` rather than importing
