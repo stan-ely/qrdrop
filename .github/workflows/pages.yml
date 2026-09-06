@@ -46,6 +46,30 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# KNOWN, on the tag trigger: a v* run builds correctly and deploys green, and
+# the site does not change. Observed cutting v0.4.0. Two distinct problems, and
+# the first has a fix while the second does not yet.
+#
+# First, the `github-pages` environment allowed only `branch: main`, so the
+# deploy job was refused outright -- "Tag v0.4.0 is not allowed to deploy to
+# github-pages due to environment protection rules". That is a repository
+# setting, not a file in this repo: Settings -> Environments -> github-pages,
+# or `gh api --method POST
+# repos/<owner>/<repo>/environments/github-pages/deployment-branch-policies
+# -f name='v*' -f type=tag`. It has been added.
+#
+# Second, and unexplained: with that rule in place the rerun's deploy reported
+# success, the uploaded artifact provably contained the new root tree (checked
+# by downloading it), and the live site went on serving the previous
+# main-triggered deployment for fifteen minutes -- Last-Modified frozen at the
+# earlier deploy on a response with Age: 0, so the origin itself, not a cache.
+# A workflow_dispatch on main deployed the identical content immediately.
+#
+# So do not trust a green tag run to have published. The site is not stranded
+# by this -- any push to main rebuilds stable from `git describe`, which finds
+# the new tag -- but "cut a release and the site updates itself" is not true
+# today. Check the served URL after a release, and if it is stale, dispatch
+# this workflow on main.
 jobs:
   build:
     runs-on: ubuntu-latest

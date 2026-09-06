@@ -1148,10 +1148,26 @@ above. None of it blocks the config gate.
    the two failures are written up in the Phase 5 section above -- the iOS job
    could not have worked as written, and the Android one broke on the
    two-hyphen XML rule this file had already recorded once.
-6. **`app-release.yml` has never run either**, which is the same shape of gap
-   one level up. It is committed, its secrets exist, and no `app-v*` tag has
-   been pushed -- so the desktop bundle step, the keystore restore and the
-   Release assembly are all unproven. Cutting `app-v0.1.0` is what proves them.
+6. ~~**`app-release.yml` has never run either.**~~ **Closed.** `app-v0.1.0`
+   is cut and every job passed first time: the version and changelog gates,
+   three desktop bundles, the signed APK, and the Release. It carries
+   `app-universal-release.apk` (45 MB), `qrdrop_0.1.0_x64-setup.exe`,
+   `qrdrop_0.1.0_amd64.deb`, `qrdrop_0.1.0_amd64.AppImage`,
+   `qrdrop_0.1.0_aarch64.dmg` and `SHA256SUMS`.
+6b. **A `v*` tag deploys the site green and does not publish it.** Found
+   cutting `v0.4.0`, and it is two faults. The `github-pages` environment
+   permitted only `branch: main`, so the deploy was refused outright -- a
+   repository setting rather than anything in this repo, fixed by adding a
+   `v*` tag policy. With that in place the rerun reported success, the
+   uploaded artifact provably contained the new root tree (downloaded and
+   checked), and the live site went on serving the previous main-triggered
+   deployment for fifteen minutes: `Last-Modified` frozen at the earlier
+   deploy on a response with `Age: 0`, so the origin and not a cache. A
+   `workflow_dispatch` on main published the identical content at once.
+   Unexplained, and worth one more look on the next release. It does not
+   strand the site -- any push to main rebuilds stable from `git describe`,
+   which finds the newest tag -- but "cut a release and the site updates
+   itself" is not true today.
 7. **App-link association: fixed twice, and still not live at the root.**
    Setting the fingerprint was necessary and, it turned out, nowhere near
    sufficient. Checking the served URL rather than the built tree found two
@@ -1175,8 +1191,15 @@ above. None of it blocks the config gate.
    bug -- it pinned `build-site.mjs` against a constant in `build-site.mjs`.
    It now reads `applicationId` out of `build.gradle.kts` instead.
 
-   Both fixed and verified on the live site. What remains is not a fault:
-   `/` is built from the latest `v*` tag, which predates `wellKnownFiles`
-   entirely, so association works from `/edge/` and reaches the domain root
-   on the next npm release. Until then, do not read a failed app link on a
-   device as evidence that the fingerprint or the signature is wrong.
+   **Both fixed, and now live at the domain root**, which is what Android
+   actually reads. `https://share.stan-ely.com/.well-known/assetlinks.json`
+   returns the real fingerprint against `com.stan_ely.qrdrop`; the root
+   `apple-app-site-association` serves too, inert without an Apple team. That
+   took cutting `v0.4.0` -- `/` is built from the latest `v*` tag, and the
+   previous one predated `wellKnownFiles` entirely -- and then a manual
+   dispatch, per 6b above.
+
+   **Still unverified on a device.** Every part of the chain is now correct as
+   published; nobody has yet installed the signed APK and scanned a code to
+   see the OS open the app instead of a browser. That is the check this all
+   exists for and it stays open.
