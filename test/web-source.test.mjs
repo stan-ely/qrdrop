@@ -9,8 +9,8 @@
  *
  * So the property worth pinning is not "the bytes are right" -- a naive
  * implementation gets that too -- it is HOW MANY reads the adapter issues to
- * deliver them. These count the underlying reads through a File-shaped stub,
- * which is the only way to see the difference from Node.
+ * deliver them, and WHEN it issues them. These count the underlying reads
+ * through a File-shaped stub, which is the only way to see either from Node.
  */
 
 import test from 'node:test'
@@ -25,11 +25,16 @@ const BLOCK = 2 * 1024 * 1024 // must track BLOCK_BYTES in src/web/source.js
  * A File-shaped stub that counts reads. Deliberately not a real File: the
  * whole point is observing the call the platform charges for.
  *
+ * `fail` names read numbers (1-based, in the order the adapter issues them)
+ * that should reject, which is how the read-ahead's failure path is reached
+ * without a real content:// provider to break.
+ *
  * @param {Uint8Array} bytes
- * @param {{ name?: string, type?: string }} [opts]
+ * @param {{ name?: string, type?: string, fail?: number[] }} [opts]
  */
-function countingFile(bytes, { name = 'f.bin', type = '' } = {}) {
-  const stats = { reads: 0, bytesRead: 0 }
+function countingFile(bytes, { name = 'f.bin', type = '', fail = [] } = {}) {
+  /** @type {{ reads: number, bytesRead: number, ranges: number[][] }} */
+  const stats = { reads: 0, bytesRead: 0, ranges: [] }
   // Cast rather than implement: a real File brings lastModified, stream(),
   // text() and the rest, none of which fromFile touches. Only the three
   // members it does read are worth standing up here, and the cast says that
@@ -42,7 +47,9 @@ function countingFile(bytes, { name = 'f.bin', type = '' } = {}) {
     slice(start, end) {
       return {
         async arrayBuffer() {
-          stats.reads++
+          const n = ++stats.reads
+          stats.ranges.push([start, end])
+          if (fail.includes(n)) throw new Error(`read ${n} failed`)
           stats.bytesRead += end - start
           return bytes.slice(start, end).buffer
         },
@@ -70,20 +77,62 @@ test('sequential chunk reads are served from one block, not one read each', asyn
 
   // The naive version issued one read per frame. Anything close to that number
   // means the buffer is not being reused and the Android path is slow again.
-  // Not exactly ceil(size / BLOCK): CHUNK_SIZE does not divide a megabyte
-  // evenly, so one frame straddles each block boundary and refills from its
-  // own start rather than from the next aligned offset. That costs one extra
-  // read per block and re-reads at most CHUNK_SIZE bytes -- cheap enough to
-  // leave alone, since the alternative is stitching two blocks together for
-  // one frame in sixty-four.
+  // Exactly one read per block, no more: CHUNK_SIZE does not divide a megabyte
+  // evenly, so a frame straddles every block boundary, and this is the pin on
+  // that frame being stitched from two blocks rather than triggering a refill
+  // from its own unaligned start. The unaligned refill was correct too, but it
+  // cost a read per block AND left every prefetched window at the wrong offset
+  // to ever be claimed.
   const frames = Math.ceil(bytes.length / CHUNK_SIZE)
   const blocks = Math.ceil(bytes.length / BLOCK)
-  assert.ok(stats.reads <= blocks + 1, `${stats.reads} reads for ${blocks} blocks`)
-  // A block holds BLOCK / CHUNK_SIZE = 128 frames, and the straddle above
-  // costs part of one, so ~96 frames per read is what "amortised" looks like.
-  // The naive version this replaced scored exactly 1.
+  assert.equal(stats.reads, blocks, `${stats.reads} reads for ${blocks} blocks`)
+  // A block holds BLOCK / CHUNK_SIZE = 128 frames. The naive version this
+  // replaced scored exactly 1.
   const framesPerRead = frames / stats.reads
   assert.ok(framesPerRead >= 80, `only ${framesPerRead.toFixed(1)} frames per read; not amortised`)
+})
+
+test('the next block is read while the current one is still being served', async () => {
+  const bytes = pattern(3 * BLOCK)
+  const { file, stats } = countingFile(bytes)
+  const source = fromFile(file)
+
+  // One frame asked for, and the read for the block AFTER it is already out.
+  // This is the whole point of the read-ahead: sender.js awaits slice() before
+  // it seals, so a read issued at the boundary stalls the data channel for a
+  // ~79 ms Binder round-trip, while one issued here overlaps the ~128 frames
+  // still to be transmitted from the block just loaded.
+  await source.slice(0, CHUNK_SIZE)
+  assert.equal(stats.reads, 2, 'the next block should already be in flight')
+  assert.deepEqual(stats.ranges[1], [BLOCK, 2 * BLOCK], 'the read-ahead is at the wrong offset')
+
+  // Crossing into it costs nothing, because it is the read already issued --
+  // the count rises only by the read-ahead armed behind it.
+  let offset = 0
+  while (offset < 2 * BLOCK) {
+    const end = Math.min(offset + CHUNK_SIZE, bytes.length)
+    assert.deepEqual(await source.slice(offset, end), bytes.subarray(offset, end), `at ${offset}`)
+    offset = end
+  }
+  assert.equal(stats.reads, 3, 'crossing a boundary should claim the read-ahead, not re-read')
+})
+
+test('a read-ahead that fails is retried by the call that needs it', async () => {
+  // Read 2 is the read-ahead for the second block, issued before anyone has
+  // asked for those bytes. It must not reject into nowhere (node --test fails
+  // the run on an unhandled rejection, which is half of what this asserts) and
+  // it must not fail the transfer: the frame that eventually wants that range
+  // reads it itself, and only a failure THERE is the caller's problem.
+  const bytes = pattern(2 * BLOCK)
+  const { file, stats } = countingFile(bytes, { fail: [2] })
+  const source = fromFile(file)
+
+  await source.slice(0, CHUNK_SIZE)
+  // Straddles the boundary, so this is the request that claims the read-ahead
+  // -- and finds it empty.
+  const across = await source.slice(BLOCK - 5, BLOCK + 5)
+  assert.deepEqual(across, bytes.subarray(BLOCK - 5, BLOCK + 5))
+  assert.equal(stats.reads, 3, 'the failed read-ahead should have been read again')
 })
 
 test('a backwards seek re-reads rather than serving stale bytes', async () => {

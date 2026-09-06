@@ -69,22 +69,25 @@
  * and is still climbing at 16 MiB.
  *
  * Verified at scale rather than only on the file that exposed the bug: 64 MiB
- * phone to desktop is 33 reads and 23.6 s (2.72 MB/s), with reads 25% of the
- * window. The same transfer on the per-frame read would have been about
- * eleven minutes.
+ * phone to desktop was 33 reads and 23.6 s (2.72 MB/s) with the blocks alone,
+ * and reads were still 25% of that window.
  *
- * That 25% is the next thing worth attacking, and a bigger block is NOT the
- * way to do it. Reads are serialised BETWEEN sends -- sender.js awaits
- * slice() before it seals -- so the channel sits idle for every one of them.
- * Prefetching the next block while the current one transmits would hide that
- * cost behind the transport entirely; raising BLOCK_BYTES only makes the
- * idle gaps fewer and longer, for double the memory each time.
+ * That last 25% is what the read-ahead below is for, and a bigger block was
+ * explicitly the wrong way to get it: sender.js awaits slice() before it
+ * seals, so the reads are serialised BETWEEN sends and the channel sits idle
+ * through every one of them. Raising BLOCK_BYTES only makes the idle gaps
+ * fewer and longer, for double the memory each time. Issuing the NEXT block's
+ * read as soon as the current one lands puts that round-trip alongside the
+ * ~128 frames the current block still has to transmit, which is the one thing
+ * that removes the gap rather than reshaping it.
  */
 
-// Peak is one block, not two. The refill drops its reference to the previous
-// block BEFORE awaiting the next read, so the old one is collectable while the
-// new buffer is being allocated -- holding both across the await would double
-// the footprint on the device with the least memory to spare.
+// Two blocks, not one: the block being served from and the one being read
+// ahead. That doubling is the whole price of the read-ahead, and it is stated
+// here rather than left implicit in prefetch(), because it is also the reason
+// BLOCK_BYTES did not simply grow instead -- 2 MiB buys the overlap for 4 MiB
+// of peak on the device with the least memory to spare, where 8 MiB blocks
+// would want 16.
 const BLOCK_BYTES = 2 * 1024 * 1024
 
 /**
@@ -92,9 +95,67 @@ const BLOCK_BYTES = 2 * 1024 * 1024
  * @returns {FileSource}
  */
 export function fromFile(file) {
-  /** @type {Uint8Array | null} */
+  /** @type {Bytes | null} */
   let block = null
   let blockStart = 0
+
+  // The read-ahead, in flight or already settled. Held as one { start, bytes }
+  // object rather than two variables so "which offset is this promise for"
+  // cannot drift from the promise itself.
+  /** @type {{ start: number, bytes: Promise<Bytes | null> } | null} */
+  let ahead = null
+
+  /** @param {number} at */
+  function prefetch(at) {
+    ahead = null
+    if (at >= file.size) return
+    const slice = file.slice(at, Math.min(at + BLOCK_BYTES, file.size))
+    ahead = {
+      start: at,
+      // The rejection is swallowed HERE, into a null, and that is deliberate
+      // twice over. Nothing awaits this promise until the caller happens to
+      // reach the boundary -- possibly seconds later, possibly never, if the
+      // transfer is cancelled first -- so a rejection left to escape would
+      // surface as an unhandled rejection at an unrelated moment, or against a
+      // transfer that had already moved on. And a failed read-ahead is not an
+      // error anyone asked for: null makes it indistinguishable from no
+      // read-ahead at all, so load() reads the range itself and a real failure
+      // is thrown from the call that actually wanted those bytes.
+      bytes: slice.arrayBuffer().then(b => new Uint8Array(b), () => null),
+    }
+  }
+
+  /**
+   * Makes `block` the window starting at `at` -- from the read-ahead if one is
+   * waiting for exactly that offset, otherwise by reading it -- and arms the
+   * next read-ahead.
+   *
+   * The match is an exact offset comparison rather than a range check: the
+   * only offset ever prefetched is the one immediately after the block being
+   * served, and accepting a merely *containing* window would hand a sequential
+   * caller a window it had already half consumed. Correct, but it shortens the
+   * runway to the next boundary for no gain.
+   *
+   * @param {number} at
+   */
+  async function load(at) {
+    const claimed = ahead && ahead.start === at ? ahead : null
+    // Both references dropped before the await rather than after it resolves,
+    // so the old block is collectable while the new one is being allocated and
+    // the peak stays at the two blocks named above instead of three.
+    // blockStart moves with them, so a throw from arrayBuffer() cannot leave a
+    // stale offset pointing at a null block.
+    ahead = null
+    block = null
+    blockStart = at
+
+    if (claimed) block = await claimed.bytes
+    if (block === null) {
+      const slice = file.slice(at, Math.min(at + BLOCK_BYTES, file.size))
+      block = new Uint8Array(await slice.arrayBuffer())
+    }
+    prefetch(blockStart + block.length)
+  }
 
   return {
     name: file.name,
@@ -105,40 +166,69 @@ export function fromFile(file) {
     mime: file.type || 'application/octet-stream',
 
     async slice(start, end) {
-      // Read straight through for a request larger than the buffer. Caching
-      // it would evict a block that is probably still being served from to
-      // hold one that by definition cannot be reused, and the per-call cost
-      // this whole buffer exists to amortise is already amortised across a
-      // request that big. sender.js never asks for more than CHUNK_SIZE, so
-      // this is the contract staying honest for other callers rather than a
-      // path the transfer takes.
+      // Read straight through for a request larger than the buffer. Caching it
+      // would evict a block that is probably still being served from to hold
+      // one that by definition cannot be reused, and the per-call cost this
+      // whole buffer exists to amortise is already amortised across a request
+      // that big. sender.js never asks for more than CHUNK_SIZE, so this is
+      // the contract staying honest for other callers rather than a path the
+      // transfer takes. Any read-ahead in flight is left alone: it is still
+      // valid for its own range, and a one-off large read says nothing about
+      // where the caller is going next.
       if (end - start > BLOCK_BYTES) {
         return new Uint8Array(await file.slice(start, end).arrayBuffer())
       }
 
-      // Refill whenever the request is not wholly inside the block we hold.
-      // The condition is a range check and not `start === blockStart + n`
-      // on purpose: FileSource does not promise sequential access, and a
-      // caller seeking backwards must get correct bytes rather than a
-      // silently stale window.
-      if (block === null || start < blockStart || end > blockStart + block.length) {
-        const slice = file.slice(start, Math.min(start + BLOCK_BYTES, file.size))
-        // Released before the await, not after the read resolves: see the
-        // note on BLOCK_BYTES. blockStart moves with it so a throw from
-        // arrayBuffer() cannot leave a stale offset pointing at a null block.
-        block = null
-        blockStart = start
-        block = new Uint8Array(await slice.arrayBuffer())
+      // Wholly inside the block we hold: the overwhelmingly common case, and
+      // the only one that costs nothing at all.
+      if (block !== null && start >= blockStart && end <= blockStart + block.length) {
+        return copy(block, start - blockStart, end - blockStart)
       }
 
-      // A copy, not a subarray view. src/node/source.js can hand back a view
-      // of its reused buffer because it refills that buffer on every single
-      // slice() -- there is never a live view and a refill at the same time.
-      // Here one block backs up to 64 frames, and seal() is awaited between
-      // them, so a view would stay valid in today's sender and would alias
-      // the moment anything read ahead. The copy is CHUNK_SIZE, which is the
-      // allocation sender.js was making per frame anyway.
-      return block.slice(start - blockStart, end - blockStart)
+      // Straddling the end of it: head from this block, tail from the next.
+      // Stitching earns its awkwardness because CHUNK_SIZE does not divide
+      // BLOCK_BYTES, so EVERY block boundary lands mid-frame. The earlier
+      // version refilled from the straddling frame's own start instead, which
+      // cost one extra read per block and -- far worse once there was a
+      // read-ahead -- left the prefetched window, aligned to the block, never
+      // the window actually asked for. It would have been discarded at every
+      // boundary, and a read-ahead thrown away each time is not a read-ahead.
+      if (block !== null && start >= blockStart && start < blockStart + block.length) {
+        const head = copy(block, start - blockStart, block.length)
+        await load(blockStart + block.length)
+        const out = new Uint8Array(end - start)
+        out.set(head)
+        out.set(copy(block, 0, out.length - head.length), head.length)
+        return out
+      }
+
+      // Anywhere else: a first read, or a caller that seeked. FileSource does
+      // not promise sequential access, and a backwards seek must get correct
+      // bytes rather than a silently stale window.
+      await load(start)
+      return copy(block, start - blockStart, end - blockStart)
     },
   }
+}
+
+/**
+ * A copy, not a subarray view. src/node/source.js can hand back a view of its
+ * reused buffer because it refills that buffer on every single slice() --
+ * there is never a live view and a refill at the same time. Here one block
+ * backs up to 128 frames AND the next block is being read while they are
+ * sent, so a view would alias a buffer this file is actively replacing. The
+ * copy is CHUNK_SIZE, which is the allocation sender.js was making per frame
+ * anyway.
+ *
+ * @param {Bytes | null} buf
+ * @param {number} from
+ * @param {number} to
+ * @returns {Bytes}
+ */
+function copy(buf, from, to) {
+  // Unreachable: every caller has just loaded the block or checked it. The
+  // throw states the invariant rather than talking the typechecker out of it
+  // with a cast.
+  if (buf === null) throw new Error('read from an unloaded block')
+  return buf.slice(from, to)
 }

@@ -774,6 +774,45 @@ sends.
 Everything else is now noise: at 64 MiB, AEAD is 344 ms over 4,123 seals (1.5%)
 and `RTCDataChannel.send` is 97 ms over 4,122 calls (0.4%).
 
+#### The read-ahead, and what it is not yet proven to be worth
+
+The blocks left reads at **25% of the 64 MiB window**, and that residue is a
+different problem from the one they solved. It is not that the reads are
+expensive -- 33 of them is already near the floor -- it is that they are
+*serialised against the sends*. `sender.js` awaits `slice()` before it seals,
+so at each block boundary the data channel goes quiet for a whole Binder
+round-trip and then resumes. Making the block bigger does not fix that shape;
+it makes the silences fewer and longer and doubles the buffer each time.
+
+`fromFile` now issues the next block's read as soon as the current one lands,
+so the round-trip runs alongside the ~128 frames the current block still has to
+transmit. Two structural changes came with it, and both are the kind that would
+be quietly undone by someone tidying:
+
+- **A frame straddling a boundary is stitched from both blocks** rather than
+  refilling from its own offset. This looks like a micro-optimisation and is
+  not. `CHUNK_SIZE` (16318) divides no power of two, so *every* boundary lands
+  mid-frame; the previous refill-from-here behaviour therefore meant the
+  prefetched window -- aligned to the block -- was never the window asked for.
+  A read-ahead discarded at every boundary is not a read-ahead, and the
+  straddle is what makes the whole thing work rather than a tidy extra.
+- **Peak memory is two blocks, 4 MiB, not one.** That is the price, it is paid
+  on the device least able to afford it, and it is the reason `BLOCK_BYTES`
+  stays at 2 MiB rather than growing.
+
+`test/web-source.test.mjs` pins it from Node: eight tests over a File-shaped
+stub that counts reads and records their offsets, asserting one read per block
+(not one per frame, and not one per block plus a straddle), that the read for
+block N+1 is already in flight after the first frame of block N, and that a
+read-ahead which *fails* is retried by the call that eventually wants those
+bytes rather than rejecting into nowhere.
+
+**What is not here is a device measurement.** The 25% figure above is the
+before; there is no after. The mechanism is sound and pinned in tests, but
+whether it removes 25% or 15% of a 64 MiB Android send is unmeasured, and the
+instrumentation to settle it is the same CDP hook that produced every table in
+this section. Do not quote a post-prefetch number until that has been run.
+
 ### On-device checklist -- iOS
 
 No Apple hardware exists on this project, so this table stays empty until
@@ -841,17 +880,11 @@ been exercised once by hand.
 Named here so it is a list rather than a set of remarks buried in the sections
 above. None of it blocks the config gate.
 
-1. **Prefetch the next block in `fromFile`.** `sender.js` awaits `slice()`
-   before it seals, so the data channel is idle for every read -- 25% of a
-   64 MiB transfer, even at a 2 MiB block. Reading block N+1 while block N is
-   still being sent hides that cost behind the transport instead of shrinking
-   it. This is the single largest remaining win on the Android send path, and
-   it is explicitly the *right* fix where raising `BLOCK_BYTES` is the wrong
-   one: a bigger block makes the idle gaps fewer and longer and doubles the
-   buffer each time. Watch two things while doing it -- peak memory becomes two
-   blocks rather than one (see the note on `BLOCK_BYTES`), and the returned
-   copy stops being trivially safe once a read can be in flight against a live
-   block.
+1. **Measure the read-ahead on the device.** The prefetch itself is done (see
+   above) and pinned by `test/web-source.test.mjs`, but every number in this
+   file predates it. Re-run the 64 MiB send with the same CDP instrumentation
+   and record what the 25% read share actually became; until then this section
+   has a before and no after.
 2. **The `content://` sink**, so Android can receive at all. Two candidate
    fixes, both behind the existing platform seam; see the section above.
 3. **First-error-versus-last-error reporting.** `abortActive` nulls `active` on

@@ -472,13 +472,28 @@ different adapter entirely) until a phone was pointed at it.
 Two traps in that constant. It does **not** match `tauri-sink.js`'s 1 MiB -- the
 write side amortises a ~3 ms invoke and flattens after 256 KiB, this amortises a
 ~79 ms round-trip and is still climbing at 16 MiB -- so "make them the same" is
-wrong in both directions. And raising it is the wrong fix for the ~25% of a
-transfer still spent reading: `sender.js` awaits `slice()` before it seals, so the
-channel is idle for every read, and a bigger block only makes those gaps fewer and
-longer. Prefetching the next block while the current one transmits is what removes
-them. It returns a copy of the block rather than a subarray view, unlike
+wrong in both directions. And **raising it is the wrong fix for time spent
+reading**, which is what the read-ahead beside it is for: `sender.js` awaits
+`slice()` before it seals, so a read at a block boundary stalls the channel, and a
+bigger block only makes those stalls fewer and longer for double the memory each
+time. `fromFile` instead issues the *next* block's read as soon as the current one
+lands, so the round-trip overlaps the ~128 frames still to be transmitted. Peak is
+therefore two blocks, and that is the price the constant is chosen against.
+
+Three things in that read-ahead are load-bearing and none are obvious. A frame
+straddling a block boundary is **stitched from both blocks**, not refilled from its
+own offset -- `CHUNK_SIZE` divides no power of two, so every boundary lands
+mid-frame, and refilling there would leave each prefetched window at an offset
+nothing ever asks for, discarding the read-ahead at every boundary. The prefetch
+promise **swallows its own rejection into a `null`**, because nothing awaits it
+until the caller reaches that offset (possibly never, on a cancelled transfer) and
+an escaping rejection would surface unhandled, against unrelated work; the call
+that actually wants those bytes re-reads them and throws in its own right. And it
+returns a copy of the block rather than a subarray view, unlike
 `src/node/source.js`, which can hand back a view only because it refills its buffer
-on every single `slice()`.
+on every single `slice()` -- here a view would alias a buffer being replaced by a
+read already in flight. `test/web-source.test.mjs` counts the underlying reads and
+their offsets, which is the only way to see any of this from Node.
 
 **A slow sink is now throttled by the transport, and that mechanism is a `src/core`
 property, not a Tauri one.** `RTCDataChannel` delivers `onmessage` as fast as bytes
