@@ -64,13 +64,40 @@ const ORIGIN = 'https://share.stan-ely.com'
 const REPO = 'https://github.com/stan-ely/qrdrop'
 
 /**
- * The app's bundle / package identifier, shared by every target. Kept in step
- * with app/src-tauri/tauri.conf.template.json's `identifier` and the Android
- * `package_name` by being the same string typed once -- if that file's
- * identifier ever changes, the digital-asset-links files below must move with
- * it or a scanned universal link stops opening the installed app.
+ * The app's configured identifier: `identifier` in
+ * app/src-tauri/tauri.conf.template.json, and the iOS bundle identifier. If
+ * that file's identifier ever changes, the digital-asset-links files below
+ * must move with it or a scanned universal link stops opening the installed
+ * app.
+ *
+ * It is NOT what Android calls the package -- see ANDROID_PACKAGE below. This
+ * comment used to claim the identifier was "shared by every target", which is
+ * what made the mismatch invisible.
  */
 const APP_IDENTIFIER = 'com.stan-ely.qrdrop'
+
+/**
+ * The same app, as Android names it.
+ *
+ * An Android package name is a Java package name, and a Java identifier cannot
+ * contain a hyphen -- so Tauri rewrites the configured identifier when it
+ * generates the Gradle project, and `applicationId` in
+ * app/src-tauri/gen/android/app/build.gradle.kts is `com.stan_ely.qrdrop`. The
+ * APK confirms it: `aapt2 dump badging` reports `package: name=
+ * 'com.stan_ely.qrdrop'`.
+ *
+ * assetlinks.json matches that package name exactly and gives no diagnostic
+ * when it does not match -- the link simply keeps opening the browser, which
+ * is indistinguishable from association not being configured at all. This was
+ * published with the hyphen for two phases, alongside a fingerprint, on a file
+ * the deploy was not even serving. Two independent reasons for one symptom is
+ * how a bug like this outlives the first fix.
+ *
+ * Derived rather than written out, so an identifier change cannot update one
+ * of the two and not the other. iOS keeps the hyphenated form: its appID is
+ * the bundle identifier, which has no such restriction.
+ */
+const ANDROID_PACKAGE = APP_IDENTIFIER.replaceAll('-', '_')
 
 /**
  * Where the deployed site serves the bleeding build from main.
@@ -338,7 +365,7 @@ export function wellKnownFiles({ appleTeamId, androidCertFingerprints }) {
       relation: ['delegate_permission/common.handle_all_urls'],
       target: {
         namespace: 'android_app',
-        package_name: APP_IDENTIFIER,
+        package_name: ANDROID_PACKAGE,
         sha256_cert_fingerprints: androidCertFingerprints,
       },
     },

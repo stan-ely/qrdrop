@@ -11,6 +11,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import { buildCSP, buildStamp, wellKnownFiles } from '../scripts/build-site.mjs'
 import { SIGNALING_URLS } from '../src/transport/room.js'
@@ -169,12 +170,32 @@ test('the AASA appID is team-prefix + the shared app identifier', () => {
 
 test('assetlinks carries the package name and only the fingerprints it is given', () => {
   const empty = JSON.parse(wellKnownFiles({ appleTeamId: 'TEAMID', androidCertFingerprints: [] })['.well-known/assetlinks.json'])
-  assert.equal(empty[0].target.package_name, 'com.stan-ely.qrdrop')
+  // Underscores, not hyphens. This asserted the hyphenated bundle identifier
+  // for two phases, which is what the file actually published -- and Android
+  // gives no diagnostic for a package that does not match, it just keeps
+  // opening the browser.
+  assert.equal(empty[0].target.package_name, 'com.stan_ely.qrdrop')
   assert.deepEqual(empty[0].target.sha256_cert_fingerprints, [])
   assert.deepEqual(empty[0].relation, ['delegate_permission/common.handle_all_urls'])
 
   const signed = JSON.parse(wellKnownFiles({ appleTeamId: 'TEAMID', androidCertFingerprints: ['AA:BB', 'CC:DD'] })['.well-known/assetlinks.json'])
   assert.deepEqual(signed[0].target.sha256_cert_fingerprints, ['AA:BB', 'CC:DD'])
+})
+
+test('the published package name is the one the APK actually ships', () => {
+  // The only assertion here that could have caught the real bug: it reads the
+  // Gradle file rather than a constant this repo also wrote. A test that pins
+  // build-site.mjs against build-site.mjs agrees with itself all the way to
+  // production, which is exactly what the previous version of the test above
+  // did.
+  const gradle = readFileSync(
+    new URL('../app/src-tauri/gen/android/app/build.gradle.kts', import.meta.url), 'utf8',
+  )
+  const applicationId = /applicationId\s*=\s*"([^"]+)"/.exec(gradle)?.[1]
+  assert.ok(applicationId, 'no applicationId in build.gradle.kts')
+
+  const links = JSON.parse(wellKnownFiles({ appleTeamId: 'TEAMID', androidCertFingerprints: [] })['.well-known/assetlinks.json'])
+  assert.equal(links[0].target.package_name, applicationId)
 })
 
 test('an unknown channel fails the build rather than defaulting', () => {
