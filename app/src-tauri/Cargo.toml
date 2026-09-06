@@ -7,7 +7,7 @@
 # `version` field so Tauri reads this one instead of keeping two copies of
 # one fact in step by hand.
 name = "qrdrop"
-version = "0.0.0"
+version = "0.1.0"
 description = "Send a file straight from one device to another -- desktop and mobile shell"
 authors = ["Bevan Stanely"]
 edition = "2021"

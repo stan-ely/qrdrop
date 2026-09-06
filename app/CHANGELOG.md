@@ -6,6 +6,11 @@ package and moves on `v*` tags, this one tracks the app and moves on `app-v*`.
 The two version numbers are deliberately unrelated — a webview-permission fix
 should ship an app release without republishing an unchanged library.
 
+Write the next entry under a `## Unreleased` heading. `cargo release` stamps it
+with the version and the date at the moment the version is decided, and stops
+if there is no such heading — the notes are written before the tag, never
+generated from commit subjects afterwards.
+
 ## 0.1.0
 
 The first release of the app. It is a shell around the same code the website

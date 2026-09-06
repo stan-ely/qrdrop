@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Tauri desktop/mobile shell for qrdrop. Kept out of the root package.json on purpose -- see CLAUDE.md, \"no new runtime dependencies\" is a root-package invariant, not an app-directory one.",
+  "description": "Tauri desktop/mobile shell for qrdrop. Kept out of the root package.json on purpose -- see CLAUDE.md, \"no new runtime dependencies\" is a root-package invariant, not an app-directory one. The version above stays 0.0.0 deliberately and is not the app's version: this package is private and never published, the app's version lives in src-tauri/Cargo.toml (which tauri.conf.json reads, which cargo-release bumps, and which the app-v* tag must match), and a second number nothing keeps in step is drift waiting to be believed.",
   "scripts": {
     "tauri": "tauri"
   },

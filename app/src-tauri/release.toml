@@ -1,0 +1,56 @@
+# cargo-release, driving the app's version and its tag.
+#
+# The app and the npm package are released independently and on purpose: this
+# crate's `version` is the app's single source of truth (see the comment on it
+# in Cargo.toml and the rule in CLAUDE.md), and a webview-permission fix should
+# ship an app release without republishing an unchanged library. So the two
+# tag namespaces are separate, and this file is what keeps them apart.
+#
+#   cargo release 0.1.0 --execute      # from app/src-tauri
+#
+# mise pins cargo-release, so `mise exec -- cargo release ...` is the
+# reproducible spelling.
+
+# The tag `app-v*` fires .github/workflows/app-release.yml and nothing else.
+# publish.yml and pages.yml both trigger on `v*`, and a glob in a workflow's
+# `tags:` list is anchored at the start -- `v*` does NOT match `app-v0.1.0`.
+# That is the whole reason the prefix is on the front rather than the back:
+# `0.1.0-app` would match `v*` about as well as it matches nothing, and a
+# release of the shell would have started an npm publish.
+tag-name = "app-v{{version}}"
+tag-message = "qrdrop app {{version}}"
+
+# The crate itself is `publish = false` in Cargo.toml -- it is a binary and a
+# mobile library, not something anyone depends on from crates.io. Saying it
+# again here is not redundancy: cargo-release runs `cargo publish` as its own
+# step, and a future `publish = true` on the crate (say, to share the sink
+# command) would silently turn a version bump into an upload.
+publish = false
+
+# Pushed by hand, after looking at the commit and the tag. The push is what
+# starts a release that produces signed artifacts and a public Release page,
+# and there is no undo for either.
+push = false
+
+allow-branch = ["main"]
+
+# The changelog is written before the tag, not generated after it -- the same
+# posture publish.yml takes for npm, where scripts/release-notes.mjs extracts
+# a hand-written section rather than summarising commit subjects. What this
+# replacement does is stamp the date onto a heading that already has its prose
+# under it, so `## Unreleased` becomes `## 0.1.0 -- 2026-09-06` at the moment
+# the version is decided.
+#
+# If the heading is not there, cargo-release stops. That is the intended
+# behaviour and not an inconvenience to route around: app-release.yml runs
+# `release-notes.mjs --file app/CHANGELOG.md <version>` before it builds
+# anything, so a tag with no entry fails there too -- but failing here is
+# better, because here nothing has been tagged yet.
+#
+# 0.1.0's heading is already stamped in that file rather than sitting under
+# `## Unreleased`, because this file and that entry landed in the same change
+# and there was no earlier release for cargo-release to bump from. Every entry
+# after it goes in as `## Unreleased` and is stamped here.
+pre-release-replacements = [
+  { file = "../CHANGELOG.md", search = "^## Unreleased$", replace = "## {{version}} -- {{date}}", exactly = 1, prerelease = false },
+]

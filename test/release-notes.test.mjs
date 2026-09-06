@@ -46,6 +46,7 @@ test('sectionFor returns an entry without its heading', () => {
 
 test('a deeper heading belongs to the entry and does not end it', () => {
   const section = sectionFor(CHANGELOG, '2.0.0')
+  assert.ok(section !== null)
   assert.match(section, /A deeper heading/)
   assert.match(section, /Still the second entry\./)
   assert.doesNotMatch(section, /First\./)

@@ -1,0 +1,273 @@
+# Everything that happens when an `app-v*` tag is pushed: the desktop bundles,
+# a signed Android APK, and the GitHub Release that carries them.
+#
+# A separate file from app.yml, which stays build-only, and a separate file
+# from publish.yml, which is the npm side. The tag namespaces do not collide
+# and the reason is worth stating because it is the fact that makes this file
+# safe to add: a workflow's `tags:` glob is anchored at the start, so `v*`
+# matches `v0.3.1` and does NOT match `app-v0.1.0`. publish.yml and pages.yml
+# therefore stay out of an app release entirely. Putting the prefix on the
+# front rather than the back is what buys that; `0.1.0-app` would have matched
+# `v*` no better than it matches anything, and an app release would have
+# started an npm publish.
+#
+# Nothing here is a rewrite of publish.yml -- it borrows that file's shape
+# deliberately: check the version and the changelog BEFORE building anything,
+# build the artifacts, attest them, and assemble one Release with checksums.
+# The differences are all about signing, and they are the honest kind.
+name: app release
+
+on:
+  push:
+    tags: ['app-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # the release job creates a Release and uploads to it
+  id-token: write # OIDC, for the build provenance attestation below
+  attestations: write
+
+jobs:
+  # Cheap, and first. A tag that disagrees with the crate version, or that has
+  # no changelog entry, should cost seconds rather than three cold Rust builds
+  # -- and it should fail while the tag can still be deleted and re-cut, not
+  # after a Release page exists.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      # app/src-tauri/Cargo.toml is the app's single source of truth (see the
+      # comment on `version` there). tauri.conf.json omits its own version
+      # field so Tauri reads the crate's, and app/package.json is deliberately
+      # left at 0.0.0 -- so this is the one number to compare the tag against.
+      - name: Tag must match the crate version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#app-v}"
+          crate="$(sed -n 's/^version = "\(.*\)"$/\1/p' app/src-tauri/Cargo.toml | head -1)"
+          if [ "$tag" != "$crate" ]; then
+            echo "Tag app-v$tag does not match app/src-tauri/Cargo.toml $crate" >&2
+            exit 1
+          fi
+          echo "version=$crate" >> "$GITHUB_OUTPUT"
+
+      - name: The app changelog must have an entry for this version
+        run: node scripts/release-notes.mjs --file app/CHANGELOG.md "${{ steps.version.outputs.version }}" > /dev/null
+
+  desktop:
+    needs: check
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v2
+
+      - name: Install Linux webview dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - run: npm ci
+      - run: npm ci --prefix app
+      - run: mise run app:build-site
+      - run: mise run app:config
+
+      # A real bundle, unlike app.yml's `--debug --no-bundle`: this is the
+      # artifact people install, so it is release codegen and it goes through
+      # the installer targets in tauri.conf.json (nsis, deb, appimage, dmg).
+      #
+      # UNSIGNED, on all three. There is no Windows code-signing certificate
+      # and no Apple Developer account, so macOS will quarantine the .dmg and
+      # SmartScreen will warn about the installer. The release notes say so
+      # plainly rather than leaving people to meet it cold -- see the Release
+      # body assembled below.
+      - run: npx tauri build
+        working-directory: app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            app/src-tauri/target/release/bundle/nsis/*.exe
+            app/src-tauri/target/release/bundle/deb/*.deb
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/dmg/*.dmg
+
+  android:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v2
+      - run: mise run app:android:sdk
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      # All four ABIs here, unlike app.yml's single arm64. That job asks "does
+      # it link"; this one produces the file people install, and a universal
+      # APK that refuses to run on a 32-bit or x86 device is a support burden
+      # for a build that costs minutes.
+      - run: mise run app:android:targets
+
+      - run: npm ci
+      - run: npm ci --prefix app
+      - run: mise run app:build-site
+      - run: mise run app:config
+
+      # The signing key, for the length of this job. gen/android's
+      # build.gradle.kts reads keystore.properties if it is there and produces
+      # an unsigned release APK if it is not, so a fork or a re-run without
+      # the secrets fails at the verify step below rather than silently
+      # shipping something nobody can install.
+      #
+      # Written into RUNNER_TEMP, not the workspace: the workspace is what
+      # upload-artifact walks, and a keystore that ends up in a release asset
+      # is not a mistake anyone gets to make twice.
+      - name: Restore the release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 is not set -- an app release cannot ship an unsigned APK." >&2
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/qrdrop-release.jks"
+          cat > app/src-tauri/gen/android/keystore.properties <<PROPS
+          storeFile=$RUNNER_TEMP/qrdrop-release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          PROPS
+
+      - run: npx tauri android build --apk
+        working-directory: app
+
+      # Prove the signature rather than assume it. The gradle config is
+      # conditional on keystore.properties existing, which is what keeps a
+      # keyless local build working -- and that same conditional is exactly
+      # how an unsigned APK could reach a Release without anything failing.
+      # apksigner reports the certificate, so this also puts the fingerprint
+      # in the log next to the one in assetlinks.json.
+      - name: Verify the APK is signed, and log its certificate
+        run: |
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)"
+          apk="$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*-release*.apk' | head -1)"
+          echo "Verifying $apk"
+          "$apksigner" verify --print-certs "$apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          if-no-files-found: error
+          path: app/src-tauri/gen/android/app/build/outputs/apk/**/*-release*.apk
+
+  release:
+    needs: [check, desktop, android]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      # Flattened out of the per-job directories: a release asset list is a
+      # list of files, and staging/desktop-macos-latest/... in the middle of
+      # one tells a downloader nothing they cannot see from the extension.
+      - name: Assemble the artifacts
+        run: |
+          mkdir -p dist-release
+          find staging -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.apk' \) \
+            -exec cp {} dist-release/ \;
+          (cd dist-release && sha256sum ./* > SHA256SUMS)
+          cat dist-release/SHA256SUMS
+
+      # The same posture publish.yml establishes for the npm tarball: a
+      # consumer can check these files came out of this workflow at this
+      # commit. It is not a code signature and does not stand in for one --
+      # the OS will still warn -- but it is a verifiable claim about origin,
+      # which is more than an unsigned installer carries on its own.
+      # SHA256SUMS is not attested: it is a manifest of files that are.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist-release/*.exe
+            dist-release/*.deb
+            dist-release/*.AppImage
+            dist-release/*.dmg
+            dist-release/*.apk
+
+      # The changelog entry is the notes, extracted not generated (see
+      # scripts/release-notes.mjs). What is appended is the part that belongs
+      # to the artifacts rather than to the version: which of them are signed,
+      # what each OS will say about the ones that are not, and how to check
+      # the download against SHA256SUMS. An unsigned build that arrives with
+      # no warning teaches people to click through the dialog that a tool
+      # about authenticating the other end most needs them to read.
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release-notes.mjs --file app/CHANGELOG.md "$VERSION" > notes.md
+          cat >> notes.md <<'NOTES'
+
+          ---
+
+          ### About these files
+
+          The **Android APK** is signed with the project's release key. Its
+          certificate fingerprint is the one published at
+          `https://share.stan-ely.com/.well-known/assetlinks.json`, which is what
+          lets a scanned pairing code open the app instead of a browser tab.
+
+          The **desktop installers are not signed.** There is no Windows
+          code-signing certificate and no Apple Developer account behind this
+          project, so:
+
+          - **macOS** will refuse the `.dmg` as being from an unidentified
+            developer. `xattr -d com.apple.quarantine /Applications/qrdrop.app`
+            after installing, if you decide to trust it.
+          - **Windows** SmartScreen will warn about the installer. "More info",
+            then "Run anyway", if you decide to trust it.
+
+          Those warnings are accurate: nobody has vouched for these binaries.
+          Verify what you downloaded against `SHA256SUMS` first, and note that
+          every file here carries a build provenance attestation you can check
+          with `gh attestation verify <file> --repo stan-ely/qrdrop`.
+
+          **iOS is not here.** It is compiled on every change and is proven to
+          link, but shipping it needs an Apple Developer account.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            --title "qrdrop app $VERSION" \
+            --notes-file notes.md \
+            --verify-tag \
+            dist-release/*
