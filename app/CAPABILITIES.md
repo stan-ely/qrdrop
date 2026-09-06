@@ -656,6 +656,88 @@ app. That is exactly the behaviour Phase 3 verified end to end and is fine --
 but it means "receive by scanning into the native app" is not testable on
 Android this phase. Sending, and receiving via a pasted code, are.
 
+#### The transfer was slow for a reason that had nothing to do with the network
+
+The first working Android send moved 3 MB in 30.2 s -- 102 KB/s, against the
+9.5 MB/s Phase 2 measured over loopback. It felt like a slow link and was not.
+
+Instrumenting the sender's inner loop at prototype level over CDP
+(`Blob.prototype.arrayBuffer`, `crypto.subtle.encrypt`,
+`RTCDataChannel.prototype.send`) split the 30.3 s window cleanly:
+
+| stage | calls | total | avg | share |
+| --- | --- | --- | --- | --- |
+| `slice().arrayBuffer()` | 192 | **29,723 ms** | 154.81 ms | **98.2%** |
+| `crypto.subtle.encrypt` | 202 | 21 ms | 0.10 ms | 0.07% |
+| `RTCDataChannel.send` | 393 | 9 ms | 0.02 ms | 0.03% |
+
+A `File` the Storage Access Framework returns is backed by a `content://`
+provider, so each read is a Binder round-trip. The control that settles it: the
+same page, the same 16 KiB read pattern, the same instrumentation, against an
+in-memory `Blob` instead -- **0.98 ms** a read against **154.81 ms**, a factor
+of 157. It is the backing store, not `Blob.slice`, not `arrayBuffer()`, and not
+the probe.
+
+The cost is dominated by the call, not the byte count. Sweeping block size on a
+real picked file, reading 32 MiB per row out of 64 MB:
+
+| block | ms per read | throughput | reads for 64 MiB | read time |
+| --- | --- | --- | --- | --- |
+| 256 KiB | 80.2 | 3.12 MB/s | 256 | 20.5 s |
+| 1 MiB | 87.4 | 11.44 MB/s | 64 | 5.6 s |
+| **2 MiB** | 97.6 | 20.49 MB/s | 32 | **3.1 s** |
+| 4 MiB | 114.2 | 35.03 MB/s | 16 | 1.8 s |
+| 8 MiB | 126.3 | 63.33 MB/s | 8 | 1.0 s |
+| 16 MiB | 138.3 | 115.69 MB/s | 4 | 0.6 s |
+
+That fits **~79 ms fixed + ~3.7 ms per MiB**. An earlier pass measured this
+against the 3 MB file only and read the curve as perfectly flat -- which is how
+it looks at that size, because the fixed term dominates until around 21 MiB. The
+flat reading argues for any block size at all; the real curve does not. Measure
+the sweep on a file big enough to show the slope before touching the constant.
+
+`fromFile` now reads 2 MiB blocks and serves frames out of them. 2 MiB is where
+the fixed term still dominates (81% of a 2 MiB read is overhead, so the block is
+bought cheaply) while halving the read count against 1 MiB, and the payoff is
+largest on SMALL transfers -- the common case here.
+
+| | before | 3 MB | 64 MiB |
+| --- | --- | --- | --- |
+| transfer time | 30.2 s (3 MB) | **3.34 s** | **23.56 s** |
+| throughput | 102 KB/s | 0.9 MB/s | **2.72 MB/s** |
+| `arrayBuffer()` calls | 192 | 4 | **33** |
+| time in reads | 29,723 ms (98%) | 1,306 ms (38%) | 5,988 ms (25%) |
+
+The 64 MiB run would have taken about **eleven minutes** on the per-frame read.
+Digest verified both times.
+
+Three wrong turns are worth recording, because each was taken with confidence.
+The first hypothesis was that unthrottled `_setState` per frame was the
+bottleneck; measuring it returned 1.2 ms a render, 0.2 s of 27.9 s, and it was
+abandoned. The second was that 1 MiB would take reads out of contention
+entirely, on the strength of an idle sweep's 98 ms -- under concurrent load the
+same read costs ~181-326 ms, so the idle benchmark understated it two- to
+threefold. The third was reading a 3 MB sweep as proof the cost was purely
+per-call.
+
+The ~25% still spent reading is **not** a case for a bigger block. `sender.js`
+awaits `slice()` before it seals, so the channel is idle for every read; raising
+BLOCK_BYTES makes those gaps fewer and longer for double the memory each time.
+Prefetching the next block while the current one transmits is what removes them,
+and is the next thing worth doing here.
+
+Two suspects were cleared in the process. Trystero's backpressure gate never
+fired at all (`bufferedAmount` peaked at 16,620 against a 65,535 threshold, and
+`waitForBufferedAmountLow` was reached zero times -- still true at 64 MiB, where
+it peaked at 49,353). And the transport *was* splitting every frame into two
+SCTP messages -- 393 sends for 192 frames, confirming a 66-byte overshoot of the
+action wire's 16348-byte budget -- but that cost 9 ms and was fixed on its own
+merits, not as a remedy for this. After the fix the ratio is 1.00 across 4,122
+sends.
+
+Everything else is now noise: at 64 MiB, AEAD is 344 ms over 4,123 seals (1.5%)
+and `RTCDataChannel.send` is 97 ms over 4,122 calls (0.4%).
+
 ### On-device checklist -- iOS
 
 No Apple hardware exists on this project, so this table stays empty until
@@ -717,3 +799,30 @@ a full LAN transfer with matching digests and a Beam receive, and when the
 `gen/android` re-init cycle (`init` over a committed tree must not silently
 drop the camera permission -- CI asserts this once the tree is tracked) has
 been exercised once by hand.
+
+### Open work carried forward
+
+Named here so it is a list rather than a set of remarks buried in the sections
+above. None of it blocks the config gate.
+
+1. **Prefetch the next block in `fromFile`.** `sender.js` awaits `slice()`
+   before it seals, so the data channel is idle for every read -- 25% of a
+   64 MiB transfer, even at a 2 MiB block. Reading block N+1 while block N is
+   still being sent hides that cost behind the transport instead of shrinking
+   it. This is the single largest remaining win on the Android send path, and
+   it is explicitly the *right* fix where raising `BLOCK_BYTES` is the wrong
+   one: a bigger block makes the idle gaps fewer and longer and doubles the
+   buffer each time. Watch two things while doing it -- peak memory becomes two
+   blocks rather than one (see the note on `BLOCK_BYTES`), and the returned
+   copy stops being trivially safe once a read can be in flight against a live
+   block.
+2. **The `content://` sink**, so Android can receive at all. Two candidate
+   fixes, both behind the existing platform seam; see the section above.
+3. **First-error-versus-last-error reporting.** `abortActive` nulls `active` on
+   the first failure and the in-flight chunks then overwrite the message the
+   user sees with `Chunk arrived with no accepted file`. The real cause showed
+   for four milliseconds. Not addressed.
+4. **The unrun checklist rows**: Beam send, Beam receive at ~10 Hz, and the
+   deep-link `qrdrop:<code>` path on Android.
+5. **`app.yml` has never run.** The workflow is committed but unpushed, so all
+   three jobs are unproven.

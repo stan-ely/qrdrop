@@ -271,6 +271,16 @@ Beam has no SAS and must not grow a decorative one: there is no peer to
 authenticate, and a fake gesture teaches that the real one on the network path
 is theatre.
 
+**`MAX_FRAME_BYTES` is not derived from `CHUNK_SIZE`, and must not be "tidied" into
+being.** One SCTP message is 16 KiB and the transport's action wire spends 36 bytes
+of each on its own framing, so `CHUNK_SIZE` is sized to make a sealed frame land on
+exactly 16348. It used to be a flat 16 KiB, which overshot by 66 bytes -- and the
+transport does not reject an overshoot, it splits it, so every frame travelled as a
+full message plus a 102-byte runt (measured: 393 sends for 192 frames). But
+`MAX_FRAME_BYTES` is the INBOUND tolerance and still spells out `16 * 1024`, because
+a peer on the old constant still seals 16414-byte frames. Shrinking what we send is
+a local decision; shrinking what we accept is a wire break.
+
 **No new runtime dependencies.** Four, plus one optional. The stated position
 (`src/cli.js` header) is that every dependency is one more thing between `npm install`
 and a working transfer. The virtual DOM in `src/web/vdom.js` is hand-rolled for this
@@ -439,6 +449,29 @@ load-bearing.** `element.js` calls the sink once per 16 KiB transfer frame; at t
 size even the raw-body path is ~5 MB/s, because ~3 ms of per-invoke cost dominates.
 256 KiB gets ~34 MB/s, 1 MiB ~42 and then it flattens. Passing frames straight
 through is ~8× slower for no memory saving worth having (the buffer is one block).
+
+**`fromFile` reads in 2 MiB blocks, and that buffer is load-bearing the same way
+`tauri-sink.js`'s is.** A `File` from Android's Storage Access Framework is backed
+by a `content://` provider, so every `arrayBuffer()` is a Binder round-trip to
+another process: ~79 ms fixed plus ~3.7 ms per MiB, measured on-device across
+256 KiB to 16 MiB. `src/web/source.js` used to read once per `CHUNK_SIZE` frame,
+which made a 3 MB Android send 192 round-trips and 29.7 s of a 30.3 s transfer --
+98% of it, against 21 ms of AEAD and 9 ms of data channel. Blocks took that to
+3.34 s, and 64 MiB to 23.6 s (2.72 MB/s) where the per-frame read would have taken
+about eleven minutes. An in-memory `Blob` reads in 0.98 ms, so no desktop browser
+shows this and no benchmark without a real picked file will either: Phase 2
+measured over loopback, Phase 3 had the desktop as sender.
+
+Two traps in that constant. It does **not** match `tauri-sink.js`'s 1 MiB -- the
+write side amortises a ~3 ms invoke and flattens after 256 KiB, this amortises a
+~79 ms round-trip and is still climbing at 16 MiB -- so "make them the same" is
+wrong in both directions. And raising it is the wrong fix for the ~25% of a
+transfer still spent reading: `sender.js` awaits `slice()` before it seals, so the
+channel is idle for every read, and a bigger block only makes those gaps fewer and
+longer. Prefetching the next block while the current one transmits is what removes
+them. It returns a copy of the block rather than a subarray view, unlike
+`src/node/source.js`, which can hand back a view only because it refills its buffer
+on every single `slice()`.
 
 **A slow sink is now throttled by the transport, and that mechanism is a `src/core`
 property, not a Tauri one.** `RTCDataChannel` delivers `onmessage` as fast as bytes

@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 import { fromFile } from '../src/web/source.js'
 import { CHUNK_SIZE } from '../src/core/frame.js'
 
-const BLOCK = 1024 * 1024
+const BLOCK = 2 * 1024 * 1024 // must track BLOCK_BYTES in src/web/source.js
 
 /**
  * A File-shaped stub that counts reads. Deliberately not a real File: the
@@ -79,11 +79,11 @@ test('sequential chunk reads are served from one block, not one read each', asyn
   const frames = Math.ceil(bytes.length / CHUNK_SIZE)
   const blocks = Math.ceil(bytes.length / BLOCK)
   assert.ok(stats.reads <= blocks + 1, `${stats.reads} reads for ${blocks} blocks`)
-  // A block holds BLOCK / CHUNK_SIZE = 64 frames, and the straddle above costs
-  // part of one, so ~48 frames per read is what "amortised" looks like here.
+  // A block holds BLOCK / CHUNK_SIZE = 128 frames, and the straddle above
+  // costs part of one, so ~96 frames per read is what "amortised" looks like.
   // The naive version this replaced scored exactly 1.
   const framesPerRead = frames / stats.reads
-  assert.ok(framesPerRead >= 40, `only ${framesPerRead.toFixed(1)} frames per read; not amortised`)
+  assert.ok(framesPerRead >= 80, `only ${framesPerRead.toFixed(1)} frames per read; not amortised`)
 })
 
 test('a backwards seek re-reads rather than serving stale bytes', async () => {

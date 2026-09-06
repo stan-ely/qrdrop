@@ -17,18 +17,23 @@
  * A File the Android Storage Access Framework hands back is not backed by
  * memory or by a file descriptor -- it is backed by a content:// provider, and
  * every arrayBuffer() on it is a Binder round-trip to another process. That
- * cost is per CALL, not per byte. Measured on a real device against a 3 MB
- * file:
+ * cost is dominated by the call, not the byte count. Measured on a real device,
+ * reading 32 MiB per row out of a 64 MB file:
  *
  *     block      ms per read    throughput
- *     16 KiB        86.2         0.18 MB/s
- *     64 KiB        82.9         0.75 MB/s
- *    256 KiB        81.5         3.07 MB/s
- *      1 MiB        98.2        10.18 MB/s
- *      3 MiB        87.9        34.13 MB/s
+ *    256 KiB        80.2          3.12 MB/s
+ *      1 MiB        87.4         11.44 MB/s
+ *      2 MiB        97.6         20.49 MB/s
+ *      4 MiB       114.2         35.03 MB/s
+ *      8 MiB       126.3         63.33 MB/s
+ *     16 MiB       138.3        115.69 MB/s
  *
- * Flat, across a 192x range of payload size. Reading three megabytes costs
- * what reading sixteen kilobytes costs.
+ * That fits ~79 ms fixed + ~3.7 ms per MiB. A first pass at this measured
+ * against a 3 MB file instead and read the curve as perfectly flat, which it
+ * looks like at that size -- the fixed term simply dominates until around
+ * 21 MiB. It is worth having the larger measurement in front of you before
+ * touching BLOCK_BYTES, because the flat reading argues for any block size at
+ * all and the real curve does not.
  *
  * sender.js asks for one CHUNK_SIZE slice per frame, so before this buffer a
  * 3 MB transfer was 192 of those round-trips: 29.7 seconds out of a 30.3
@@ -38,20 +43,40 @@
  * is why no desktop browser ever showed this and why the bug survived every
  * measurement made before a phone was involved.
  *
- * This is the read-side twin of app/src/tauri-sink.js's write-side coalescing,
- * which buffers to 1 MiB before each invoke for the same reason: a fixed
- * per-call cost is beaten by making fewer, larger calls. BLOCK_BYTES matches
- * that 1 MiB deliberately. It is not chosen to maximise read throughput --
- * bigger blocks keep getting faster indefinitely, per the table -- but to
- * clear the transport, which Phase 2 measured end to end at 9.5 MB/s. At 1 MiB
- * the reads do 10.18 MB/s and stop being the bottleneck; past that the extra
- * throughput is bytes the channel cannot take, bought with resident memory on
- * the device that has the least of it.
+ * This is the read-side twin of app/src/tauri-sink.js's write-side coalescing:
+ * a fixed per-call cost is beaten by making fewer, larger calls.
+ *
+ * BLOCK_BYTES is 2 MiB because that is where the fixed term still dominates
+ * -- a 2 MiB read spends 81% of its time on overhead, so the block is still
+ * being bought cheaply -- while halving the read count against 1 MiB. The
+ * payoff is largest on SMALL transfers, which is the common case here: a 3 MB
+ * send goes from four reads to two and loses about 18% of its wall time, where
+ * a 64 MiB send only gains ~5%. Past 4 MiB the per-byte term starts to matter
+ * and the buffer doubles again for single-digit returns.
+ *
+ * Note it does NOT match tauri-sink.js's 1 MiB, and the asymmetry is real
+ * rather than an oversight: the write side is amortising a ~3 ms invoke and
+ * flattens after 256 KiB, while this is amortising a ~79 ms Binder round-trip
+ * and is still climbing at 16 MiB.
+ *
+ * Verified at scale rather than only on the file that exposed the bug: 64 MiB
+ * phone to desktop is 33 reads and 23.6 s (2.72 MB/s), with reads 25% of the
+ * window. The same transfer on the per-frame read would have been about
+ * eleven minutes.
+ *
+ * That 25% is the next thing worth attacking, and a bigger block is NOT the
+ * way to do it. Reads are serialised BETWEEN sends -- sender.js awaits
+ * slice() before it seals -- so the channel sits idle for every one of them.
+ * Prefetching the next block while the current one transmits would hide that
+ * cost behind the transport entirely; raising BLOCK_BYTES only makes the
+ * idle gaps fewer and longer, for double the memory each time.
  */
 
-// One block in flight, and briefly two: the replacement is read before the
-// previous one is dropped, so peak is 2 * BLOCK_BYTES rather than one.
-const BLOCK_BYTES = 1024 * 1024
+// Peak is one block, not two. The refill drops its reference to the previous
+// block BEFORE awaiting the next read, so the old one is collectable while the
+// new buffer is being allocated -- holding both across the await would double
+// the footprint on the device with the least memory to spare.
+const BLOCK_BYTES = 2 * 1024 * 1024
 
 /**
  * @param {File} file
@@ -88,10 +113,13 @@ export function fromFile(file) {
       // caller seeking backwards must get correct bytes rather than a
       // silently stale window.
       if (block === null || start < blockStart || end > blockStart + block.length) {
+        const slice = file.slice(start, Math.min(start + BLOCK_BYTES, file.size))
+        // Released before the await, not after the read resolves: see the
+        // note on BLOCK_BYTES. blockStart moves with it so a throw from
+        // arrayBuffer() cannot leave a stale offset pointing at a null block.
+        block = null
         blockStart = start
-        block = new Uint8Array(
-          await file.slice(start, Math.min(start + BLOCK_BYTES, file.size)).arrayBuffer(),
-        )
+        block = new Uint8Array(await slice.arrayBuffer())
       }
 
       // A copy, not a subarray view. src/node/source.js can hand back a view
