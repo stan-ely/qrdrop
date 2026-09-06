@@ -149,20 +149,43 @@ jobs:
           test -f _site/CNAME || { echo "_site/CNAME missing -- the custom domain would unbind." >&2; exit 1; }
           test -f _site/edge/index.html || { echo "_site/edge/index.html missing." >&2; exit 1; }
 
+          # The association files, asserted on the edge tree because that is
+          # the one built from main. The stable tree is built from the latest
+          # v* tag, and a tag cut before wellKnownFiles existed has none --
+          # so requiring them at the root would fail every deploy until the
+          # next release, which is a true statement made at the wrong volume.
+          test -f _site/edge/.well-known/assetlinks.json \
+            || { echo "_site/edge/.well-known/assetlinks.json missing -- app links cannot work." >&2; exit 1; }
+
       - uses: actions/configure-pages@v6
 
       # _site/ contains the CNAME file that binds the custom domain, copied up
       # from the stable build by the step above.
       #
-      # v4 of this action stopped including hidden files in the artifact.
-      # Nothing in _site/ is one -- CNAME and _headers both start with a
-      # visible character -- so the upgrade past it is a no-op here. If a
-      # dotfile ever does need to ship (a .well-known/ directory being the
-      # likely reason), it will vanish from the deploy silently, and the fix
-      # is include-hidden-files: true rather than a downgrade.
+      # v4 of this action stopped including hidden files in the artifact, and
+      # the comment that used to sit here said that nothing in _site/ was one
+      # -- CNAME and _headers both start with a visible character -- while
+      # predicting that a .well-known/ directory was the likely reason that
+      # would stop being true, and that it would then "vanish from the deploy
+      # silently".
+      #
+      # That is exactly what happened, and it went unnoticed for two phases.
+      # Phase 3 added wellKnownFiles(), the build wrote the directory, the
+      # deploy dropped it, and every check anyone ran was on the built tree
+      # rather than the served one. Measured on the live site before the fix:
+      # /edge/apple-app-site-association served 200 and
+      # /edge/.well-known/assetlinks.json served 404, from the same build.
+      #
+      # Android reads assetlinks ONLY from /.well-known/assetlinks.json and
+      # has no root fallback, so app-link association could not have worked no
+      # matter what fingerprint was published. A prediction written into a
+      # comment is not a check; this is why the step above now asserts the
+      # file is in _site, and why the assertion is on the tree rather than on
+      # the artifact -- the drop happens after that, here.
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+          include-hidden-files: true
 
   deploy:
     needs: build
