@@ -20,6 +20,7 @@ npm run web                                # build, then `qrdrop web`: serves th
 npm run cli -- send report.pdf             # drive the CLI without installing it
 mise run web                               # same as npm run web, under mise (mise run web -- --no-open to pass args)
 mise run cli -- receive --out ~/Downloads
+mise watch build                           # rebuild site/dist/ on every change under src/ or scripts/ (mise run app:dev does not)
 
 node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
@@ -31,9 +32,9 @@ acceptable. Their output is committed; run the relevant one when the palette,
 the card copy, or a diagram source changes:
 
 ```bash
-node scripts/make-og.mjs                                 # site/og.png, the social card
-node scripts/make-diagrams.mjs                           # docs/diagrams/*.png from the .mmd sources
-npm run build && node scripts/make-screenshots.mjs       # docs/screenshots/*.png
+node scripts/make-og.mjs                                 # site/og.png, the social card       (mise run img:og)
+node scripts/make-diagrams.mjs                           # docs/diagrams/*.png from the .mmd sources (mise run img:diagrams)
+npm run build && node scripts/make-screenshots.mjs       # docs/screenshots/*.png              (mise run img:screenshots, which builds first)
 ```
 
 `make-screenshots.mjs` produces the README's pictures and **only** those: three
@@ -48,8 +49,8 @@ each failure to `docs/screenshots/layout/` (gitignored):
 
 ```bash
 npx playwright install firefox        # one-time; only chromium ships by default
-npm run build && node scripts/check-layout.mjs
-node scripts/check-layout.mjs site/dist-edge   # the edge tree, built as above
+npm run build && node scripts/check-layout.mjs           # or: mise run check:layout (builds first)
+node scripts/check-layout.mjs site/dist-edge   # the edge tree, built as above; or: mise run check:layout site/dist-edge
 ```
 
 It runs **both** engines, and the second one earns its place: everything this script used

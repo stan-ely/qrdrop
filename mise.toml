@@ -82,6 +82,38 @@ description = "Open UI in browser with phone-sized viewport (390x844)"
 depends = ["build"]
 run = "node scripts/preview-phone.mjs"
 
+# --- committed images and the layout check ---
+#
+# All hand-run and all out of `npm run build` (it runs in CI and in
+# prepublishOnly, where downloading a browser is not acceptable). Their output is
+# committed; run the one whose source changed. Each script's header explains why
+# it is a separate script rather than a build step. Grouped under img:/check: so
+# they do not bury the everyday tasks above in `mise tasks`.
+
+[tasks."img:og"]
+description = "Render site/og.png (run when the wordmark, palette, or card copy changes)"
+run = "node scripts/make-og.mjs"
+
+[tasks."img:diagrams"]
+description = "Render docs/diagrams/*.png from the .mmd sources"
+run = "node scripts/make-diagrams.mjs"
+
+[tasks."img:screenshots"]
+description = "Render the README's three UI screenshots"
+depends = ["build"]
+run = "node scripts/make-screenshots.mjs"
+
+# `depends = ["build"]` rebuilds site/dist -- the check reads a built tree. A
+# positional arg picks a different tree to walk (mise appends it to the command,
+# the same way `mise run cli -- ...` forwards args); the stable rebuild is then a
+# harmless no-op you would have run anyway:
+#   mise run check:layout site/dist-edge
+# check-layout.mjs falls back to site/dist when no arg is given.
+[tasks."check:layout"]
+description = "Walk every screen at four viewports; fail on a scroll or an off-screen button"
+depends = ["build"]
+run = "node scripts/check-layout.mjs"
+
 # --- app/ (Tauri desktop/mobile shell) ---
 #
 # First run needs `npm install` inside app/ once -- not a dependency of every
