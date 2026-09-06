@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      The QR scanner and Beam both call getUserMedia, and the Android System
+      WebView cannot open the camera unless the app itself holds this. There
+      is no tauri.conf.json field that emits it, which is why gen/android is
+      committed rather than regenerated (see CLAUDE.md): a re-init would drop
+      this line and the scanner would fail with nothing to diff.
+
+      Declaring it is necessary but, on Android 6+, not sufficient. CAMERA is
+      a "dangerous" permission and also needs a runtime request. Whether wry
+      raises that from the WebView's own permission request is the open
+      question recorded in app/CAPABILITIES.md.
+
+      required="false" on the feature is deliberate: a device with no camera
+      can still send a file and still use the network transfer, and the UI
+      already declines the camera paths on its own (view.js NO_CAMERA_BEAM).
+      Marking it required would make the app uninstallable there to protect a
+      path that already refuses itself.
+
+      Note for editors: this repository's prose style uses a double hyphen as
+      an em dash, and XML forbids that sequence inside a comment. Gradle
+      reports it only as "Error parsing AndroidManifest.xml", so keep the
+      punctuation plain in here.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- AndroidTV support -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.qrdrop"
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:launchMode="singleTask"
+            android:label="@string/main_activity_title"
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- AndroidTV support -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            <intent-filter android:autoVerify="true" >
+                <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="share.stan-ely.com" />
+                
+                
+                <data android:pathPrefix="/" />
+                
+            </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+        </activity>
+
+        <provider
+          android:name="androidx.core.content.FileProvider"
+          android:authorities="${applicationId}.fileprovider"
+          android:exported="false"
+          android:grantUriPermissions="true">
+          <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

@@ -353,31 +353,57 @@ are the form it gets filled into. Nothing in this section should be quoted as
 a finding until a result column says so -- the Phase 0 sections above are what
 measured results look like in this file.
 
-### The toolchain is an ambient prerequisite, not a mise pin
+### The toolchain: mise pins the tools, `android sdk` pulls the packages
 
-`mise.toml` pins node, rust, the JDK and cargo-release, and the obvious
-symmetry would be to pin the Android SDK beside them. It does not, and the
-reason is in that file's comment: mise auto-installs a missing tool the first
-time any task needs one, and `[tools]` is global rather than per-task, so an
-`android-sdk` entry would let `mise run test` trigger a multi-gigabyte
-download on a machine that only wanted the unit suite. The SDK is therefore
-installed by hand, the way Xcode is for the iOS tasks. `JAVA_HOME` is left to
-mise's own `java` tool, and `ANDROID_HOME` is left unset rather than guessed
-at -- "ANDROID_HOME is not set" is a better error than "no SDK at the path we
-invented for you".
+`mise.toml` pins the Android **command-line tools** (`android-sdk = "23.0"`)
+alongside node, rust and the JDK. An earlier pass in this phase left them out,
+arguing that mise auto-installs on any task so a bare `mise run test` could
+drag gigabytes down. That was wrong about what the plugin does: it unpacks
+cmdline-tools (~170 MB) and exports `ANDROID_HOME`, `ANDROID_SDK_ROOT` and the
+bin directories, and nothing more. The multi-gigabyte parts are pulled
+separately, by the tools it just installed, into the same directory.
 
-One-time, after installing the command-line tools and setting `ANDROID_HOME`:
+One consequence of that layout to know before running `mise uninstall
+android-sdk`: the NDK lives inside mise's install dir, so removing the tool
+takes several gigabytes of NDK with it.
+
+`JAVA_HOME` comes from mise's own `java` (Temurin 21) and deliberately wins
+over any system JDK. `NDK_HOME` has to be set by hand because the plugin does
+not provide it, and the way it is set is worth recording: the obvious
+`{{env.ANDROID_HOME}}` **fails**, because a tool's own exports are not in
+scope while `[env]` is evaluated — mise errors with "Field ANDROID_HOME is not
+defined". The documented `tools["android-sdk"].path` is out of scope there for
+the same ordering reason. `xdg_data_home` is in scope, and resolves to
+`AppData\Local` on Windows and `~/.local/share` elsewhere, which is where mise
+installs on both.
+
+One-time package install is `mise run app:android:sdk`, which expands to
 
 ```
-sdkmanager --licenses
-sdkmanager --install "platform-tools" "platforms;android-34" \
-                     "build-tools;34.0.0" "ndk;27.2.12479018"
+android sdk install platform-tools ndk/29.0.14206865 \
+                    build-tools/37.0.0 platforms/android-36
 ```
 
-Then set `NDK_HOME` to `$ANDROID_HOME/ndk/<that version>`. Tauri 2.11 builds
-against NDK r26 or r27; the build number above is r27c and should be checked
-against whatever `sdkmanager --list` currently offers rather than trusted
-because it is written here.
+from `mise.toml`'s `[vars]`. Those four versions live there once and are read
+by both this task and `NDK_HOME`, so a build cannot link against an NDK that
+was never fetched — the same reasoning that gives design tokens one home and
+derives the CSP from `SIGNALING_URLS`. Change the version there, re-run the
+task, done.
+
+Two things about that line are easy to get wrong. **`sdkmanager` is
+deprecated** — it prints a notice and defers to the new `android` CLI, whose
+subcommand is `android sdk install` and whose package separator is `/`, not
+the `;` every older instruction on the internet uses. And **NDK 29 is
+deliberate, not conservative**: every 30.x build in the repository is still a
+release candidate, which the package path does not reveal — only the version
+field's `-rc.N` suffix does, so a naive "pick the highest" lands on an RC.
+29.0.14206865 is the newest stable, and NDK 28+ is also what produces the
+16 KB page alignment Google Play now requires of new submissions.
+
+Version numbers rot. These were current in September 2026, taken from
+`android sdk list --all` rather than from memory: cmdline-tools 23.0,
+platform-tools 37.0.1, build-tools 37.0.0, NDK 29.0.14206865, and platforms up
+to android-37.2. Re-check rather than trusting this paragraph.
 
 The tasks are `app:android:init` (one-time scaffold), `app:android:dev`,
 `app:android:build`, and the `app:ios:*` equivalents. The `:targets` tasks add
@@ -465,6 +491,42 @@ Until this ran, nothing compiled the Rust crate on a pull request at all:
 `ci.yml` is Node-only and Phase 3's `cargo check` was a local habit. On a
 project with no Mac and no Android device in CI reach, that meant iOS and
 Android regressions surfaced never.
+
+### The first Android build, and what it did and did not prove
+
+`mise run app:android:build` produces a 144 MB unsigned debug APK at
+`gen/android/app/build/outputs/apk/universal/debug/`. The toolchain that
+worked: NDK 29.0.14206865, Rust 1.98.1, Tauri CLI 2.11.4, Gradle 8.14.3,
+Temurin 21, `compileSdk`/`targetSdk` 36 and `minSdk` 24 (the last matching the
+`bundle.android.minSdkVersion` in `tauri.conf.json`, which is where it comes
+from). That answers the one question that could not be answered by reading:
+**the Rust cross-compile links against NDK 29**, so choosing the newest stable
+NDK over the RC-only 30.x line cost nothing.
+
+`aapt2 dump badging` on the built APK, which is the check that matters because
+it reads the packaged artifact rather than the source manifest:
+
+```
+uses-permission: name='android.permission.CAMERA'
+uses-feature-not-required: name='android.hardware.camera'
+```
+
+So the manifest edit survives into the APK and `required="false"` took effect.
+
+**A trap worth writing down, because it cost a build and the error does not
+name it.** This repository's prose style uses `--` as an em dash, and XML
+forbids that sequence *inside a comment*. A house-style comment in
+`AndroidManifest.xml` therefore fails the manifest merger with
+
+```
+ManifestMerger2$MergeFailureException: Error parsing .../AndroidManifest.xml
+```
+
+and no line number, no column, and no mention of hyphens. The comment in that
+file now says so in place.
+
+None of this is a capability result. The APK builds; whether it *runs*, and
+whether the camera opens, is the checklist below and needs a device.
 
 ### On-device checklist -- Android
 

@@ -20,6 +20,27 @@ node = "24"
 rust = "1.98.1"
 java = "temurin-21"
 cargo-release = "1.1.5"
+# Android SDK *command-line tools* only -- about 150 MB, not the toolchain.
+# The vfox plugin behind this unpacks cmdline-tools and exports ANDROID_HOME,
+# ANDROID_SDK_ROOT and the bin dirs; the multi-gigabyte parts (NDK, platforms,
+# build-tools) are pulled separately by `android sdk install` into the same
+# directory and are NOT managed by mise. That split is what makes pinning it
+# here cheap enough to be worth the reproducibility -- an earlier pass left it
+# out on the theory that mise's auto-install would drag gigabytes into a bare
+# `mise run test`, which was simply wrong about what this plugin does.
+android-sdk = "23.0"
+
+# The SDK packages the pin above does NOT carry, named once. NDK_HOME below
+# and the app:android:sdk task both read these, so the version a build links
+# against and the version that gets installed cannot drift apart -- the same
+# reasoning that keeps design tokens in one file and derives the CSP from
+# SIGNALING_URLS. `android_sdk` repeats the tool version above because the
+# install path has to be reconstructed by hand; see NDK_HOME.
+[vars]
+android_sdk = "23.0"
+android_ndk = "29.0.14206865"
+android_build_tools = "37.0.0"
+android_platform = "android-36"
 
 # npm puts node_modules/.bin on PATH for the scripts it runs; mise does not, so
 # a task that mirrors `npm run typecheck` verbatim ("tsc -p ...") cannot find
@@ -28,6 +49,25 @@ cargo-release = "1.1.5"
 # than every task line growing an `npx` the package.json equivalent lacks.
 [env]
 _.path = ["node_modules/.bin"]
+
+# ANDROID_HOME comes from the android-sdk tool above; NDK_HOME does not, and
+# `tauri android init` refuses to run without it. It has to name one specific
+# NDK rather than the ndk/ directory, so it carries a version and is the line
+# to change when that moves. 29.0.14206865 is the newest STABLE NDK: every
+# 30.x in the repository is still a release candidate, which the package path
+# does not say -- only the version field's `-rc.N` suffix does. NDK 28+ also
+# gets the 16 KB page alignment Google Play now requires of new submissions,
+# so going back further is not free either.
+#
+# Built from xdg_data_home rather than the obvious `{{env.ANDROID_HOME}}`,
+# because a tool's own exports are not in scope while this table is evaluated
+# -- mise fails outright with "Field ANDROID_HOME is not defined". The
+# documented `tools["android-sdk"].path` is not in scope here either, for the
+# same ordering reason. xdg_data_home is, and it lands on AppData\Local on
+# Windows and ~/.local/share elsewhere, which is where mise puts installs on
+# both. The cost is that the "23.0" below repeats the tool version above:
+# the two lines move together.
+NDK_HOME = "{{ xdg_data_home }}/mise/installs/android-sdk/{{vars.android_sdk}}/ndk/{{vars.android_ndk}}"
 
 [tasks.test]
 description = "Run unit tests"
@@ -146,24 +186,23 @@ run = "npx tauri build"
 
 # --- mobile (Phase 4) ---
 #
-# The Android SDK and NDK are deliberately NOT pinned in [tools] above, which
-# is a departure from how node/rust/java are handled and needs the reason
-# written down. mise auto-installs a missing tool the first time any task
-# needs one, and the tools table is global rather than per-task -- so an
-# `android-sdk` entry there would make `mise run test` capable of triggering a
-# multi-gigabyte SDK download on a machine that only wanted to run the unit
-# suite. That is a bad trade for a toolchain exactly one of these tasks uses.
-# (The asdf-backed android-sdk plugin is also shell-script based, which is its
-# own coin-flip on Windows.) The SDK is therefore an ambient prerequisite,
-# same as Xcode is for the iOS tasks, and the exact package strings live in
-# app/CAPABILITIES.md so the install is still reproducible.
+# ANDROID_HOME and NDK_HOME are handled above. The SDK *packages* are not:
+# mise installs the command-line tools, and those tools then install the NDK,
+# a platform and build-tools into the same directory. One consequence worth
+# knowing before you `mise uninstall android-sdk`: those packages live inside
+# mise's install dir, so removing the tool takes several gigabytes of NDK with
+# it. app/CAPABILITIES.md carries the exact `android sdk install` line.
 #
-# Requires: ANDROID_HOME and NDK_HOME set, and `sdkmanager` having installed
-# the packages CAPABILITIES.md lists. JAVA_HOME is NOT set here -- mise's own
-# `java` tool exports it, and a second copy would be the drift this file
-# avoids everywhere else. ANDROID_HOME is likewise left to the environment
-# rather than guessed at: a wrong default turns "ANDROID_HOME is not set" into
-# "no SDK at C:\some\path\we\invented", which is a worse error to debug.
+# JAVA_HOME is NOT set here -- mise's own `java` tool exports it, and a second
+# copy would be the drift this file avoids everywhere else.
+
+# The packages the android-sdk pin does not carry. Idempotent -- re-running it
+# is how you move to a newer NDK after editing [vars]. Note `sdkmanager` is
+# deprecated and defers to this `android` CLI, whose package separator is `/`
+# and not the `;` that every older instruction on the internet uses.
+[tasks."app:android:sdk"]
+description = "Install the Android SDK packages (NDK, platform, build-tools)"
+run = "android sdk install platform-tools ndk/{{vars.android_ndk}} build-tools/{{vars.android_build_tools}} platforms/{{vars.android_platform}}"
 
 [tasks."app:android:targets"]
 description = "Add the four Android Rust targets"

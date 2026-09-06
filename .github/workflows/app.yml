@@ -151,9 +151,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # mise installs the pinned command-line tools and exports ANDROID_HOME
+      # and NDK_HOME, so this needs no setup-android action -- the runner gets
+      # the same SDK root a developer has, from the same pin.
       - uses: jdx/mise-action@v2
 
-      - uses: android-actions/setup-android@v3
+      # The packages the pin does not carry. Deliberately a mise task rather
+      # than the install line spelled out here: mise.toml's [vars] is the one
+      # place those versions live, and NDK_HOME is built from the same values,
+      # so a runner cannot end up linking against a version it did not fetch.
+      - run: mise run app:android:sdk
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -191,10 +199,9 @@ jobs:
             echo "::warning::gen/android is not committed yet -- skipping the camera-permission assertion."
           fi
 
-      # The runner image ships an NDK and points this at it, which is steadier
-      # than pinning a build number here that has to be bumped by hand.
+      # NDK_HOME and ANDROID_HOME come from mise.toml, not from the runner
+      # image's own preinstalled NDK -- so this builds against the version the
+      # pin names rather than whatever the image happens to ship this month.
       - name: Build an unsigned debug APK
         run: npx tauri android build --apk --debug --target aarch64
         working-directory: app
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}

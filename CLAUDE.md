@@ -393,14 +393,22 @@ build` and `tauri ios build` do not consult it; the mobile knobs are
 explicitly in `tauri.conf.template.json` at Tauri's own defaults rather than
 inherited silently.
 
-**The Android SDK is deliberately not a mise `[tools]` pin,** unlike node, rust and
-the JDK beside it. mise auto-installs a missing tool the first time any task needs
-one and `[tools]` is global, so an `android-sdk` entry lets `mise run test` trigger a
-multi-gigabyte download on a machine that wanted the unit suite. It is an ambient
-prerequisite instead, like Xcode for `app:ios:*`, with the exact `sdkmanager` package
-strings in `app/CAPABILITIES.md`. `JAVA_HOME` comes from mise's `java`; `ANDROID_HOME`
-is left unset rather than defaulted, because "ANDROID_HOME is not set" debugs faster
-than "no SDK at the path we invented".
+**mise pins the Android command-line tools; the `android` CLI pulls the packages.**
+`android-sdk = "23.0"` installs cmdline-tools (~170 MB) and exports `ANDROID_HOME`,
+`ANDROID_SDK_ROOT` and the bin dirs — it does *not* fetch the NDK, platforms or
+build-tools, which is why pinning it is cheap. Those come from
+`android sdk install …` into the same directory, so `mise uninstall android-sdk`
+takes the NDK with it. `sdkmanager` is deprecated in favour of that `android` CLI,
+whose package separator is `/` and not the `;` older instructions use, and the NDK
+pin is the newest *stable* one: every 30.x build is still a release candidate, and
+only the version field's `-rc.N` says so — the package path does not.
+
+**`NDK_HOME` is built from `xdg_data_home`, and that is not a stylistic choice.**
+`{{env.ANDROID_HOME}}` fails outright — a tool's own exports are not in scope while
+`[env]` is evaluated, and mise says "Field ANDROID_HOME is not defined". The
+documented `tools["android-sdk"].path` is out of scope there too. The cost is that
+the SDK version appears twice in `mise.toml`; those two lines move together.
+`JAVA_HOME` comes from mise's `java` and wins over any system JDK.
 
 **`.github/workflows/app.yml` compiles the shell and ships nothing** — a desktop
 `--no-bundle` matrix, an unsigned Android debug APK, and an iOS *simulator* build.
