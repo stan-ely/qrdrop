@@ -37,10 +37,22 @@
 export const HEADER_BYTES = 14
 export const TAG_BYTES = 16
 
-// One SCTP message is 16 KiB -- safe across browsers, where 64 KiB is
-// modern-only -- and the transport spends 36 bytes of every one of them on its
-// own framing (@trystero-p2p/core's action wire: a 32-byte action type, a
-// 2-byte nonce, a tag byte and a progress byte). What is left is ours.
+// @trystero-p2p/core's action wire chunks a payload at 16 * 1024 - 36 -- the
+// 36 standing for a 32-byte action type, a 2-byte nonce, a tag byte and a
+// progress byte. Sizing a sealed frame to exactly that budget is what makes it
+// travel as ONE message instead of being split, which is the whole purpose of
+// the constant below.
+//
+// The 36 is that chunking constant and NOT the header actually put on the
+// wire, and the difference is worth stating because the obvious reading of
+// this comment is wrong. Measured over a 64 MiB transfer: 67,657,281 bytes
+// across 4,122 calls to RTCDataChannel.send, or 16,413.7 bytes per message
+// against a 16,348-byte sealed frame -- so the real per-message overhead is
+// ~66 bytes and the emitted message is ~16414, comfortably OVER 16 KiB. It is
+// accepted because the negotiated SCTP maxMessageSize is far larger than the
+// 16 KiB figure that browsers used to be held to. So do not re-derive this
+// budget from "one SCTP message is 16 KiB": that reasoning reaches the right
+// number for a reason that is not true.
 //
 // CHUNK_SIZE used to be a flat 16 * 1024, which made a sealed frame
 // 14 + 16384 + 16 = 16414 bytes and overshot that budget by exactly 66. The

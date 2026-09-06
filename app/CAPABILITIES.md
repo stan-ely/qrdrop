@@ -838,21 +838,57 @@ means "time in reads as a share of the window" -- the 25% this section quoted
 before -- is no longer a cost at all, and quoting it as one after this change
 would be wrong: it is now 44.5%, on a transfer that finished sooner.
 
-**The split underneath the total is not measurable from outside `fromFile`,
-and the honest thing is to say so.** The probe attributes any send-silence
-overlapping a read to that read, which gives 5,638 ms -- but `drain()` waiting
-on the channel and a read running are *concurrent by design*, so that figure
-counts backpressure as read cost and is an upper bound, not a measurement.
-There is another 7,275 ms of silence across 871 gaps that no read overlaps at
-all, and `bufferedAmount` peaked at 58,734 against the 65,535 threshold, so the
-transport is now near its own limit and is a plausible next bottleneck. What
-would settle it is instrumenting the await inside `fromFile` rather than
-`Blob.prototype.arrayBuffer` from the outside. **The 23.56 -> 16.80 s is the
-number to trust; the decomposition under it is not.**
+**The split underneath the total needed no new instrumentation after all, and
+the answer is that reads now cost the transfer nothing.** The first pass here
+said the split was unmeasurable from outside `fromFile`, because the probe
+attributes any send-silence overlapping a read to that read while `drain()`
+and a read are concurrent by design -- giving 5,638 ms as an upper bound that
+counts backpressure as read cost. That was true of the *attribution*, and
+wrong as a conclusion about the data, which already contained the answer.
+
+`sender.js` walks the file in order, so block k is first wanted at the instant
+the last frame of block k-1 goes out, and both timestamps are in the timeline:
+the read intervals, and the send that precedes each boundary. Waiting time is
+therefore `max(0, readEnd - needAt)` per block, and it comes out as:
+
+| blocks | read-ahead late | time blocked on a read |
+| --- | --- | --- |
+| 31 boundaries | **0** | **0 ms (0.0%)** |
+
+Every read-ahead finished before it was wanted, with 160-440 ms of margin on
+every one of the 31 boundaries. The margins are an order of magnitude larger
+than the estimator's own error (control frames shift `needAt` by a few frames
+at ~4 ms each), so the conclusion is not delicate. The 5,638 ms "read stall"
+was backpressure that happened to coincide with a read, exactly as the caveat
+suspected -- and the loose bound was 5,638 ms against a true value of zero,
+which is a fair warning about how far an upper bound of that shape can sit
+from the answer.
+
+**The transport is the bottleneck now.** 7,275 ms of the window is silence
+with no read outstanding at all; `bufferedAmount` peaked at 58,734 against the
+65,535 threshold; and the sustained rate is 4.03 MB/s against a p95 of 4.89
+over 500 ms buckets. Even a read path that cost literally nothing -- which is
+what it now costs -- leaves the transfer where it is.
 
 One incidental note in the result's favour: the Windows receiver spent this
 entire transfer decoding a live camera stream, because of the bug below. That
 can only have cost throughput, so 16.80 s is if anything pessimistic.
+
+**A correction to the CHUNK_SIZE story, from the same data.** The frame budget
+in `src/core/frame.js` is built on "one SCTP message is 16 KiB and the action
+wire spends 36 bytes of it", and the second half of that is not what the wire
+does. This run sent 67,657,281 bytes over 4,122 calls: **16,413.7 bytes per
+message against a 16,348-byte sealed frame, so the per-message overhead is
+~66 bytes, not 36.** The emitted message is therefore ~16,414 bytes -- over
+16 KiB, and accepted, because the negotiated SCTP `maxMessageSize` is far
+larger than the 16 KiB the comment treats as a hard ceiling.
+
+The fix's *goal* is untouched and confirmed: 4,122 sends for 4,113 chunks is
+1.002 per frame, so a sealed frame still travels as exactly one message, which
+is the whole point of the constant. What is wrong is the stated mechanism --
+36 is trystero's payload-chunking constant, not its header size, and the two
+were conflated. Anyone re-deriving CHUNK_SIZE from the comment would get the
+right answer for a reason that does not hold.
 
 #### The webcam stayed on, and only a human could have caught it
 
@@ -954,13 +990,14 @@ been exercised once by hand.
 Named here so it is a list rather than a set of remarks buried in the sections
 above. None of it blocks the config gate.
 
-1. **Instrument the read from inside `fromFile`.** The read-ahead is measured
-   end to end (23.56 -> 16.80 s, above) but the split between "blocked on a
-   read" and "blocked on backpressure" is not: from outside, at
-   `Blob.prototype.arrayBuffer`, the two are concurrent and indistinguishable.
-   The transport is the more likely next bottleneck now -- `bufferedAmount`
-   peaked at 58,734 against a 65,535 threshold -- and deciding that needs the
-   await inside the adapter timed, not the platform call.
+1. **The transport, which is now the bottleneck.** Reads are settled and cost
+   zero (above); the send path is not. 7,275 ms of a 16.80 s window is silence
+   with nothing outstanding but the channel, `bufferedAmount` peaks at 58,734
+   against a 65,535 threshold, and the sustained 4.03 MB/s sits under a 4.89
+   p95. Nothing further on the read side can move this. Before treating it as
+   a qrdrop problem, establish what a bare `RTCDataChannel` does between these
+   two devices with no framing, sealing or sink in the path -- Phase 2's
+   9.5 MB/s was loopback on one machine and is not that number.
 2. **The `content://` sink**, so Android can receive at all. Two candidate
    fixes, both behind the existing platform seam; see the section above.
 3. **First-error-versus-last-error reporting.** `abortActive` nulls `active` on

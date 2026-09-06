@@ -287,11 +287,17 @@ authenticate, and a fake gesture teaches that the real one on the network path
 is theatre.
 
 **`MAX_FRAME_BYTES` is not derived from `CHUNK_SIZE`, and must not be "tidied" into
-being.** One SCTP message is 16 KiB and the transport's action wire spends 36 bytes
-of each on its own framing, so `CHUNK_SIZE` is sized to make a sealed frame land on
-exactly 16348. It used to be a flat 16 KiB, which overshot by 66 bytes -- and the
-transport does not reject an overshoot, it splits it, so every frame travelled as a
-full message plus a 102-byte runt (measured: 393 sends for 192 frames). But
+being.** The transport's action wire chunks a payload at `16 * 1024 - 36`, so
+`CHUNK_SIZE` is sized to make a sealed frame land on exactly 16348 and travel as one
+message (measured: 4,122 sends for 4,113 chunks, 1.002 per frame). It used to be a
+flat 16 KiB, which overshot by 66 bytes -- and the transport does not reject an
+overshoot, it splits it, so every frame travelled as a full message plus a 102-byte
+runt (measured: 393 sends for 192 frames). Note the 36 is that chunking constant and
+**not** the per-message header, which measured ~66 bytes on the wire (16,413.7 bytes
+sent per call against a 16,348-byte frame): the emitted message is ~16414, i.e. over
+16 KiB, which SCTP accepts because the negotiated `maxMessageSize` is far larger.
+Do not re-derive the constant from "one SCTP message is 16 KiB" -- that reasoning
+reaches the right number by luck. But
 `MAX_FRAME_BYTES` is the INBOUND tolerance and still spells out `16 * 1024`, because
 a peer on the old constant still seals 16414-byte frames. Shrinking what we send is
 a local decision; shrinking what we accept is a wire break.
@@ -474,11 +480,14 @@ which made a 3 MB Android send 192 round-trips and 29.7 s of a 30.3 s transfer -
 98% of it, against 21 ms of AEAD and 9 ms of data channel. Blocks took that to
 3.34 s, and 64 MiB to 23.6 s (2.72 MB/s) where the per-frame read would have taken
 about eleven minutes. The read-ahead then took the same 64 MiB to **16.8 s
-(4.03 MB/s)**, measured on the device with both sides rebuilt from one commit.
-Note total read time *rose* there, 5,988 ms to 7,475 ms: a read that runs against
-a busy main thread is slower in wall time and cheaper in cost, so "share of the
-window spent reading" stopped being a cost measure at that point and must not be
-quoted as one.
+(4.03 MB/s)**, measured on the device with both sides rebuilt from one commit,
+and **reads now cost the transfer nothing**: across the 31 block boundaries the
+read-ahead was late zero times, finishing 160-440 ms before the sender wanted
+it every time. Note total read *wall* time rose there, 5,988 ms to 7,475 ms --
+a read that runs against a busy main thread is slower in wall time and cheaper
+in cost, so "share of the window spent reading" stopped being a cost measure at
+that point and must not be quoted as one. The bottleneck past this is the
+transport, not this file.
 
 **This was never Tauri-specific, and `src/web/source.js` is the right home for the
 fix because of it.** Chrome 152 on the same phone, same file, same SAF dialog,
