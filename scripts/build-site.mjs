@@ -183,6 +183,14 @@ async function readBuildMeta() {
 }
 
 /**
+ * Tauri's IPC endpoints, as connect-src entries. Both forms are listed because
+ * the scheme differs by platform -- Windows serves the custom protocol over
+ * `http://ipc.localhost`, the others use the `ipc:` scheme -- and one config is
+ * built for all of them.
+ */
+const IPC_ORIGINS = ['ipc:', 'http://ipc.localhost']
+
+/**
  * The Content-Security-Policy, as a single generated string.
  *
  * connect-src is built from SIGNALING_URLS -- every URL src/transport/room.js
@@ -230,18 +238,42 @@ async function readBuildMeta() {
  * -- see that file -- so the protection does not depend on the host's
  * cooperation.
  *
+ * `ipc: true` adds Tauri's own IPC origin to connect-src, and is required by
+ * every app build. Tauri moves an `invoke` payload across the boundary by
+ * POSTing it to a custom protocol -- `http://ipc.localhost` on Windows, the
+ * `ipc:` scheme elsewhere -- and falls back to a JSON-encoding path when that
+ * fetch fails. connect-src governs that fetch. So a policy without these
+ * entries does not break IPC loudly; it silently downgrades every invoke to
+ * JSON, which is how a Uint8Array reaches `sink_write` as `InvokeBody::Json`
+ * and the native sink dies with "sink_write expects a raw body" on the first
+ * received chunk. Found from the field: a phone-to-desktop transfer aborted
+ * mid-flight, and the visible error was the chunk storm that follows the sink
+ * failing, not the failure itself.
+ *
+ * Tauri does NOT add these for you when you supply your own csp. It rewrites
+ * the policy enough to inject script hashes for its bootstrap scripts, which
+ * makes it look like it has handled the whole thing, and leaves connect-src
+ * alone. Verified by reading the served Content-Security-Policy header back
+ * off the document response.
+ *
+ * The website must NOT carry them -- it has no Tauri runtime and the origin
+ * would be a meaningless allowance in a policy whose whole point is that every
+ * entry is justified. Hence a parameter rather than an unconditional entry.
+ *
  * @param {readonly string[]} signalingUrls
+ * @param {{ ipc?: boolean }} [options]
  * @returns {string}
  */
-export function buildCSP(signalingUrls) {
+export function buildCSP(signalingUrls, { ipc = false } = {}) {
   const origins = [...new Set(signalingUrls.map(u => new URL(u).origin))]
+  const connect = [`'self'`, ...(ipc ? IPC_ORIGINS : []), ...origins]
   const directives = [
     `default-src 'self'`,
     `script-src 'self'`,
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob:`,
     `media-src 'self' blob: mediastream:`,
-    `connect-src 'self' ${origins.join(' ')}`,
+    `connect-src ${connect.join(' ')}`,
     `base-uri 'none'`,
     `form-action 'none'`,
     `object-src 'none'`,
@@ -518,7 +550,12 @@ async function main() {
     }
   }
 
-  const csp = buildCSP(SIGNALING_URLS)
+  // The app channel's meta tag must allow Tauri's IPC origin too. Tauri serves
+  // its own policy as a response header, but a <meta> policy composes with it
+  // and the most restrictive of the two wins -- so allowing IPC in
+  // tauri.conf.json alone is not enough while this tag also ships in the
+  // bundle. Both come from the same generator so they cannot disagree.
+  const csp = buildCSP(SIGNALING_URLS, { ipc: channel === 'app' })
   const template = await readFile(path.join(SITE, 'index.html'), 'utf8')
   // replaceAll, not replace: __ORIGIN__ appears three times (og:url and two
   // image URLs) and `String.replace` with a string argument substitutes only

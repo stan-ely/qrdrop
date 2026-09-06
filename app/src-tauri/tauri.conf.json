@@ -15,7 +15,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' wss://nos.lol wss://relay.primal.net wss://relay.mostr.pub wss://purplerelay.com wss://nostr.data.haus wss://nostr-01.yakihonne.com wss://bucket.coracle.social wss://tracker.openwebtorrent.com wss://tracker.webtorrent.dev; base-uri 'none'; form-action 'none'; object-src 'none';"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' ipc: http://ipc.localhost wss://nos.lol wss://relay.primal.net wss://relay.mostr.pub wss://purplerelay.com wss://nostr.data.haus wss://nostr-01.yakihonne.com wss://bucket.coracle.social wss://tracker.openwebtorrent.com wss://tracker.webtorrent.dev; base-uri 'none'; form-action 'none'; object-src 'none';"
     }
   },
   "bundle": {

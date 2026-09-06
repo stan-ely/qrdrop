@@ -42,6 +42,40 @@ test('the real SIGNALING_URLS produce a path-free, self-first connect-src', () =
   }
 })
 
+// The website has no Tauri runtime, so these entries would be an unjustified
+// allowance in a policy whose every entry is meant to be justified.
+test('the website policy does not carry Tauri IPC origins', () => {
+  const csp = buildCSP(['wss://a.example'])
+  assert.doesNotMatch(csp, /ipc:/)
+  assert.doesNotMatch(csp, /ipc\.localhost/)
+})
+
+test('ipc: true adds both IPC forms, ahead of the signalling origins', () => {
+  const csp = buildCSP(['wss://a.example'], { ipc: true })
+  const connect = csp.split('; ').find(d => d.startsWith('connect-src '))
+  assert.equal(connect, `connect-src 'self' ipc: http://ipc.localhost wss://a.example`)
+})
+
+// The regression this exists for: without the IPC origin in connect-src, Tauri
+// cannot POST an invoke payload to its custom protocol, quietly falls back to a
+// JSON body, and sink_write rejects the first chunk of every received file with
+// "expects a raw body". Nothing about that failure points at the CSP, and the
+// committed config is what the app actually runs, so assert on the file itself
+// rather than only on the generator that writes it.
+test('the committed tauri.conf.json allows the Tauri IPC origin', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const path = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+  const conf = JSON.parse(
+    await readFile(path.join(root, 'app', 'src-tauri', 'tauri.conf.json'), 'utf8'),
+  )
+  const csp = /** @type {string} */ (conf.app.security.csp)
+  const connect = /** @type {string} */ (csp.split('; ').find(d => d.startsWith('connect-src ')))
+  assert.ok(connect.includes('http://ipc.localhost'), 'connect-src is missing http://ipc.localhost')
+  assert.ok(connect.includes('ipc:'), 'connect-src is missing the ipc: scheme')
+})
+
 test('the non-connect directives are the locked-down set', () => {
   const csp = buildCSP([])
   for (const directive of [

@@ -1,6 +1,10 @@
 /**
  * Regenerates app/src-tauri/tauri.conf.json from tauri.conf.template.json,
- * filling in __CSP__ with the exact same policy the website build serves.
+ * filling in __CSP__ with the policy the website build serves, plus the one
+ * thing only the app needs: Tauri's own IPC origin in connect-src (`ipc: true`
+ * below). Without it every `invoke` silently downgrades to a JSON body and the
+ * native sink rejects the first chunk it is handed -- see buildCSP's comment
+ * for how that surfaces, which is nowhere near the CSP.
  *
  * This is the app-side half of the invariant scripts/build-site.mjs already
  * enforces for the website's CSP meta tag: connect-src is derived from
@@ -29,7 +33,7 @@ const SRC_TAURI = path.join(ROOT, 'app', 'src-tauri')
 
 async function main() {
   const template = await readFile(path.join(SRC_TAURI, 'tauri.conf.template.json'), 'utf8')
-  const csp = buildCSP(SIGNALING_URLS)
+  const csp = buildCSP(SIGNALING_URLS, { ipc: true })
 
   const output = template.replaceAll('__CSP__', csp)
   if (output.includes('__CSP__')) {
