@@ -13,6 +13,19 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**The Android share sheet opens qrdrop.** Tapping Share in Photos or Files and
+choosing qrdrop lands the file on the send screen with its own name on it, instead
+of opening the app and picking the same file again by hand. It handles a share into
+an app that is already running as well as a cold start — the activity is
+`singleTask`, so a warm share never calls `onCreate`, and handling only the cold
+path would have worked exactly once per launch.
+
+The file is read through Tauri's asset protocol rather than `plugin-fs`, so it stays
+disk-backed and the sender's existing 2 MiB block reads work on it unchanged. Going
+through `plugin-fs` would have pulled the whole file into memory at ~2 MB/s first,
+which is eight minutes and a gigabyte of heap for a 1 GB share before the first
+frame goes out.
+
 **The app installs from Homebrew and Scoop.** `brew install --cask
 stan-ely/tap/qrdrop-app` on Apple silicon, `scoop install stan-ely/qrdrop-app` on
 Windows; both are written by the release workflow and point at the same files the

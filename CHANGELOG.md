@@ -5,6 +5,30 @@ is the finer-grained record.
 
 ## Unreleased
 
+**The UI works on a touch screen, which it did not.** The choose screen's biggest,
+most eye-catching element was a dashed box reading "Drop a file here" — an
+instruction a phone cannot follow, sitting above the two buttons that could. It is
+a button now, at every pointer, so tapping it picks a file; on a mouse the same box
+became clickable, which it had never been. Buttons meet a 48px floor on a touch
+pointer, sheets come up from the bottom of the screen instead of the middle, and a
+phone gets the page chrome's pixels back for the card.
+
+**The safe-area padding was doing nothing.** `env(safe-area-inset-*)` resolves to
+zero unless the viewport meta opts in with `viewport-fit=cover`, and it did not — so
+the notch and home-indicator handling written into the stylesheet had never once
+applied. Opting in also exposed a narrow-screen rule that dropped all four insets
+through a `padding` shorthand.
+
+**qrdrop installs to a home screen, and appears in the share sheet.** A generated
+web manifest makes the site installable, and a share target lets someone send a
+photo from Photos or a document from Files straight into it instead of opening the
+app and navigating back to the file they were already looking at. The service
+worker that makes the share POST answerable caches nothing at all, deliberately.
+
+**A camera button, on touch pointers.** The thing most often worth sending from a
+phone is the photo in front of you, and reaching it through a file browser is two
+dialogs and a folder tree.
+
 **The CLI installs from Scoop on Windows.** `scoop bucket add stan-ely
 https://github.com/stan-ely/scoop-bucket`, then `scoop install stan-ely/qrdrop`. The
 manifest points at the npm registry tarball and depends on `nodejs` from the main
