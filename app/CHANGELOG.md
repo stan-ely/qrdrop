@@ -13,6 +13,16 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**qrdrop is on F-Droid — this project's own repository, not f-droid.org.** Add
+`https://share.stan-ely.com/fdroid/repo?fingerprint=889603b768cd2ca50f6c553086827880aa1aad5bbf0098a3028a7f1b7fd47582`
+in F-Droid, Neo Store or Droid-ify once, and every later release turns up as an
+ordinary update instead of an APK to find and sideload. It serves the same file
+this Release does, signed with the same key: an app rebuilt by F-Droid would carry
+F-Droid's certificate instead, which is not the one this site publishes for app
+links, and a scanned pairing code would then open a browser tab rather than the
+app with nothing anywhere to explain why. The fingerprint in that URL is what your
+client pins, and it will not change. Android can still send and not yet receive.
+
 **Shortcuts and the Quick Settings tile now work while the app is already open.**
 They worked from cold and did nothing at all warm — the intent was recorded and then
 sat there, unread, with the app in front of you. The web layer had been waiting for

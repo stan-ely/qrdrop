@@ -578,12 +578,28 @@ the Android APK, the `.deb` and the AppImage live. Note `qrdrop-app` and not
 Apple silicon only — one `.dmg` is built, on an arm64 runner — and it refuses to
 install on Intel rather than leaving you a bundle that cannot launch.
 
+On Android, add this project's own F-Droid repository once and every later
+release arrives as an ordinary update:
+
+```
+https://share.stan-ely.com/fdroid/repo?fingerprint=889603b768cd2ca50f6c553086827880aa1aad5bbf0098a3028a7f1b7fd47582
+```
+
+It serves the same APK the Releases page does, signed with the same key — it is
+not rebuilt and re-signed by F-Droid, and that is the point rather than a
+convenience. An F-Droid-built app carries F-Droid's certificate, which is not the
+one published at `.well-known/assetlinks.json` on this domain, so a scanned
+pairing code would open a browser tab instead of the app with nothing anywhere
+to explain why. Check the fingerprint in the URL against the one your client
+shows when it adds the repository; it is what the client pins, and it will never
+change. **Android can send and cannot yet receive** — see the table below.
+
 | Platform | Send | Receive | Notes |
 | --- | --- | --- | --- |
 | **Windows** | yes | yes | signed: no |
 | **macOS** | yes | yes | signed: no |
 | **Linux** | Beam only | Beam only | WebKitGTK has no `RTCPeerConnection` |
-| **Android** | yes | **no** | its save dialog returns a `content://` URI the sink cannot open |
+| **Android** | yes | **no** | F-Droid, or the APK on the Releases page; its save dialog returns a `content://` URI the sink cannot open |
 | **iOS** | — | — | compiles on every change; shipping it needs an Apple Developer account |
 
 Two of those are worth stating rather than burying. On Linux the webview ships

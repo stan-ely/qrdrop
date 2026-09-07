@@ -285,6 +285,18 @@ jobs:
           Both resolve to the files below, and both are updated by this workflow.
           Everything else on this page is a direct download.
 
+          On **Android**, add this project's own F-Droid repository once and the
+          client offers every future release as an ordinary update:
+
+          ```
+          https://share.stan-ely.com/fdroid/repo?fingerprint=889603b768cd2ca50f6c553086827880aa1aad5bbf0098a3028a7f1b7fd47582
+          ```
+
+          It serves the same APK this page does, signed with the same key --
+          not rebuilt and re-signed by F-Droid. That is what keeps a scanned
+          pairing code opening the app instead of a browser tab; see below.
+          **Android can send and cannot yet receive.**
+
           ### About these files
 
           `qrdrop-<version>-x86_64-windows.zip` is the portable Windows build --
@@ -359,10 +371,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Retried, six attempts fifteen seconds apart, the same loop
+          # publish.yml uses to resolve the npm tarball. A release asset is
+          # served through a CDN that has occasionally not caught up with a
+          # Release created one job earlier, and a cold 404 here fails an
+          # otherwise fine release at the last step -- after the Release page
+          # exists, which is the expensive place to fail.
+          fetch_asset() {
+            for attempt in 1 2 3 4 5 6; do
+              if curl -fsSL "$BASE/$1" -o "$1"; then
+                echo "Fetched $1 on attempt $attempt."
+                return 0
+              fi
+              echo "Attempt $attempt: $1 is not servable yet; waiting."
+              sleep 15
+            done
+            echo "$1 never became fetchable at $BASE/$1" >&2
+            return 1
+          }
           dmg="qrdrop_${VERSION}_aarch64.dmg"
           zip="qrdrop-${VERSION}-x86_64-windows.zip"
-          curl -fsSL "$BASE/$dmg" -o "$dmg"
-          curl -fsSL "$BASE/$zip" -o "$zip"
+          fetch_asset "$dmg"
+          fetch_asset "$zip"
           {
             echo "dmg=$dmg"
             echo "zip=$zip"
@@ -530,3 +560,227 @@ jobs:
           }
           push_one brew Casks/qrdrop-app.rb
           push_one scoop bucket/qrdrop-app.json
+
+  # The F-Droid repository, regenerated from this Release and force-pushed to
+  # the fdroid-repo branch, from which pages.yml copies it into the deployed
+  # site at /fdroid/repo.
+  #
+  # A BINARY repository serving our own release-signed APK, not an f-droid.org
+  # listing -- fdroid/config.yml's header carries the reasoning, and it is the
+  # whole point: an F-Droid-built app is signed with F-Droid's key, whose
+  # fingerprint is not the one at .well-known/assetlinks.json, so every install
+  # from such a build would open a browser tab instead of the app on a scanned
+  # pairing code, with nothing anywhere to read about why.
+  #
+  # TWO KEYS, and they are not interchangeable. ANDROID_KEYSTORE_BASE64 signs
+  # the APK and says "this is qrdrop" to Android. FDROID_KEYSTORE_BASE64 signs
+  # entry.jar and index-v2.json and says "this is the qrdrop repository" to the
+  # F-Droid client, which PINS that certificate the moment a user adds the repo
+  # and refuses an index signed by any other one. It therefore cannot be
+  # rotated: the only recovery from losing it is asking every user to remove
+  # and re-add the repository. Entangling it with the app key would tie an
+  # unrotatable identity to a key that may one day have to be replaced.
+  fdroid:
+    needs: [check, release]
+    runs-on: ubuntu-latest
+    # Same guard, same reason as tap: a prerelease gets a Release page but must
+    # not move what an installed F-Droid client is offered as an update.
+    if: ${{ !contains(needs.check.outputs.version, '-') }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # An F-Droid repository is CUMULATIVE: the index describes every APK
+      # present, and a client offering an older release needs that APK still
+      # downloadable from the same directory. Regenerating from this release's
+      # APK alone would silently drop every previous version from the index on
+      # the first release after this one -- and a version that vanishes from an
+      # index is not an error anywhere, it is just gone.
+      - uses: actions/checkout@v7
+        with:
+          ref: fdroid-repo
+          path: published
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # apksigner is what fdroidserver uses to read an APK's signature. Without
+      # it the tool falls back to jarsigner, which cannot see an APK Signature
+      # v2 block -- the only scheme our release APK carries -- and concludes the
+      # jar is unsigned, then moves the APK to archive/ and publishes an empty
+      # repository. That failure is a warning in the log and a green job.
+      - name: Install fdroidserver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apksigner
+          pipx install fdroidserver==2.4.5
+          fdroid --version
+          # `fdroid update` shells out to `jar cf` to build index-v1.jar, so a
+          # JRE is not enough. The runner image ships a JDK; assert it rather
+          # than discover it as a stack trace.
+          command -v jar >/dev/null || { echo "no jar on PATH -- fdroid update cannot build index-v1.jar" >&2; exit 1; }
+
+      # The APK filename is read from SHA256SUMS and never spelled here, for
+      # the reason the release job globs rather than naming: SHA256SUMS is
+      # generated by `sha256sum *` over the very directory that was uploaded,
+      # so it cannot disagree with the Release by construction. The sed strips
+      # a leading ./ because app-v0.1.0 shipped this file with ./ prefixes and
+      # the bare-name change landed after it -- tolerating both costs one sed
+      # and means this does not depend on which release it is reading.
+      - name: Fetch and verify the published APK
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            curl -fsSL "$BASE/SHA256SUMS" -o SHA256SUMS && break
+            echo "Attempt $attempt: SHA256SUMS is not servable yet; waiting."
+            sleep 15
+          done
+          test -s SHA256SUMS || { echo "SHA256SUMS never became fetchable at $BASE" >&2; exit 1; }
+          matches="$(awk '$2 ~ /[.]apk$/ {print $2}' SHA256SUMS | sed 's|^[.]/||')"
+          count="$(printf '%s\n' "$matches" | grep -c .)"
+          if [ "$count" != "1" ]; then
+            echo "Expected exactly one .apk in SHA256SUMS, found $count -- picking one would be a coin toss resolved in favour of whatever sha256sum sorted first:" >&2
+            printf '%s\n' "$matches" >&2
+            exit 1
+          fi
+          curl -fsSL "$BASE/$matches" -o "$matches"
+          # Checked against the published SHA256SUMS, so the bytes going into a
+          # signed index are the bytes the Release page actually serves.
+          sed 's|  [.]/|  |' SHA256SUMS | grep "  $matches\$" > apk.sha256
+          sha256sum -c apk.sha256
+          mkdir -p fdroid/repo
+          # Renamed on the way in: the release asset is app-universal-release.apk
+          # with no version in its name, and this directory holds several
+          # releases at once.
+          mv "$matches" "fdroid/repo/qrdrop-$VERSION.apk"
+
+      # Carry every previous APK forward, then keep the newest three. That is a
+      # size decision about one git branch and not a correctness one -- the
+      # branch is force-pushed as a fresh orphan commit every release, but each
+      # APK is ~43 MB and pages.yml clones this on every single site deploy.
+      - name: Carry previous releases forward
+        run: |
+          if [ -d published/repo ]; then
+            cp -n published/repo/*.apk fdroid/repo/ 2>/dev/null || true
+          fi
+          ls fdroid/repo/*.apk | sort -V | head -n -3 | xargs -r rm -v
+          ls -l fdroid/repo/
+
+      # RUNNER_TEMP, never the workspace. The workspace is what gets built into
+      # the branch that is force-pushed to a public repository and served from
+      # a Pages site, and a repository signing key published at a URL is not a
+      # mistake anyone gets to make twice. config.yml reads all four values
+      # through {env:} substitution so no password reaches a file here either.
+      - name: Restore the repository signing keystore
+        env:
+          FDROID_KEYSTORE_BASE64: ${{ secrets.FDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$FDROID_KEYSTORE_BASE64" ]; then
+            echo "FDROID_KEYSTORE_BASE64 is not set -- the index cannot be signed, and an unsigned index is a repository no client will add." >&2
+            exit 1
+          fi
+          echo "$FDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/qrdrop-fdroid-repo.p12"
+
+      # icon.png is copied in rather than committed at repo/icons/icon.png,
+      # because `fdroid update` owns that directory and overwrites the file
+      # there with a generated placeholder. fdroid/icon.png is the source.
+      - name: Build and sign the index
+        working-directory: fdroid
+        env:
+          FDROID_KEYSTORE: ${{ runner.temp }}/qrdrop-fdroid-repo.p12
+          FDROID_KEY_ALIAS: ${{ secrets.FDROID_KEY_ALIAS }}
+          FDROID_KEYSTORE_PASSWORD: ${{ secrets.FDROID_KEYSTORE_PASSWORD }}
+          FDROID_KEY_PASSWORD: ${{ secrets.FDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p repo/icons
+          cp icon.png repo/icons/icon.png
+          fdroid update --verbose --pretty
+
+      # Each assertion names its consequence, because none of these fail
+      # loudly on their own. A missing index is not a 404 anyone reports: the
+      # client shows the repository as present and EMPTY, which reads as "no
+      # releases yet".
+      - name: The index must exist and must describe this release
+        working-directory: fdroid
+        run: |
+          test -f repo/entry.jar || { echo "no repo/entry.jar -- the index is unsigned and no client will accept the repository." >&2; exit 1; }
+          test -f repo/index-v2.json || { echo "no repo/index-v2.json -- clients would show the repository as present and empty, which reads as 'no releases yet'." >&2; exit 1; }
+          grep -q "qrdrop-$VERSION.apk" repo/index-v2.json || { echo "the index does not mention qrdrop-$VERSION.apk -- fdroid update rejected the APK, most likely because it could not read its signature, and this release would be invisible to every client." >&2; exit 1; }
+          ls -l repo/
+
+      # push_one from the tap job deliberately does not carry over. Three
+      # reasons: a regenerated repo/ can LOSE files and `git add <dir>` does not
+      # stage a deletion; the target is a named branch of this repository rather
+      # than another repository's HEAD; and every release adds a ~43 MB APK
+      # blob, so ordinary history would grow by that much per release forever
+      # and pages.yml would pay for all of it on every site deploy.
+      #
+      # So the branch is a CACHE OF BYTES, not a history: a fresh orphan commit,
+      # force-pushed. That is safe precisely because nothing on it is a source
+      # of truth -- the APKs are on the Releases page, the metadata is on main,
+      # and the index is reproducible from the two.
+      #
+      # github.token, not a PAT: the doctrine about one fine-grained PAT per
+      # index is about CROSS-repository writes, and this is a branch of this
+      # repository.
+      - name: Force-push the repository to fdroid-repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          work="$RUNNER_TEMP/fdroid-branch"
+          rm -rf "$work"
+          mkdir -p "$work"
+          cp -R fdroid/repo "$work/repo"
+          cd "$work"
+          # The guard that must never be removed. Everything below is about to
+          # be public, permanently, at a URL.
+          if find . -name '*.p12' -o -name '*.jks' -o -name '*.keystore' | grep -q .; then
+            echo "a keystore is staged for a PUBLIC branch -- refusing." >&2
+            exit 1
+          fi
+          # entry.json pins index-v2.json by sha256 AND size, so one LF
+          # rewritten to CRLF on some future checkout invalidates the whole
+          # repository and every client declines it in silence. `* -text`
+          # disables end-of-line conversion outright, and it lives on the
+          # branch rather than in a workflow because the checkout that could
+          # corrupt these bytes is pages.yml's, not this one.
+          printf '# Every file on this branch is a SIGNED ARTEFACT and must survive a round\n# trip through git byte for byte. `-text` disables end-of-line conversion.\n* -text\n' > .gitattributes
+          git init -q -b fdroid-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "F-Droid repository for app-v$VERSION"
+          git push --force --quiet "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY" fdroid-repo
+          # Prove it landed, in the same spirit as push_one's fetch-and-diff.
+          git fetch --quiet "https://github.com/$GITHUB_REPOSITORY" fdroid-repo
+          git diff --quiet HEAD FETCH_HEAD || { echo "fdroid-repo did not land as written" >&2; exit 1; }
+          echo "fdroid-repo carries the index for $VERSION."
+
+  # Deploy the site, so the repository the job above just built is served.
+  #
+  # A DISPATCH rather than adding app-v* to pages.yml's own tags, and the race
+  # is what decides it: a tag-triggered pages run starts on the same push and
+  # would check out fdroid-repo some fifteen minutes of Rust builds BEFORE the
+  # fdroid job pushes to it, deploying the previous repository and never
+  # looking again. `needs: fdroid` is ordered by construction. It also
+  # sidesteps the tag-trigger staleness documented at the top of pages.yml,
+  # whose recorded workaround is precisely a workflow_dispatch on main -- and
+  # it leaves that file's anchored-glob comment true, which is what keeps the
+  # npm and app releases from reaching into each other's workflows.
+  #
+  # The job-level permissions block REPLACES the workflow one rather than
+  # adding to it, and the workflow block grants no actions: write.
+  pages:
+    needs: [check, fdroid]
+    runs-on: ubuntu-latest
+    if: ${{ !contains(needs.check.outputs.version, '-') }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Deploy the site with the new F-Droid repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
