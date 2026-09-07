@@ -31,6 +31,39 @@
  */
 export const BREAKPOINT_WIDE = '(min-width: 48rem) and (max-height: 62rem)'
 export const BREAKPOINT_SHORT = '(max-height: 46rem)'
+/*
+ * A phone on its side, which is neither of the two shapes above.
+ *
+ * BREAKPOINT_WIDE gets the card into two columns here and BREAKPOINT_SHORT
+ * trims its padding, and between them the result still spent 39% of the
+ * screen on page chrome and laid the content out inside 111px. This is the
+ * query for the arrangement that only makes sense at this shape: the page
+ * chrome folds onto one row (site/styles.css), and the action bar leaves the
+ * bottom of the card to sit under the copy, so the media column can take the
+ * card's whole height instead of stopping short of a full-width button row.
+ * Measured at 800x360, against the layout this replaced: the media box went
+ * from 128px -- overflowing an 111px parent -- to a 258px square, and the
+ * copy column from 111px to 194.
+ *
+ * All three terms are load-bearing. `min-width` because the arrangement is
+ * two columns and a 400x400 window is not; without it a small square coarse
+ * viewport would fold the footer up beside a wordmark it then has to wrap,
+ * which .masthead's comment in site/styles.css says is the one thing that
+ * must not happen. `max-height: 30rem` (480px) is the landscape-phone band
+ * itself -- 800x360, 844x390 and 932x430 are in it, a 1024x768 tablet and a
+ * 1280x620 laptop are not, and neither of those wants its action bar moved
+ * out of a card that has room for it. And `pointer: coarse` because a desktop
+ * window dragged to 800x360 is a choice that can be undone by dragging it
+ * back, which is the reasoning the coarse arms of site/styles.css's phone
+ * query already spell out.
+ *
+ * It comes AFTER BREAKPOINT_WIDE in the stylesheet rather than instead of it.
+ * This branch overrides placement and nothing else; everything the wide
+ * branch says about this shape -- `safe center` on the copy column, the
+ * aspect-ratio caps on the media boxes -- still has to apply.
+ */
+export const BREAKPOINT_FLAT = '(min-width: 48rem) and (max-height: 30rem)'
+
 
 /**
  * The page ground, exported for the same reason the breakpoints above are:

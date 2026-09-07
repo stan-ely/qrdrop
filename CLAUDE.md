@@ -90,38 +90,73 @@ both engines, because the wide-layout branch pinned `inline-size: 100%` while
 pins the code into a corner of a box that is not square, so the difference pays out as a
 white band beside the QR.
 
-**A landscape phone is short WITHOUT being wide, and that shape had no viewport
-here at all.** `BREAKPOINT_SHORT` is `max-height: 46rem` so a rotated 360x800
-matches it, while `BREAKPOINT_WIDE` wanted `min-width: 60rem` and 800px never
-reached it — so the card took the short branch in *one* column, a combination
-`laptop-short` (short and wide) and the portrait phones (narrow and tall) between
-them never produced. `.card-media` is `flex: 1 100 auto` and collapsed to a block
-size of 0 while `.scan-panel` and `.scanner-frame` held an 8rem floor, so both
-painted 128px tall inside a 0px parent, over the action bar. Found by rotating a
-phone. `BREAKPOINT_WIDE` is now `48rem` — the narrowest width that can hold the
-22rem media column beside the 20rem copy column the wide branch already sets —
-and `phone-narrow-landscape` / `phone-landscape` are in the viewport list.
+**Landscape is its own layout, and `BREAKPOINT_FLAT` is where it lives.**
+`(min-width: 48rem) and (max-height: 30rem)`, in `tokens.js` beside the other two
+and interpolated into `site/styles.css` the same way. Reaching the wide branch was
+only the first half; the arrangement it reached was still stacked on the one axis
+this shape is short of. Measured at 800x360 before this: 139px of the 360 went on
+page chrome (a header of 61, a footer of 30, and 48 of padding and row gaps), 32
+on card padding and 64 on a full-width action bar holding two 82px buttons — so
+the content laid out inside **111px**, with the media box capped at 128 inside it.
 
-**The square assertion could not have caught that, and the reason generalises.**
-A collapsed box is 0x0, and 0x0 passes `width === height`. What catches it is the
-newer **clipped-above** assertion: any child sitting above the copy column's own
-scroll origin is fatal on every viewport, because `scrollTop` is already 0 there
-and nothing can scroll back up to it. That is what `justify-content: center` does
-to a column it cannot fit — it pushes the overflow out *both* ends — and on
-800x360 it had taken the `<h2>` and beam's encryption callout off the top while
-every existing assertion saw an ordinary overflow. The rule is `safe center` now.
-Zero-box children are exempt, for the same reason the offscreen check exempts a
-closed dialog: an element that is not laid out reports 0x0 at the origin, which is
-above every scroll container on the page.
+Three changes, all in that branch:
 
-**Landscape phones are the one shape allowed to scroll the copy column**
-(`allowBodyScroll` on those two viewports). 800x360 leaves it 111px after the page
-chrome, the card padding and an action bar that may not move, and beam wants 213
-for a heading, a filename, a speed control and two callouts CLAUDE.md already
-refuses to shorten — no arrangement fits. The choice was scrolling the column or
-moving the encryption warning into the info sheet, and scrolling wins: a safety
-notice below the fold is still on the screen, where one behind a disclosure is not.
-The clipped-above check is what keeps that honest — everything stays *reachable*.
+- **The page chrome folds onto one row.** `main` becomes a two-row grid with the
+  header at 1/1 and the footer at 1/2, so the wordmark, "How it works" and the
+  security disclosure sit on one baseline. Nothing is hidden — same elements, same
+  tab order — they have only stopped each claiming a row. Card: **221 → 292px**.
+- **The card is a grid and the action bar leaves the bottom.** `.card-body` is
+  `display: contents` so the two columns are siblings in one grid and the media can
+  span the action row; the bar moves into the second column under the copy it
+  belongs to. Media box: **128 → 258px square**. The media track is a bare `18rem`
+  and not `minmax(0, 18rem)` — with a zero floor it gave way to the `auto` track
+  beside it and the beam QR came out 186x258, which is the 352x306 failure again.
+- **The controls slot.** `screen()` in `view.js` has a fourth slot beside `media`,
+  `body` and `actions`; only beam-send fills it, with its speed picker and the
+  readout that picker changes. It is a child of `.card` because CSS can only move
+  an item within the grid it is in, and it is rendered on every screen and hidden
+  when empty because `vdom.js`'s `canReuse` matches by position and the screens
+  that use it are the ones with an adopted canvas being repainted beside it.
+  Beside the buttons rather than above them, and that was measured: side by side
+  the bottom row is `max(controls, buttons)`, stacked it is their sum.
+
+**The square assertion could not have caught the original bug, and the reason
+generalises.** A collapsed box is 0x0, and 0x0 passes `width === height`. What
+catches it is the **clipped-above** assertion: any child sitting above the copy
+column's own scroll origin is fatal on every viewport, because `scrollTop` is
+already 0 there and nothing can scroll back up to it. That is what
+`justify-content: center` does to a column it cannot fit — it pushes the overflow
+out *both* ends — and on 800x360 it had taken the `<h2>` and beam's encryption
+callout off the top while every existing assertion saw an ordinary overflow. The
+rule is `safe center` now. Zero-box children are exempt, for the same reason the
+offscreen check exempts a closed dialog: an element that is not laid out reports
+0x0 at the origin, which is above every scroll container on the page.
+
+**One screen still overflows and it is beam-send, by 79px at 800x360 and 49 at
+844x390.** Those are the `copyScroll` budgets on those two viewports — a budget and
+not the `allowBodyScroll` flag they replaced, because an on/off exemption lets the
+one screen that legitimately overflows hide every screen that does not. Beam wants
+228px of heading, encryption callout, filename and keep-it-on-screen instruction in
+150; that is a shortfall in *area*, so no rearrangement closes it. The numbers are
+Firefox's, 1px above Chromium's on the same fixture — take the larger, or the
+budget passes one engine and fails the other on an unchanged tree.
+
+**What the first screenshot of that branch caught, which no assertion did:** the
+part below the fold was `.callout.warn`, the keep-it-on-screen instruction
+`view.js` calls the most important thing on the screen. Legal, reachable, and the
+exact shape of the Accept-below-the-fold bug this script was written after. So in
+this branch `.card-copy > .filename` takes `order: 1` and the filename yields its
+place — it is the only purely informational line in that column. The child
+combinator is load-bearing: every other `.filename` in the app is nested in a
+`.stack`, so this reaches the two beam screens and nothing else, and both want it.
+Look at the pictures; the assertions cannot see this class of thing.
+
+**"Take a photo" is `display: none` here.** Three buttons wrapped the choose bar
+onto two rows and took 59px from the copy beside it. It is a second way to start a
+send next to "Send a file", framing a photo is done with the phone upright, and it
+returns the moment the phone is turned back. A rule rather than a branch in
+`choose()`, so the vnode shape stays identical across orientations — and
+`display: none` rather than `visibility`, so it leaves the tab order with the pixels.
 
 Run it after anything that touches `src/web/view.js`, `src/web/styles.js`, or the
 site's page chrome, **and run it against both deployed trees** — they differ in the
@@ -434,8 +469,13 @@ found. `node scripts/check-layout.mjs` is that, automated.
 (`site/styles.css`: `body` is `100dvh`, `main` is an auto/1fr/auto grid) and the
 component fills the row it is given — `:host` is `block-size: 100%`, never `100dvh`,
 or it would overflow by exactly the height of the page chrome above it. Every screen
-builder returns `{ body, actions }`: the body may scroll as a last resort, the action
-bar never does. There is nowhere else for a button to go, which is the point.
+builder returns `{ media, body, controls, actions }`: the body may scroll as a last
+resort, the action bar never does. There is nowhere else for a button to go, which is
+the point. `media` is the screen's one visual thing and `controls` its one control
+that is not a button (only beam-send has one) — both are slots rather than entries in
+`body` because "beside" is not something CSS can say about one child among siblings,
+and both are rendered as children of `.card` so a media query can place them. Adding
+a slot means adding it to the type on `builders` too; the typecheck is what says so.
 
 **Anywhere a rule sets `display`, check what it just un-hid.** An author `display` beats
 the UA stylesheet's `display: none` for both `[hidden]` and a closed `<dialog>`, and this

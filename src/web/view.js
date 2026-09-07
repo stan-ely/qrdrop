@@ -145,7 +145,7 @@ const SUCCESS_OUTCOMES = new Set(['sent', 'received'])
 // palette). The functions are declarations, so referencing them from a
 // module-scope const above their definitions is safe -- they are hoisted and
 // initialised before this runs.
-/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { media?: any, body: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[], label?: string } | null }>} */
+/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { media?: any, body: any[], controls?: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[], label?: string } | null }>} */
 const builders = {
   choose, send, receive, verify, transfer, done,
   'beam-send': beamSend, 'beam-receive': beamReceive,
@@ -503,7 +503,21 @@ function screen(name, state, dispatch) {
   // the wrong tool: an item spanning an unknown number of rows has to name a
   // count, and every row it names past the real ones still contributes a gap.
   // A span of 99 added 1584px of empty gaps to the send screen.
-  const { media, body, actions, info } = builders[name](state, dispatch)
+  //
+  // `controls` is a fourth slot and exists for the same reason `media` does:
+  // it is the one thing on a screen that is neither prose nor a button, and on
+  // a landscape phone it belongs BESIDE the action bar rather than at the foot
+  // of a column that is scrolling. Only beam-send has one -- a <select> and the
+  // line reporting what that speed produces. CSS can only move an item within
+  // the grid it is in, so the slot has to be a child of .card and not of
+  // .card-copy, which is what makes styles.js's flat branch able to place it.
+  //
+  // Putting it in `actions` instead was the obvious shortcut and is wrong twice
+  // over: check-layout.mjs asserts the action bar holds nothing but buttons
+  // (the bug being that anything else in there grows and pushes the real
+  // buttons off a phone), and the bar wraps, so on a narrow screen the control
+  // would take a row from the buttons rather than sitting beside them.
+  const { media, body, actions, controls, info } = builders[name](state, dispatch)
 
   // The Details button is appended here, by the frame, when a builder declares
   // `info` -- never rendered by the builder itself. It is the exact same
@@ -533,6 +547,16 @@ function screen(name, state, dispatch) {
       media ? h('div', { class: 'card-media' }, media) : null,
       h('div', { class: 'card-copy' }, body),
     ].filter(Boolean)),
+    // Rendered on every screen and empty on all but one, exactly as the rail
+    // above is hidden rather than absent, and for the identical reason: this
+    // element's sibling .card-body holds the `adopt`ed <svg>, <video> and
+    // <canvas>, and vdom.js's canReuse matches children by POSITION. A slot
+    // that came and went would shift .card-actions' index on every arrival and
+    // departure, and the screens that have one are the beam screens -- the
+    // ones with a canvas being repainted ten times a second underneath.
+    // `.card-controls:empty { display: none }` in styles.js is what stops the
+    // empty ones costing a gap, the same trick .card-actions:empty uses.
+    h('div', { class: 'card-controls' }, controls ?? []),
     h('div', { class: 'card-actions' }, cardActions),
   ])
 }
@@ -1347,12 +1371,6 @@ function beamSend(state, dispatch) {
   const eta = state.beam?.eta ?? 0
 
   return {
-    media: h('div', { id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', adopt: state.beamNode }),
-    body: [
-    h('h2', { tabindex: '-1' }, 'Show this to the other device'),
-    h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
-    state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
-
     // `adopt` and `key` are both load-bearing, not stylistic. The canvas is a
     // real DOM node web/beam.js's player repaints in place up to ten times a
     // second (see its header comment on why the QR is not described in
@@ -1365,10 +1383,42 @@ function beamSend(state, dispatch) {
     // holds no other reference to its canvas than the one this prop hands
     // back, so any path that let the wrapper be thrown away and recreated
     // would silently orphan the canvas the player is still painting to.
+    media: h('div', { id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', adopt: state.beamNode }),
+    body: [
+    h('h2', { tabindex: '-1' }, 'Show this to the other device'),
+    h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
+    state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
+
+    // The single most important instruction on the screen, and it is styled as
+    // one rather than as a status line. The first person to use this stopped
+    // showing the code as soon as the other device said "Accept", because in
+    // every other transfer UI -- including this app's own WebRTC path -- Accept
+    // means the bytes now move on their own. Here it means the opposite: the
+    // work has not started yet. That misreading is the default, so it is worth
+    // spending the most prominent element on the page to prevent.
+    //
+    // Last in the column rather than mid-way up it, which is where a typed
+    // copy of it used to sit: this is the sentence the sender has to still be
+    // acting on in four minutes' time, so it belongs against the action bar
+    // where the eye returns, not above the status line it outranks.
+    h('p', { class: 'callout warn' }, BEAM_KEEP_SHOWING),
+    ],
+
     // The speed control and the line reporting what that speed is producing,
     // grouped -- changing the select changes the number in the status below
-    // it, so they are one control and its readout rather than two rows.
-    h('div', { class: 'stack' }, [
+    // it, so they are one control and its readout rather than two rows. They
+    // move together for that reason: split across two regions, the cause would
+    // be beside the buttons and the effect several inches away in the prose.
+    //
+    // In `controls` rather than in `body`, which is where this sat until a
+    // phone was turned sideways. It is the only thing on the screen that is
+    // neither a warning nor a button, and it was spending 84px of a 194px
+    // column that had 316px of content to show -- while the action bar beside
+    // it held 165px of buttons in 422px of row. In the landscape branch it
+    // goes there instead; everywhere else it renders where it always did.
+    // The screen loses nothing either way: styles.js places it, view.js does
+    // not know which shape it is in, and there is no media query in this file.
+    controls: [
       h('div', { class: 'beam-controls' }, [
         h('label', { for: 'beam-fps' }, 'Speed'),
         h('select', {
@@ -1387,22 +1437,8 @@ function beamSend(state, dispatch) {
       // a number someone can plan around.
       h('p', { class: 'status', 'aria-live': 'polite' },
         `Shown in full ${loops} time${loops === 1 ? '' : 's'}, ${duration(eta)} per pass.`),
-    ]),
-
-    // The single most important instruction on the screen, and it is styled as
-    // one rather than as a status line. The first person to use this stopped
-    // showing the code as soon as the other device said "Accept", because in
-    // every other transfer UI -- including this app's own WebRTC path -- Accept
-    // means the bytes now move on their own. Here it means the opposite: the
-    // work has not started yet. That misreading is the default, so it is worth
-    // spending the most prominent element on the page to prevent.
-    //
-    // Last in the column rather than mid-way up it, which is where a typed
-    // copy of it used to sit: this is the sentence the sender has to still be
-    // acting on in four minutes' time, so it belongs against the action bar
-    // where the eye returns, not above the status line it outranks.
-    h('p', { class: 'callout warn' }, BEAM_KEEP_SHOWING),
     ],
+
     actions: [
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
     ],

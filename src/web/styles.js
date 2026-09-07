@@ -18,7 +18,7 @@
  * stay the e2e contract described in element.js; classes are free to be
  * whatever reads best, since nothing outside this component depends on them.
  */
-import { tokensCSS, BREAKPOINT_WIDE, BREAKPOINT_SHORT } from './tokens.js'
+import { tokensCSS, BREAKPOINT_WIDE, BREAKPOINT_SHORT, BREAKPOINT_FLAT } from './tokens.js'
 
 /**
  * Core `.sheet` (dialog) CSS rules, extracted from src/web/styles.js and
@@ -479,6 +479,33 @@ ${tokensCSS(':host')}
 /* An action bar with nothing in it draws a rule across the card for no
  * reason -- the choose screen has no cancel and no primary. */
 .card-actions:empty { display: none; }
+
+/*
+ * The controls slot: a screen's one control that is not a button.
+ *
+ * Only beam-send fills it (view.js's \`controls\`), and this rule is what makes
+ * it look no different from the .stack it used to be inside .card-copy --
+ * same direction, same gap, so the stacked layout is unchanged by the move.
+ * What the move buys is that it is now a child of .card, which is the only
+ * place the landscape branch further down can reposition it from.
+ *
+ * flex: none for .card-actions' reason: it is a control, not prose, and it
+ * must not be the thing that gives way while the body above it scrolls.
+ *
+ * :empty is not an optimisation. view.js renders this element on EVERY screen
+ * rather than only where there is something to put in it, because vdom.js's
+ * canReuse matches children by position and a slot that came and went would
+ * shift .card-actions' index -- next to a .card-body holding an adopted canvas
+ * that web/beam.js is repainting. Rendered-and-hidden is the same bargain the
+ * step rail already strikes, and this line is the hiding half of it.
+ */
+.card-controls {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.card-controls:empty { display: none; }
 
 /*
  * The rule this element never had.
@@ -1513,6 +1540,7 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
   .scan-panel { block-size: min(22rem, 100%); inline-size: auto; }
 }
 
+
 /*
  * The SAS tiles on a small phone, which is the one screen where trimming
  * padding was not enough.
@@ -1631,6 +1659,178 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
    */
   .card { padding: var(--sp-4); gap: var(--sp-3); }
   .card-actions { padding-block-start: var(--sp-3); gap: var(--sp-2); }
+}
+
+/*
+ * A phone on its side: the action bar stops spanning the card.
+ *
+ * The wide branch above puts the media beside the words, which is right, and
+ * leaves the action bar underneath both -- which on a laptop is right too and
+ * on a phone held sideways is the layout's last piece of waste. Measured at
+ * 800x360 with everything else on this page already applied: a 64px row plus
+ * a 12px gap, running the card's full 734px, holding two buttons 82px wide.
+ * Seventy-six pixels of the scarce axis for 165px of content on the axis
+ * there is plenty of.
+ *
+ * So the card becomes a grid here and the bar moves into the second column,
+ * under the copy it belongs to. The media column then spans both rows and
+ * takes the card's whole height: the scan panel and the QR went from 182px
+ * square to 258, which on a 360px-tall screen is the difference between a
+ * viewfinder you aim and a thumbnail you hunt for. The copy column gains the
+ * height too (182 -> 194), and the divider .card-actions already draws now
+ * separates the copy from its own buttons rather than cutting the card in
+ * half beneath a camera.
+ *
+ * .card-body is \`display: contents\` rather than a third grid item, because
+ * the two columns have to be siblings in ONE grid for the media to span the
+ * action row -- a nested grid can only ever be as tall as the body box. The
+ * div carries no semantics of its own, so removing its box removes nothing
+ * else. Its \`.has-media\` class is what makes this safe to key on: a screen
+ * with no media keeps its box and spans both columns, because a single copy
+ * column pinned to the right half of a landscape card with an empty left half
+ * is worse than the stacked layout it replaced.
+ *
+ * The rail is not a consideration here and that is worth stating, because it
+ * looks like it should be: it is \`position: absolute\` against the card, so it
+ * is not a grid item, does not occupy a row, and does not need one reserved.
+ *
+ * 18rem, not the 22rem the wide branch hands the media column. The box in it
+ * is capped by aspect-ratio on the SHORT axis at this shape -- 258px of
+ * height at 800x360 -- so every pixel of column past 258 was empty, and 22rem
+ * (352) left 94 of them beside a copy column that was scrolling. 18rem (288)
+ * still clears the box at every viewport in this band and hands the rest to
+ * the copy, which is what takes the second column from 358px wide to 422 and
+ * the action bar from two rows to one on the accept screen -- the one screen
+ * in the app where the two buttons mean opposite things and must be read
+ * together. Narrower than 18rem starts cropping the box itself.
+ *
+ * \`row-gap: 0\`, deliberately, and the spacing is not lost: .card-actions
+ * carries its own padding-block-start above its divider, so a row gap here
+ * would draw the line 12px away from what it separates. The column gap is the
+ * wide branch's --sp-5, unchanged.
+ */
+@media ${BREAKPOINT_FLAT} {
+  /*
+   * Three columns, not two, and the middle one is usually zero.
+   *
+   * It holds the controls slot -- beam-send's speed picker and its readout --
+   * BESIDE the buttons rather than above them, and that placement was measured
+   * rather than assumed. A third grid ROW was tried first and is worse by the
+   * arithmetic that decides this: side by side the bottom row is
+   * max(controls, buttons), stacked it is their sum. At 800x360 the controls
+   * wrap to 108px and the bar is 64, so beside costs 108 and above costs 172 --
+   * the copy column came out at 150px one way and 106 the other, against 194
+   * with no controls at all.
+   *
+   * \`auto\` because on the seven screens with no controls the element is
+   * \`display: none\` (.card-controls:empty), which takes it out of the grid and
+   * collapses the track to nothing -- those screens lay out exactly as they did
+   * before the slot existed. What is left over is one --sp-5 column gap
+   * spanning nothing, and it stays there deliberately: 24px on the axis this
+   * shape has 800 of is not worth a second grid definition, and the
+   * alternative -- switching the template on a class -- puts a layout decision
+   * back in view.js, which is the thing this slot exists to take out of it.
+   *
+   * The media track is a bare \`18rem\` and NOT \`minmax(0, 18rem)\`, which is the
+   * bug this arrangement introduced and then fixed. A minmax with a zero floor
+   * gives way to the auto track beside it, so the controls' max-content pulled
+   * the media column down to 186px while the box in it stayed 258 tall: the
+   * beam QR came out 186x258, which is the 352x306 failure the square
+   * assertion in check-layout.mjs was written for, on a third element. Pinned,
+   * the track cannot be the one that yields.
+   *
+   * 13rem on the button track for a reason worth a line, because it looks
+   * arbitrary and one pixel decided it: Cancel and Details are both ghosts and
+   * measure 82 and 83 with a --sp-3 gap, so 177px puts them on one row and
+   * 176 stacks them into a 108px column. A floor of 11rem is 176.
+   */
+  .card {
+    display: grid;
+    grid-template-columns: 18rem auto minmax(13rem, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: var(--sp-5);
+    row-gap: 0;
+  }
+
+  .card-body.has-media { display: contents; }
+  .card-media { grid-area: 1 / 1 / 3 / 2; }
+  .card-copy { grid-area: 1 / 2 / 2 / 4; }
+  .card-controls { grid-area: 2 / 2 / 3 / 3; }
+  .card-actions { grid-area: 2 / 3 / 3 / 4; }
+
+  /* A row here, a column everywhere else: wrapping, because the track it is
+   * in is about 190px at 800x360 and the label, the select and the "shown in
+   * full N times" line want nearer 400. It comes out two or three lines deep,
+   * which is the height this branch pays and the reason it is beside the
+   * buttons rather than above them -- see the arithmetic above.
+   *
+   * Baseline rather than centre, for .masthead's reason: these are pieces of
+   * type and a shared baseline is what makes them read as one object rather
+   * than as a control with a caption parked near it. No border of its own --
+   * the divider belongs to .card-actions and stays with the buttons, because
+   * this slot is not a second action bar and must not grow to look like one. */
+  .card-controls {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--sp-2) var(--sp-3);
+    padding-block-start: var(--sp-4);
+  }
+
+  /*
+   * Three buttons wrapped this bar onto two rows at 800x360 and took 59px out
+   * of the copy column beside it; two fit on one. "Take a photo" is the one to
+   * go: it is a second way to start a send, next to "Send a file" which is the
+   * first, and framing a photo is a thing done with the phone upright. It
+   * comes back the moment the phone is turned back -- this hides a duplicate
+   * route, never the only route to anything.
+   *
+   * A rule here rather than a branch in view.js's choose(), so the vnode shape
+   * stays identical across orientations -- the same discipline this component
+   * already holds for pointer. \`display: none\` and not visibility or opacity:
+   * it has to leave the tab order and the accessibility tree with the pixels,
+   * or a rotation leaves a control that can be focused and cannot be seen.
+   */
+  #btn-photo { display: none; }
+  /*
+   * The filename goes last on the beam screens, and the reason is what the
+   * first screenshot of this branch showed.
+   *
+   * beam-send is the one screen whose copy still overflows here, by 79px, and
+   * the part that fell below the fold was \`.callout.warn\` -- "keep this code
+   * on screen until the other device says it is done", which view.js calls the
+   * single most important instruction on the screen and spends its most
+   * prominent element on. A safety instruction being the one thing you have to
+   * scroll to find is the exact shape of the bug check-layout.mjs was written
+   * after (Accept, 99px below the fold), arriving by a different route.
+   *
+   * So in landscape the filename yields its place to it. Of everything in that
+   * column the filename is the only line that is purely informational -- the
+   * heading names the screen, both callouts protect the person reading them,
+   * and the file is one they chose seconds ago. It is still there, one short
+   * scroll down, and nothing is clipped above the scroll origin (\`safe center\`
+   * on the copy column, and the clippedAbove assertion holding the line).
+   *
+   * \`order\` rather than a different vnode order, because the reading order is
+   * right in portrait: the comment in view.js explains that the instruction
+   * belongs against the action bar where the eye returns, and in a stacked
+   * layout it does. This branch is the one where the eye returns to a bar in
+   * the next column instead.
+   *
+   * The CHILD combinator is doing real work: every other .filename in the app
+   * is nested inside a .stack, so this reaches the two beam screens and
+   * nothing else. Both want it -- on beam-receive the line it moves ahead of
+   * is the progress readout.
+   */
+  .card-copy > .filename { order: 1; }
+
+
+  /* No media: one column across all three tracks, and the bar back underneath
+   * it. The sibling combinator rather than a second class, because
+   * \`has-media\` already records the fact and a screen should not have to say
+   * it twice. */
+  .card-body:not(.has-media) { grid-area: 1 / 1 / 2 / 4; }
+  .card-body:not(.has-media) ~ .card-actions { grid-area: 2 / 1 / 3 / 4; }
 }
 
 /* Absent from the pre-restyle stylesheet entirely: every transition and the

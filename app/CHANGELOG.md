@@ -22,9 +22,15 @@ and a page that believes it was visible the entire time. It checks on a short ti
 instead. A shortcut arriving mid-transfer is still declined with a word about why,
 rather than being saved up and sprung on you when the transfer ends.
 
-**The app works in landscape.** Turning the phone sideways used to draw the scanner
-panel and the camera frame over the top of the buttons, and cut the heading and the
-encryption warning off the beam screen entirely.
+**The app works in landscape, and now uses it.** Turning the phone sideways used to
+draw the scanner panel and the camera frame over the top of the buttons, and cut the
+heading and the encryption warning off the beam screen entirely. That is fixed — and
+beyond fixed: the page title, "How it works" and the security disclosure share one
+line instead of three, the card puts the camera or the code down the left at full
+height with the words and buttons beside it, and beam's speed control sits next to
+Cancel. The viewfinder went from 128 pixels to 258 on a 360-pixel-tall screen.
+Nothing is hidden and nothing moved behind a tap. "Take a photo" is the one thing
+that steps out of the way while the phone is sideways, and it comes straight back.
 
 **Long-press the icon, or pull down the shade.** Two launcher shortcuts, "Scan a
 code" and "Send a file", and a Quick Settings tile that opens straight onto the

@@ -5,18 +5,33 @@ is the finer-grained record.
 
 ## Unreleased
 
-**A phone held sideways works.** Rotating the phone put the scanner panel and the
-camera frame on top of the buttons underneath them, and cost the beam screen its
-heading and its encryption warning. Two separate faults met there: a landscape phone
-is short without being wide, which was the one shape none of the layout's branches
-were written for, so the card laid out in a single column and the media block
-collapsed to nothing under boxes that refused to shrink; and the copy column was
-centred, which pushes anything that does not fit out of *both* ends — and the top end
-of a scrolling column cannot be scrolled back to. Landscape now uses the two-column
-layout it always should have, and a column with too much in it reads from the top
-with the rest a scroll away, so nothing is out of reach. The layout check gained both
-landscape sizes and an assertion for content pushed above its own scroll origin,
-which is the fault that had been invisible to it.
+**A phone held sideways is now its own layout, not a squeezed portrait one.**
+Rotating the phone used to put the scanner panel and the camera frame on top of the
+buttons underneath them, and cost the beam screen its heading and its encryption
+warning. Two faults met there: a landscape phone is short without being wide, which
+was the one shape none of the layout's branches were written for, so the card laid
+out in a single column and the media block collapsed to nothing under boxes that
+refused to shrink; and the copy column was centred, which pushes anything that does
+not fit out of *both* ends — and the top of a scrolling column cannot be scrolled
+back to.
+
+Fixing that made it legal. What it did not do is make it good: 39% of a 360px-tall
+screen was going on a page header, a footer and a full-width row of buttons, all
+stacked on the one axis there was no room on, while 800 horizontal pixels went
+spare. The content was laying out inside 111 pixels.
+
+So in landscape the page title, "How it works" and the security disclosure now sit
+on one line instead of three; the card puts the camera or the code down the left at
+full height, with the words and the buttons beside it; and beam's speed control
+moves down next to Cancel where the room is. Nothing is hidden and nothing moved
+behind a tap. The viewfinder went from 128 pixels to 258, and the room for words
+from 111 to 194 — every screen but one now fits with nothing to scroll at all, and
+that one shows its warning and its instruction before anything scrolls.
+
+The layout check gained both landscape sizes, an assertion for content pushed above
+its own scroll origin — the fault that had been invisible to it — and a per-viewport
+budget for the one screen that cannot fit, so the rest cannot quietly start
+overflowing behind it.
 
 **On a phone, qrdrop opens as a scanner.** The choose screen's biggest element used
 to be a second "Send a file" button — it took every spare pixel of the card to offer

@@ -584,7 +584,7 @@ footer summary:focus-visible {
  * be the wrong 68px to save, on the one screen where trust matters most.
  */
 @media (pointer: coarse) and (max-width: 30rem),
-       (pointer: coarse) and (max-height: 30rem),
+       (min-width: 48rem) and (max-height: 30rem),
        (max-width: 26rem) {
   .tagline { display: none; }
   .meta { display: none; }
@@ -596,4 +596,59 @@ footer summary:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .meta a, .meta svg, footer summary { transition-duration: 0s; }
   .meta a:hover { transform: none; }
+}
+
+/*
+ * A phone on its side: the page chrome stops being three stacked rows.
+ *
+ * The arm above already hides the tagline and the .meta links here, and that
+ * was not close to enough. Measured on the built tree at 800x360, before this
+ * rule: the header ran 61px (the masthead, then "How it works" on its own
+ * line beneath it), the footer 30px, and main's own padding and two row gaps
+ * another 48 -- 139px of 360, 39% of the screen, spent on chrome, leaving the
+ * card 221px out of which 32 is its padding and 64 its action bar. The
+ * component was laying out its content inside 111px.
+ *
+ * The axis those rows are stacked on is the only one this shape is short of.
+ * There are 800 horizontal pixels here and the masthead uses about 240 of
+ * them, so the two chips go BESIDE the wordmark instead of under it: one
+ * chrome row, and the footer's grid row disappears with it. That is ~72px
+ * handed straight to the card, which is the difference between a beam screen
+ * that scrolls three times its own height and one that mostly fits.
+ *
+ * Only the landscape arm, deliberately -- not the two portrait ones above.
+ * A 360px-wide phone has the opposite problem: the horizontal axis is the
+ * scarce one, and folding a footer up beside the wordmark there would wrap
+ * the masthead, which .masthead's own comment explains is the one thing it
+ * must not do.
+ *
+ * Nothing is hidden by this rule. The h1, the build stamp, "How it works"
+ * and the security disclosure are all still on the screen, still in the tab
+ * order, in the same reading order -- header content, then footer content,
+ * then the card. They have only stopped each claiming a row of a viewport
+ * that has three rows to give.
+ */
+@media (min-width: 48rem) and (max-height: 30rem) {
+  main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  /* Baseline, for the reason .masthead sits its stamp on one: these are three
+   * pieces of type on one line, and a shared baseline is what makes them read
+   * as a single masthead rather than as controls parked near a title. */
+  header {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: baseline;
+    gap: var(--sp-4);
+  }
+  /* The masthead gives way before the chip does. It is `space-between` inside
+   * a track it no longer owns, so without a basis of its own it would keep
+   * stretching and push the chip off the row. */
+  .masthead { flex: 0 1 auto; min-inline-size: 0; }
+
+  footer { grid-area: 1 / 2; }
+  qr-drop { grid-area: 2 / 1 / 3 / 3; }
 }

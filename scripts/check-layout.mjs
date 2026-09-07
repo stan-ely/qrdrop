@@ -129,8 +129,35 @@ const VIEWPORTS = [
    * top of the action bar. Measured on a device at 800x360 before it was
    * measured here.
    */
-  { name: 'phone-narrow-landscape', width: 800, height: 360, allowBodyScroll: true },
-  { name: 'phone-landscape', width: 844, height: 390, allowBodyScroll: true },
+  /*
+   * copyScroll is a BUDGET, not an exemption, and the difference is the whole
+   * value of the field. These two shipped as 'allowBodyScroll: true', which
+   * turned the copy-column assertion off here entirely -- so the landscape work
+   * that followed could have been regressed away without this file saying a
+   * word. The number is what beam-send actually measures after that work, in
+   * both engines and at both pointers, and nothing else on either viewport
+   * scrolls at all. Any OTHER screen appearing in this column is a real fault,
+   * and beam-send going over it is a real regression.
+   *
+   * Both numbers are Firefox's, which is 1px above Chromium's on the same
+   * fixture in both viewports -- the engines round the wrapped status line
+   * differently. Taking the larger is right for a budget: the smaller would
+   * pass one engine and fail the other on an unchanged tree, which is the one
+   * way to teach someone to stop believing this file.
+   *
+   * Why beam-send alone cannot reach zero: at 800x360 the card gives its copy
+   * column 150px and beam wants 228 for a heading, an encryption callout, a
+   * filename and the keep-it-on-screen instruction, none of which CLAUDE.md
+   * will shorten. That is a shortfall in AREA, so no rearrangement closes it --
+   * the two that were tried are recorded in styles.js's flat branch. The choice
+   * was scrolling the column or moving the encryption warning behind a tap in
+   * the info sheet, and scrolling wins: a safety notice below the fold is still
+   * on the screen, where one behind a disclosure is not. clippedAbove above is
+   * what keeps that honest -- everything stays REACHABLE, nothing is cut off
+   * the top, and the heading and the warning are both above the fold.
+   */
+  { name: 'phone-narrow-landscape', width: 800, height: 360, copyScroll: 79 },
+  { name: 'phone-landscape', width: 844, height: 390, copyScroll: 49 },
   { name: 'tablet', width: 834, height: 1112 },
   { name: 'laptop', width: 1440, height: 900 },
   // Wide and short, which is the case a design tuned on a phone forgets: a
@@ -395,27 +422,25 @@ for (const pointer of POINTERS) {
       problems.push(`${c} is above the copy column's scroll origin and cannot be reached`)
     }
     /*
-     * Overflow itself is fatal EXCEPT where the viewport says it cannot fit.
+     * Overflow itself is fatal, to within whatever the viewport budgets.
      *
      * The architecture's rule is that the body may scroll as a last resort and
      * the action bar never does (CLAUDE.md, "Web UI architecture"), and this
      * check has always been stricter than that -- rightly, because on every
-     * shape here until now "it does not fit" meant "something is wrong".
-     * A landscape phone is the first viewport where it means what it says:
-     * 800x360 leaves the copy column 111px after the page chrome, the card
-     * padding and an action bar that may not move, and beam wants 213 for a
-     * heading, a filename, a speed control and two callouts whose wording
-     * CLAUDE.md explicitly refuses to shorten. No arrangement of that fits.
+     * shape here until the landscape phones "it does not fit" meant "something
+     * is wrong". Those two carry a copyScroll budget instead, and the reasoning
+     * for the number is in the viewport list above, next to the number, where
+     * it can be read by whoever has to change it.
      *
-     * So the choice was between scrolling the column and moving the
-     * encryption warning behind a tap in the info sheet, and scrolling wins:
-     * a safety notice below the fold is still on the screen, where one behind
-     * a disclosure is not. The clippedAbove check above is what makes that
-     * trade honest -- it holds the line that everything stays REACHABLE, and
-     * it is the assertion that would have caught this bug.
+     * A budget rather than an exemption: an on/off flag would let the one
+     * screen that legitimately overflows hide every screen that does not.
      */
-    if (report.bodyOverflow > 1 && !vp.allowBodyScroll) {
-      problems.push(`card copy scrolls by ${report.bodyOverflow}px`)
+    const copyBudget = vp.copyScroll ?? 0
+    if (report.bodyOverflow > Math.max(1, copyBudget)) {
+      problems.push(
+        `card copy scrolls by ${report.bodyOverflow}px`
+        + (copyBudget ? ` (budget ${copyBudget}px for this viewport)` : ''),
+      )
     }
     for (const b of report.offscreen) problems.push(`button out of view: ${b}`)
     // One heading per visible screen -- see `headingCount` in the evaluate above.

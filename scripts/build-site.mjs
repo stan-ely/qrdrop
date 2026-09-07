@@ -32,7 +32,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { SIGNALING_URLS } from '../src/transport/room.js'
-import { tokensCSS, THEME_COLOR, BREAKPOINT_WIDE, BREAKPOINT_SHORT } from '../src/web/tokens.js'
+import { tokensCSS, THEME_COLOR, BREAKPOINT_WIDE, BREAKPOINT_SHORT, BREAKPOINT_FLAT } from '../src/web/tokens.js'
 import { sheetCSS, buttonCSS } from '../src/web/styles.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -682,6 +682,7 @@ async function main() {
   // Interpolate breakpoint values into media query strings so they match the
   // component's styles exactly (defined in src/web/tokens.js).
   siteCSS = siteCSS.replaceAll('(min-width: 48rem) and (max-height: 62rem)', BREAKPOINT_WIDE)
+  siteCSS = siteCSS.replaceAll('(min-width: 48rem) and (max-height: 30rem)', BREAKPOINT_FLAT)
   siteCSS = siteCSS.replaceAll('(max-height: 46rem)', BREAKPOINT_SHORT)
   const css = tokensCSS(':root') + sheetCSS('var(--col)') + buttonCSS() + siteCSS
 
