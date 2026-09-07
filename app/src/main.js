@@ -178,30 +178,77 @@ async function consumeLaunchAction() {
   }
 }
 
-/*
- * Twice, and both are needed.
+/**
+ * Takes both handoffs and offers them to the component, busy or not.
  *
- * A share to an app that was not running arrives before this script does, so
- * the call at load finds the handoff already written. A share to an app that
- * WAS running goes through MainActivity.onNewIntent while this page is alive
- * and unaware, and the only signal the web layer gets is the window coming
- * back to the foreground. Handling just the first case works exactly once per
- * cold start, which is the most misleading way this could fail: it looks
- * correct the first time anyone tries it.
+ * NOT gated on whether the component is idle, and that was tried the other
+ * way first. Gating the TAKE looks obviously right -- the take deletes, so
+ * why spend an intent the component is only going to decline? -- and it
+ * quietly replaces "declined, and said so" with "deferred": the file stays on
+ * disk and fires whenever the app next reaches the choose screen. Measured on
+ * a device, that is worse than it sounds. A transfer ends on the DONE screen,
+ * not the choose screen, so a tile tapped mid-transfer sits there until the
+ * person happens to start over, and then moves the app to the scanner they
+ * asked for minutes ago and have long since stopped expecting.
  *
- * take_shared_file deletes the handoff as it reads it, so the extra calls
- * this makes on every focus are a file stat that finds nothing.
- *
- * The launch action rides along on both calls for exactly the same reasons --
- * a shortcut can start a cold app or reach a running one, and only the window
- * coming back to the foreground tells the web layer about the second. The two
- * handoffs are separate files, so taking one never consumes the other; a
- * Rust test pins that, since it is the kind of thing that would only show up
- * as "sharing into a cold app sometimes does nothing".
+ * A tile pulled from inside another app means "scan now". If qrdrop cannot
+ * scan now, the honest answer is to say so while the person is still looking,
+ * which is what `startAction` and `sendFile` already do -- see element.js,
+ * where declining and toasting is a deliberate choice with its own reasoning.
+ * Honouring it later is not a kindness; it is an interruption with a delay
+ * on it.
  */
-consumeSharedFile()
-consumeLaunchAction()
-window.addEventListener('focus', () => {
+function consumeHandoffs() {
   consumeSharedFile()
   consumeLaunchAction()
-})
+}
+
+/*
+ * At load, on focus, and on a slow poll -- and the poll is the one that
+ * actually works on Android.
+ *
+ * A share or a shortcut reaching an app that was NOT running arrives before
+ * this script does, so the call at load finds the handoff already written.
+ * That path was never in doubt. The warm path is: MainActivity.onNewIntent
+ * stashes the file while this page is alive and unaware, and the web layer
+ * has to notice by itself.
+ *
+ * `window.focus` was the whole mechanism for that, and MEASURED ON A DEVICE
+ * (Realme RMX3868, Android 16, WebView 151) it never fires. Nor does `blur`,
+ * `pageshow`, or `visibilitychange` -- `document.visibilityState` reads
+ * "visible" and `document.hasFocus()` reads true for the entire time the app
+ * sits behind the launcher. This webview is simply never told it was
+ * backgrounded. The symptom was a tile or a shortcut leaving
+ * qrdrop-launch.json on disk, unconsumed, with the app foreground on top of
+ * it; verified with no debugger attached, since an attached debugger can
+ * itself keep a page from being backgrounded, and from both the launcher and
+ * another app.
+ *
+ * So the poll is not belt-and-braces, it is the load-bearing half. The
+ * listener stays because it costs nothing and does fire on desktop, where
+ * single-instance forwarding raises the existing window.
+ *
+ * WHY POLLING IS CHEAP ENOUGH. Each pass is two `take_*` commands that stat a
+ * file and find nothing -- plain std::fs on the app's own cache directory
+ * (src-tauri/src/share.rs), with no JSON to parse and no bytes to move on the
+ * empty path, which is every pass but the one that matters. It does keep
+ * running during a transfer, which an earlier draft avoided by gating on the
+ * choose screen; that gate is gone for the behavioural reason above, and the
+ * cost it was buying back is two stats a second beside a data channel moving
+ * 16 KiB frames and a sink writing at ~40 MB/s.
+ *
+ * The alternative was a signal pushed from the native side -- a Tauri resume
+ * event, or MainActivity calling evaluateJavascript after it stashes. The
+ * first could not be confirmed to fire on Android at all; the second couples
+ * Kotlin to a JS function name and adds a fourth hand-edit inside gen/, which
+ * is the second source of truth this whole chain was shaped to avoid.
+ *
+ * The two handoffs are separate files, so taking one never consumes the
+ * other; a Rust test pins that, since it is the kind of thing that would only
+ * show up as "sharing into a cold app sometimes does nothing".
+ */
+const HANDOFF_POLL_MS = 1500
+
+consumeHandoffs()
+window.addEventListener('focus', consumeHandoffs)
+setInterval(consumeHandoffs, HANDOFF_POLL_MS)

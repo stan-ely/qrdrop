@@ -13,6 +13,19 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**Shortcuts and the Quick Settings tile now work while the app is already open.**
+They worked from cold and did nothing at all warm — the intent was recorded and then
+sat there, unread, with the app in front of you. The web layer had been waiting for
+the window to regain focus, and this webview never reports that it lost it: measured
+on a device, a background-and-return produces no focus event, no visibility change,
+and a page that believes it was visible the entire time. It checks on a short timer
+instead. A shortcut arriving mid-transfer is still declined with a word about why,
+rather than being saved up and sprung on you when the transfer ends.
+
+**The app works in landscape.** Turning the phone sideways used to draw the scanner
+panel and the camera frame over the top of the buttons, and cut the heading and the
+encryption warning off the beam screen entirely.
+
 **Long-press the icon, or pull down the shade.** Two launcher shortcuts, "Scan a
 code" and "Send a file", and a Quick Settings tile that opens straight onto the
 scanner. Receiving starts with a code already on someone else's screen and a person

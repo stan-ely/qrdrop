@@ -90,6 +90,39 @@ both engines, because the wide-layout branch pinned `inline-size: 100%` while
 pins the code into a corner of a box that is not square, so the difference pays out as a
 white band beside the QR.
 
+**A landscape phone is short WITHOUT being wide, and that shape had no viewport
+here at all.** `BREAKPOINT_SHORT` is `max-height: 46rem` so a rotated 360x800
+matches it, while `BREAKPOINT_WIDE` wanted `min-width: 60rem` and 800px never
+reached it — so the card took the short branch in *one* column, a combination
+`laptop-short` (short and wide) and the portrait phones (narrow and tall) between
+them never produced. `.card-media` is `flex: 1 100 auto` and collapsed to a block
+size of 0 while `.scan-panel` and `.scanner-frame` held an 8rem floor, so both
+painted 128px tall inside a 0px parent, over the action bar. Found by rotating a
+phone. `BREAKPOINT_WIDE` is now `48rem` — the narrowest width that can hold the
+22rem media column beside the 20rem copy column the wide branch already sets —
+and `phone-narrow-landscape` / `phone-landscape` are in the viewport list.
+
+**The square assertion could not have caught that, and the reason generalises.**
+A collapsed box is 0x0, and 0x0 passes `width === height`. What catches it is the
+newer **clipped-above** assertion: any child sitting above the copy column's own
+scroll origin is fatal on every viewport, because `scrollTop` is already 0 there
+and nothing can scroll back up to it. That is what `justify-content: center` does
+to a column it cannot fit — it pushes the overflow out *both* ends — and on
+800x360 it had taken the `<h2>` and beam's encryption callout off the top while
+every existing assertion saw an ordinary overflow. The rule is `safe center` now.
+Zero-box children are exempt, for the same reason the offscreen check exempts a
+closed dialog: an element that is not laid out reports 0x0 at the origin, which is
+above every scroll container on the page.
+
+**Landscape phones are the one shape allowed to scroll the copy column**
+(`allowBodyScroll` on those two viewports). 800x360 leaves it 111px after the page
+chrome, the card padding and an action bar that may not move, and beam wants 213
+for a heading, a filename, a speed control and two callouts CLAUDE.md already
+refuses to shorten — no arrangement fits. The choice was scrolling the column or
+moving the encryption warning into the info sheet, and scrolling wins: a safety
+notice below the fold is still on the screen, where one behind a disclosure is not.
+The clipped-above check is what keeps that honest — everything stays *reachable*.
+
 Run it after anything that touches `src/web/view.js`, `src/web/styles.js`, or the
 site's page chrome, **and run it against both deployed trees** — they differ in the
 build stamp, and the page chrome is where this layout has no vertical slack.
@@ -716,9 +749,31 @@ special-case. It is a **take**: leaving the handoff in place re-offers the same
 file on every resume. Kotlin handles `onNewIntent` as well as `onCreate`, because
 the activity is `launchMode="singleTask"` and a share into a *running* app never
 calls `onCreate` — handling only the latter works exactly once per cold start,
-which is the most misleading way this could fail. And JS calls
-`take_shared_file` on load **and** on window focus, for the same reason from the
-other side.
+which is the most misleading way this could fail. And JS takes both handoffs on
+load, on `window.focus`, **and on a 1.5s poll** — where the poll is the half that
+actually works on Android.
+
+**`window.focus` never fires in this webview, and neither does anything else that
+would announce a resume.** Measured on the device: across a background→foreground
+cycle there is no `focus`, no `blur`, no `pageshow`, and no `visibilitychange` —
+`document.visibilityState` reads `visible` and `document.hasFocus()` reads true
+for the whole time the app sits behind the launcher. The webview is simply never
+told. So the warm path — a share or a tile reaching an app that is already
+running — silently did nothing: the handoff sat in the cache directory, unconsumed,
+with the app foreground on top of it. Confirmed with no debugger attached, because
+an attached debugger can itself keep a page from being backgrounded, and from both
+the launcher and another app. The `focus` listener stays because it costs nothing
+and does fire on desktop; the poll is what makes the feature work.
+
+**The poll deliberately does *not* skip a busy component**, and gating it on the
+choose screen was tried and reverted. Gating the *take* looks obviously right —
+the take deletes, so why spend an intent that will only be declined? — and it
+quietly converts "declined, and said so" into "deferred": the file waits and fires
+whenever the app next reaches the choose screen. A transfer ends on **done**, not
+choose, so a tile tapped mid-transfer would ambush the person with a scanner they
+asked for minutes earlier and have stopped expecting. A tile pulled from inside
+another app means *scan now*; if qrdrop cannot, the honest answer is the toast
+`startAction` already shows while they are still looking.
 
 The file is read through the **asset protocol** (`convertFileSrc` + `fetch`),
 never `plugin-fs`. A Blob in a Chromium webview is disk-backed, so the `File`
