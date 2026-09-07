@@ -98,6 +98,11 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {string | null} message
  * @property {string} digest
  * @property {boolean} dragging
+ * @property {boolean} coarse whether the primary pointer is a finger, from
+ *   element.js's `(pointer: coarse)` subscription. It selects COPY ONLY, and
+ *   must never select a different tree shape: see the dropzone in choose().
+ *   Layout differences belong in styles.js's own `pointer: coarse` block,
+ *   where CSS can make them without this file knowing.
  * @property {'code' | 'digest' | 'code-failed' | 'digest-failed' | null} copied
  * @property {boolean} pairing
  * @property {boolean} busy true between the receiver's Accept click and the
@@ -533,6 +538,47 @@ function screen(name, state, dispatch) {
 }
 
 /**
+ * The choose screen's media block: the drag target on a mouse, and on every
+ * pointer the largest tap target in the app.
+ *
+ * A <button>, at EVERY pointer, and that is load-bearing twice over.
+ *
+ * Once for the vdom: vdom.js's canReuse matches by tag and position, so a box
+ * that were a <div> on a laptop and a <button> on a phone would be rebuilt the
+ * moment someone unplugged a mouse. Nothing adopted lives on this screen
+ * today, so the rebuild would be survivable here -- but the rule that a
+ * pointer change may alter copy and never shape is worth keeping unbroken
+ * where it is free, because the screens where it is not free (the QR, the
+ * scanner, the beam canvas) give no warning when it is broken.
+ *
+ * Once for the mouse, which is the part that was not the plan: this box has
+ * looked like a target since it was written and has never been clickable. A
+ * person who did not want to drag had to read past it to the action bar. So
+ * the touch fix is the desktop fix -- the same element, doing on click what
+ * it already did on drop.
+ *
+ * The copy is the only thing the pointer changes. "Drop a file here" is an
+ * instruction that cannot be followed on a phone, which is exactly the
+ * complaint this work started from: the app's tallest, most eye-catching
+ * element was telling a person to perform a gesture their device does not
+ * have, directly above the two buttons that do work.
+ *
+ * @param {State} state
+ * @param {Dispatch} dispatch
+ */
+function dropzone(state, dispatch) {
+  return h('button', {
+    type: 'button',
+    class: `dropzone${state.dragging ? ' is-dragging' : ''}`,
+    onclick: () => dispatch('send:pick'),
+  }, [
+    h('p', {}, state.coarse
+      ? 'Tap to choose a file.'
+      : 'Drop a file here, or click to choose one.'),
+  ])
+}
+
+/**
  * @param {State} state
  * @param {Dispatch} dispatch
  */
@@ -548,9 +594,7 @@ function choose(state, dispatch) {
   // titled for a situation ("no network") that is not the one they are in.
   if (!state.rtcAvailable) {
     return {
-      media: h('div', { class: `dropzone${state.dragging ? ' is-dragging' : ''}` }, [
-        h('p', {}, 'Drop a file here, or choose one below.'),
-      ]),
+      media: dropzone(state, dispatch),
       body: [
         h('h2', { tabindex: '-1' }, 'Send or receive a file'),
         h('p', { class: 'note' },
@@ -567,15 +611,17 @@ function choose(state, dispatch) {
   }
 
   return {
-    // The dropzone keeps the prose and the drag target; the two buttons that
-    // used to sit inside it moved to the action bar. They read no differently
-    // -- they are still the first thing the eye lands on, because the bar is
-    // where every screen's primary action now is -- and the box goes back to
-    // being what its name says it is. As this screen's one visual block it
-    // also takes the left column on a wide, short window.
-    media: h('div', { class: `dropzone${state.dragging ? ' is-dragging' : ''}` }, [
-      h('p', {}, 'Drop a file here, or choose one below.'),
-    ]),
+    // The two buttons that used to sit inside the dropzone moved to the
+    // action bar, where every screen's primary action now is, and they read no
+    // differently for it. As this screen's one visual block the box takes the
+    // left column on a wide, short window.
+    //
+    // It is now a third way to reach the same picker rather than only a drag
+    // target -- see dropzone() above. Duplicating "Send a file" that way is
+    // deliberate: on a phone the bar is where the eye ends up, and the box is
+    // where the thumb lands, and neither audience should have to find the
+    // other one's control.
+    media: dropzone(state, dispatch),
     body: [
       h('h2', { tabindex: '-1' }, 'Send or receive a file'),
 

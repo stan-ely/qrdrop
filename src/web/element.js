@@ -64,6 +64,23 @@ const CAPABILITY_NOTE =
   + 'memory until complete. Expect trouble much above a gigabyte.'
 
 /**
+ * Whether the primary pointer is a finger.
+ *
+ * The query, not a width breakpoint and not a touch-events sniff. Width is
+ * the wrong question -- a tablet is as wide as a laptop and still cannot drag
+ * a file onto a page -- and `'ontouchstart' in window` is true on a laptop
+ * with a touchscreen, whose owner is using the trackpad. `pointer: coarse`
+ * asks the one thing that matters here: is the thing doing the pointing
+ * precise enough to aim at a drag target.
+ *
+ * Guarded, because matchMedia is absent in a non-DOM test environment and
+ * this module is imported by tests that never build an element. Absent means
+ * "assume a mouse", which is the behaviour this component already had.
+ */
+const coarsePointer = () =>
+  typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+
+/**
  * One CSSStyleSheet for every instance on the page. Null on browsers without
  * constructable stylesheets, which fall back to a <style> child; see the
  * constructor.
@@ -178,6 +195,16 @@ export class QRDropElement extends HTMLElement {
      * @type {(() => void) | null}
      */
     this._onHashChange = null
+
+    /**
+     * The `(pointer: coarse)` subscription, kept for the same reason the two
+     * above are: disconnectedCallback has to take it off, or a detached
+     * component stays subscribed to a query that outlives the page it was on.
+     * Held as the pair rather than the handler alone because removal needs
+     * both, and the MediaQueryList must be the same object addListener saw.
+     * @type {{ query: MediaQueryList, handler: () => void } | null}
+     */
+    this._onPointerChange = null
 
     /**
      * Whether the exchange has reached a terminal state.
@@ -368,6 +395,21 @@ export class QRDropElement extends HTMLElement {
       // any) has already happened by the time this element is constructed.
       rtcAvailable: typeof RTCPeerConnection !== 'undefined',
       capabilityNote: getPlatform().canStreamToDisk() ? null : CAPABILITY_NOTE,
+      // NOT read once, unlike the two capabilities above, and that is the
+      // whole reason it is state rather than a module constant: a tablet
+      // gains a coarse pointer the moment its keyboard folio comes off and
+      // loses one when a mouse is plugged in. connectedCallback subscribes to
+      // the query's `change` event, and scripts/check-layout.mjs sets this
+      // field directly to walk the touch variant of every screen in an engine
+      // whose emulation cannot fake a pointer.
+      //
+      // It may only ever change COPY and CSS, never the SHAPE of the tree
+      // view.js returns -- see the dropzone comment there. A pointer change
+      // that added or removed a vnode would shift the index of the adopted
+      // <svg>, <video> and <canvas>, which vdom.js's canReuse keeps alive by
+      // position: the camera would go dark and the beam canvas would orphan
+      // because someone plugged in a mouse.
+      coarse: coarsePointer(),
       sas: '',
       sasWords: /** @type {string[]} */ ([]),
       offer: /** @type {{ name: string, size: number } | null} */ (null),
@@ -494,6 +536,32 @@ export class QRDropElement extends HTMLElement {
     // for the same detached-component reason.
     this._onHashChange = () => this._consumeHashCode()
     window.addEventListener('hashchange', this._onHashChange)
+
+    // The pointer can change under a running page -- a folio keyboard comes
+    // off a tablet, a mouse is plugged into a phone dock -- and the choose
+    // screen's copy tells the user which gesture to make. Read once at
+    // construction and never again, that copy would go on saying "drop a
+    // file here" to someone now holding a tablet, which is the exact bug this
+    // work exists to fix, reintroduced one layer down.
+    //
+    // NOTE WHAT IS NOT GUARDED ON THIS. The drag and paste listeners above
+    // stay bound at every pointer, and deliberately. A touch device fires no
+    // drag events at all, so unbinding them buys nothing; paste is worse than
+    // nothing, because a tablet with a bluetooth keyboard and no mouse
+    // reports `pointer: coarse` and can press Ctrl-V perfectly well. Guarding
+    // the listener on !coarse would take a working gesture away from the one
+    // device most likely to use it. What was ever wrong on touch is the copy
+    // promising a gesture that does not exist, and copy is view.js's job.
+    if (typeof matchMedia === 'function') {
+      const query = matchMedia('(pointer: coarse)')
+      const handler = () => this._setState({ coarse: query.matches })
+      // addEventListener rather than the deprecated addListener, with no
+      // fallback: every engine that has constructable stylesheets (see SHEET
+      // above, which this component already requires for its own styling)
+      // has had the modern form for years.
+      query.addEventListener('change', handler)
+      this._onPointerChange = { query, handler }
+    }
   }
 
   /**
@@ -534,6 +602,12 @@ export class QRDropElement extends HTMLElement {
 
     if (this._onHashChange) window.removeEventListener('hashchange', this._onHashChange)
     this._onHashChange = null
+
+    if (this._onPointerChange) {
+      const { query, handler } = this._onPointerChange
+      query.removeEventListener('change', handler)
+    }
+    this._onPointerChange = null
 
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
@@ -1071,13 +1145,31 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
+   * ONE picker, parameterised -- not a second function for the camera.
+   *
+   * `capture` and `accept` are attributes on the same <input type="file">
+   * that the plain "choose a file" path already uses; a dedicated
+   * _pickPhoto() would be this function again with two attributes set, and
+   * the half that matters (the once-only change listener, the _fail
+   * plumbing, the fact that .click() must stay synchronous inside the user
+   * activation) would then exist twice.
+   *
    * @param {(file: File) => Promise<void>} [start] Which send this picker
    *   feeds. Defaults to the network path, so the existing 'send:pick' intent
    *   reads exactly as it did.
+   * @param {{ accept?: string, capture?: string }} [opts] Narrows what the
+   *   system picker offers. Omitted, the picker offers everything, which is
+   *   what every existing call wants.
    */
-  _pickFile(start) {
+  _pickFile(start, opts) {
     const begin = start ?? (/** @param {File} f */ f => this._startSend(f))
     const input = Object.assign(document.createElement('input'), { type: 'file' })
+    // setAttribute rather than a property: `capture` has no IDL attribute on
+    // HTMLInputElement in every engine that honours it, so assigning
+    // input.capture sets an expando the browser never reads -- a camera
+    // button that silently opens the ordinary file browser instead.
+    if (opts?.accept) input.setAttribute('accept', opts.accept)
+    if (opts?.capture) input.setAttribute('capture', opts.capture)
     input.addEventListener('change', () => {
       const file = input.files?.[0]
       if (file) begin(file).catch(e => this._fail(e))

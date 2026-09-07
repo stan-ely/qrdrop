@@ -53,6 +53,41 @@ export function sheetCSS(maxInlineSize = '30rem') {
 .sheet[open] { display: flex; }
 
 .sheet::backdrop { background: rgb(0 0 0 / 0.45); }
+
+/*
+ * On a finger, a sheet comes up from the bottom.
+ *
+ * Not decoration. A centred dialog on a phone puts its buttons in the middle
+ * of the screen, which is the part of a large phone a thumb reaches last --
+ * and this component's sheets are where the beam Accept lives, so "hard to
+ * reach" is the same failure the body/actions split exists to prevent, moved
+ * into the one box that is exempt from the card's layout rules.
+ *
+ * margin-block-start: auto is what does it. The base rule sets margin: auto,
+ * which centres on both axes; overriding only the block-start edge pushes it
+ * down while leaving the inline centring alone, so this stays one declaration
+ * rather than a repositioning that has to restate the horizontal case.
+ *
+ * The bottom corners go square because the sheet now meets the edge of the
+ * screen, and a rounded corner against a screen edge reads as a rendering
+ * fault rather than as a radius. env(safe-area-inset-bottom) keeps the last
+ * control clear of the home indicator: a dialog is outside the flow that
+ * site/styles.css's main padding covers, so it has to say this itself.
+ *
+ * pointer: coarse, not a width query, for the reason the block at the foot of
+ * this file gives: a tablet is as wide as a laptop and still has a thumb.
+ */
+@media (pointer: coarse) {
+  .sheet {
+    max-inline-size: 100%;
+    max-block-size: 85dvh;
+    margin-block-start: auto;
+    margin-block-end: 0;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    border-block-end: none;
+    padding-block-end: calc(var(--sp-5) + env(safe-area-inset-bottom));
+  }
+}
 `
 }
 
@@ -756,8 +791,25 @@ ${buttonCSS()}
   color: var(--bad);
 }
 
-/* ---- drop zone: drag-and-drop / paste entry point for a send ---- */
+/* ---- drop zone: the choose screen's file-picking target ----
+ *
+ * A <button> now, at every pointer (see view.js's dropzone()), so the first
+ * block of this rule is undoing the UA button styling that arrived with the
+ * tag. The all shorthand is not used, and appearance: none alone is not
+ * enough: Safari keeps the UA font on a button whatever the appearance is set
+ * to, so a box that inherited the card's type on every other engine rendered
+ * in 13px system-ui there. Naming font, colour and text-align explicitly is
+ * what makes this look identical to the div it replaced.
+ *
+ * inline-size: 100% because a button shrink-wraps its content and a div did
+ * not -- without it the dashed box became a pill around one sentence, which
+ * is the single most visible way this change could have gone wrong.
+ */
 .dropzone {
+  appearance: none;
+  inline-size: 100%;
+  font: inherit;
+  cursor: pointer;
   border: 2px dashed var(--line-strong);
   border-radius: var(--r-md);
   /* --sp-6, down from --sp-7, and the UA margins inside it are gone (see the
@@ -772,6 +824,12 @@ ${buttonCSS()}
   color: var(--muted);
   transition: border-color var(--dur-base), background var(--dur-base);
 }
+
+/* Same treatment for the pointer that can hover and the one that cannot: on
+ * touch there is no hover, and :active is what a finger produces. */
+.dropzone:hover { border-color: var(--muted); color: var(--text); }
+.dropzone:active { background: var(--surface-raised); }
+.dropzone:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 .dropzone.is-dragging {
   border-color: var(--accent);
@@ -1355,22 +1413,71 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
 }
 
 /*
- * A touch device cannot use the dropzone, at all.
+ * The touch branch.
  *
- * .dropzone is the choose screen's media block and its --sp-7 padding makes it
- * the tallest thing on the app's landing screen -- and it is the drag-and-drop
- * target and the paste hint, neither of which exists on a phone. There is no
- * drag, and element.js's Ctrl-V listener has no keyboard to hear. So on the
- * device with the least room it was spending the most space on the one
- * affordance guaranteed not to work there, above the two buttons that are the
- * actual entry points.
+ * pointer: coarse rather than a width breakpoint, because every rule in here
+ * answers a question about the input device and not about how many pixels it
+ * has -- a tablet is as wide as a laptop and still has a thumb, and a laptop
+ * with a touchscreen is still being driven by a trackpad.
  *
- * pointer: coarse rather than a width breakpoint, because this is a question
- * about the input device and not about how many pixels it has -- a tablet is
- * wide and still cannot drag a file onto a page.
+ * This block used to be one line, shrinking .dropzone's padding on the
+ * reasoning that a touch device cannot drag and so should not spend the
+ * landing screen's tallest element on a drag target. Half of that survives:
+ * the box is still the tallest thing on the choose screen, and it still gets
+ * less padding here. The other half turned out to be the wrong fix for the
+ * right complaint. The box is not the problem -- it is the only element on
+ * that screen big enough to hit without looking -- so it is now a button that
+ * picks a file (view.js's dropzone()) rather than a smaller version of
+ * something inert.
  */
 @media (pointer: coarse) {
-  .dropzone { padding: var(--sp-4); }
+  /*
+   * The box fills the slot it is given, instead of floating in the middle of
+   * it.
+   *
+   * .card-media is a column flex container with justify-content: center, so
+   * every child is centred on the BLOCK axis and takes only its content
+   * height. That is right for the QR and the viewfinder, which have a fixed
+   * shape and must keep it -- check-layout.mjs asserts the QR is square. It
+   * was wrong for the dropzone, and the pictures are what showed it: at
+   * 834x1112 the choose screen was a small dashed box adrift in ~600px of
+   * white, and at 390x844 about 380px of it.
+   *
+   * The comment on .card-media's flex-shrink already claims this space gets
+   * "filled with the screen's own subject", so "the dropzone becomes a target
+   * worth aiming at". That was the intent and it never actually happened --
+   * growing the media SLOT does nothing if the thing inside it is centred at
+   * its natural height. This is the missing half, and it only matters on a
+   * pointer that has to hit the thing: a mouse can click a 60px box exactly,
+   * a thumb aims for whatever is biggest.
+   *
+   * Scoped to .dropzone, not to .card-media's children, precisely so the QR
+   * and the camera keep the shape they are asserted to have.
+   */
+  .dropzone { padding: var(--sp-5) var(--sp-4); flex: 1 1 auto; }
+
+  /*
+   * 2.75rem is 44px, which is the floor every platform guideline names, and a
+   * floor is not a target. It is the size below which a control is reported
+   * as a defect, reached by a thumb on a still phone held in two hands. 3rem
+   * is 48px, which is Android's own recommendation and what the same thumb
+   * wants while walking. The cost is 4px per button on a screen that has at
+   * most three of them; the card's padding below gives back three times that.
+   */
+  .btn, .card-actions .btn { min-block-size: 3rem; }
+
+  /*
+   * The card gives up --sp-6 (32px) of padding for --sp-4 (16px), so 32px of
+   * vertical room comes back to the content -- which on the verify screen is
+   * most of what the "if these differ" warning needed at 390x844, and on
+   * beam-receive is most of what put Accept below the fold.
+   *
+   * The border and radius stay. A card that loses its edge on a phone stops
+   * reading as a single object holding one step of a flow, and the step rail
+   * is drawn against this element's top edge.
+   */
+  .card { padding: var(--sp-4); gap: var(--sp-3); }
+  .card-actions { padding-block-start: var(--sp-3); gap: var(--sp-2); }
 }
 
 /* Absent from the pre-restyle stylesheet entirely: every transition and the
