@@ -712,6 +712,17 @@ to that one cache subdirectory in `tauri.conf.template.json`, and `ASSET_ORIGINS
 in `build-site.mjs` is what puts it in the app's CSP and, deliberately, not the
 website's.
 
+Verified as far as a machine here can take it: `mise run app:android:build --
+--debug` compiles the Kotlin and packages an APK whose *packaged* manifest
+carries the SEND/SEND_MULTIPLE filter with `*/*` beside the untouched
+MAIN/LAUNCHER and deep-link filters (`aapt2 dump xmltree <apk> --file
+AndroidManifest.xml`), the Rust cross-compiles for all four Android targets,
+and `share.rs`'s tests pass on the host. What that cannot show is the share
+actually appearing in the sheet and landing, and whether Tauri's
+`app_cache_dir()` resolves to the same directory as Kotlin's `cacheDir` — the
+one assumption the chain rests on. Check the served behaviour, not the built
+tree, remains the rule.
+
 **Comments in `AndroidManifest.xml` must not contain a double hyphen.** XML
 forbids it inside a comment and this repository's prose style uses it as an em
 dash. Gradle reports the result only as `Error parsing AndroidManifest.xml`.
