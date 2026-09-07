@@ -523,9 +523,10 @@ losing them:**
    resets to white every time.
 3. The `ACTION_SEND` / `ACTION_SEND_MULTIPLE` intent-filter in that same
    `AndroidManifest.xml`, plus its handler in `app/src/main/java/com/stan_ely/
-   qrdrop/MainActivity.kt` — the share sheet. See "**The Android share sheet**"
-   below for the whole chain; the filter without the handler puts qrdrop in the
-   share sheet and has it do nothing, which is worse than not being there.
+   qrdrop/MainActivity.kt` — the share sheet.
+   See "**The Android share sheet**" below for the whole chain; the filter
+   without the handler puts qrdrop in the share sheet and has it do nothing,
+   which is worse than not being there.
 
 **`tauri.conf.json` has no field that can express any of them**, so
 the delta lives only in `gen/` — where an ignored tree means every re-init silently
@@ -722,6 +723,41 @@ actually appearing in the sheet and landing, and whether Tauri's
 `app_cache_dir()` resolves to the same directory as Kotlin's `cacheDir` — the
 one assumption the chain rests on. Check the served behaviour, not the built
 tree, remains the rule.
+
+**Dark mode on this app is not under our control, and the investigation is
+recorded here so it is not repeated.** The app theme is DayNight, so on a phone
+in night mode the page comes out dark — but not by our doing. `tokens.js` has a
+contrast-checked dark palette and it does not run: `prefers-color-scheme` reports
+**light** while the render is dark, because what darkens it is a post-render
+pixel transform, invisible to CSS and JS. The accent ships as `rgb(224,134,98)`
+rather than `#a8462d`.
+
+Two fixes were tried on a Realme RMX3868 (Android 16, WebView 151, targetSdk 36)
+and only one of them belongs in the tree:
+
+- `color-scheme: light dark` — **kept**, see below.
+- `WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, true)` in a
+  `MainActivity.onWebViewCreate` override — **reverted**. The call is reached and
+  the feature is supported (WebView 105+), and `prefers-color-scheme` stays light
+  regardless. WebView is evidently not the thing darkening: this device runs
+  ColorOS's own force-dark compat engine (`customize_darkmode_opcompat=1`, tuned
+  by `DarkMode_BackgroundMaxL` / `DarkMode_ForegroundMinL`), which sits outside
+  WebView's `color-scheme` negotiation entirely. A permanent fourth hand-edit in
+  `gen/` that measurably does nothing is worse than none — the same argument
+  `tokens.js` makes about a token nothing consumes — so it is gone.
+
+**The CSS half is kept and is not speculative.** `color-scheme: light dark` is
+emitted by `tokensCSS` and stated in a `<meta>` for the first paint. Chrome for
+Android under force-dark honours it with no app-side opt-in, so the deployed site
+gets the real palette from that change alone, and it also fixes the UA-drawn form
+controls and scrollbars everywhere. What it cannot do is beat a vendor
+compositor.
+
+The visible improvement on the app came from somewhere else entirely: `.dropzone`
+was carrying a UA `buttonface` background (`appearance: none` does not clear it),
+which the force-dark transform turned into a grey slab filling most of the
+landing screen. That is fixed, so the darkened render is now merely not-our-
+palette rather than broken.
 
 **Comments in `AndroidManifest.xml` must not contain a double hyphen.** XML
 forbids it inside a comment and this repository's prose style uses it as an em
