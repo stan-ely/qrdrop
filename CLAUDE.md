@@ -66,6 +66,21 @@ npm run build && node scripts/check-layout.mjs           # or: mise run check:la
 node scripts/check-layout.mjs site/dist-edge   # the edge tree, built as above; or: mise run check:layout site/dist-edge
 ```
 
+It crosses every viewport with a **pointer axis** (`hasTouch`), because without
+one it had a blind spot exactly the shape of the bug it exists to catch: it
+measured the phone viewport with a mouse, so the `@media (pointer: coarse)` rules
+were never once laid out by it. That both engines report `pointer: coarse` from
+`hasTouch` alone was measured, not assumed — `isMobile` is Chromium-only and
+imposes a mobile meta viewport, which would have the two engines measuring
+different pages.
+
+`--shots` writes a picture of **every** combination rather than only the
+failures, into the same gitignored directory. Use it after anything that changes
+the touch layout: the assertions here can only see a layout that is *illegal*,
+never one that is legal and wrong, and that distinction has already cost this
+project once (the sr-only build-stamp label). Delete the pictures afterwards;
+there are 8 × 4 × 2 × 2 of them.
+
 It runs **both** engines, and the second one earns its place: everything this script used
 to assert was an overflow or a position, and engines rarely disagree about those. They
 disagree about *sizing*, which is why it also asserts that `.qr` / `.beam-stage` is
@@ -420,6 +435,51 @@ copy — the same reasoning already governs `buildCSP`, which derives `connect-s
 CSS lives in `src/web/styles.js` as a JS string, not a `.css` file, because
 `exports["./web"]` serves raw ESM and consumers have no build step.
 
+## The deployed site's own moving parts
+
+**`site/sw.js` exists for exactly one reason and caches nothing.** Web Share
+Target delivers files as a multipart POST, GitHub Pages cannot answer a POST, and
+a service worker's `fetch` handler is the only thing that can — there is no
+version of that feature without one. It has **no precache, no fetch fallback and
+no cache-first anything**: every request but the share POST goes to the network
+untouched, by simply not calling `respondWith`. Do not "finish" it by adding
+offline support. This site is two builds out of one artifact, and a stale cached
+bundle is a person running code from a release they cannot name on a page whose
+build stamp says otherwise — for an app about authenticating the other end, two
+devices silently running different framings is the one failure nobody could debug
+from a screenshot. A transfer needs a network by definition anyway.
+
+Registration is **relative** (`register('sw.js', { scope: './' })`), so stable at
+`/` and edge at `/edge/` each get their own worker for their own tree. An
+absolute `/sw.js` would have the stable worker claim `/edge/` too, and whichever
+build was visited last would answer the other's shares.
+
+**`manifest.webmanifest` is generated per channel**, for the reason CNAME and
+og:url are. `start_url`, `scope` and `share_target.action` are all relative so
+one generator is correct for both trees, and `id` is deliberately omitted so it
+defaults to `start_url` and the two channels are distinct installs by
+construction. `share_target` must stay `method: POST` with
+`multipart/form-data`: the GET form carries a title, a text and a URL and cannot
+carry files at all.
+
+**The three share-handoff constants live in `site/share-keys.js`.** They are the
+whole contract between a service worker and a page that never call each other,
+and a disagreement would fail as "the app opened and nothing happened", only on
+the path that runs when someone shares a file. The marker that says a file is
+waiting is a **query parameter**, which is correct here and would never be for a
+pairing code — it carries no secret, and the bytes never touch the URL.
+
+**`viewport-fit=cover` and the `env(safe-area-inset-*)` padding are one
+change.** Without the meta attribute every inset resolves to 0, which is how the
+safe-area handling in `site/styles.css` sat there doing nothing from the day it
+was written. Any rule that sets `main`'s `padding` shorthand must carry the four
+env() terms, or it silently drops them — the narrow breakpoint did exactly that.
+
+**`THEME_COLOR` lives in `src/web/tokens.js`** and feeds `--bg`, the
+`theme-color` meta and the manifest. Drift there paints the wrong colour on the
+splash and in the task switcher, before any stylesheet has loaded — visible only
+on a cold start, which is the hardest moment to be looking.
+
 ## The Tauri app (`app/`)
 
 The desktop/mobile shell. It has its own `package.json` and `src-tauri/`, and its
@@ -451,9 +511,23 @@ drift this exists to prevent. `Cargo.lock` is committed because this is a binary
 **`app/src-tauri/gen/` is committed source, except `gen/schemas/`.** It used to be
 ignored whole, and the reasoning was sound while it held nothing but generated
 schemas: `tauri android init` regenerates it in one command, so a committed copy
-would be a second source of truth. Android broke that. The build needs
-`<uses-permission android:name="android.permission.CAMERA"/>` in `gen/android`'s
-`AndroidManifest.xml` and **`tauri.conf.json` has no field that can express it**, so
+would be a second source of truth. Android broke that. **There are three hand
+edits in that tree and this list is the only thing standing between a re-init and
+losing them:**
+
+1. `<uses-permission android:name="android.permission.CAMERA"/>` in
+   `app/src/main/AndroidManifest.xml` — without it the scanner and beam cannot
+   open the camera.
+2. The adaptive-icon background colour in
+   `app/src/main/res/values/ic_launcher_background.xml`, which `tauri icon`
+   resets to white every time.
+3. The `ACTION_SEND` / `ACTION_SEND_MULTIPLE` intent-filter in that same
+   `AndroidManifest.xml`, plus its handler in `app/src/main/java/com/stan_ely/
+   qrdrop/MainActivity.kt` — the share sheet. See "**The Android share sheet**"
+   below for the whole chain; the filter without the handler puts qrdrop in the
+   share sheet and has it do nothing, which is worse than not being there.
+
+**`tauri.conf.json` has no field that can express any of them**, so
 the delta lives only in `gen/` — where an ignored tree means every re-init silently
 drops the camera permission and the scanner stops working with nothing to diff. A
 script re-applying the delta after each init was the alternative; it relocates the
@@ -602,6 +676,55 @@ the domain root on the next npm release.
 
 The lesson under all three: **check the served URL, not the built tree.** Everything here
 was generated correctly in `site/dist/` the whole time.
+
+**The Android share sheet is four files and a handoff on disk, and the handoff
+is the design, not a shortcut.** An `ACTION_SEND` intent arrives as a
+`content://` URI that only Android's ContentResolver can open — there is no path
+for Rust to read and no way to pass the descriptor across without a full Tauri
+Android plugin (a Kotlin class, a Rust binding, a Gradle entry and a permissions
+manifest) for what is, in the end, one filename and one number. So
+`MainActivity.kt` copies the stream into the app's cache directory and writes
+`qrdrop-share.json` beside it; `src-tauri/src/share.rs`'s `take_shared_file`
+**reads and deletes** that file; `app/src/main.js` turns it into a `File` and
+calls the component's `sendFile`.
+
+Four things there are load-bearing and none are obvious. The Rust side is plain
+`std::fs` on the app's own cache directory and is registered on **every** target,
+not gated behind `#[cfg(target_os = "android")]` — that is what lets it compile
+and unit-test on a desktop host where no share sheet exists, and a command that
+existed on one platform only would be a command whose absence JS has to
+special-case. It is a **take**: leaving the handoff in place re-offers the same
+file on every resume. Kotlin handles `onNewIntent` as well as `onCreate`, because
+the activity is `launchMode="singleTask"` and a share into a *running* app never
+calls `onCreate` — handling only the latter works exactly once per cold start,
+which is the most misleading way this could fail. And JS calls
+`take_shared_file` on load **and** on window focus, for the same reason from the
+other side.
+
+The file is read through the **asset protocol** (`convertFileSrc` + `fetch`),
+never `plugin-fs`. A Blob in a Chromium webview is disk-backed, so the `File`
+built from the response slices lazily and `src/web/source.js`'s 2 MiB blocks and
+read-ahead work on it unchanged. `plugin-fs`'s `readFile` would pull the whole
+file across IPC into JS memory at the ~2 MB/s that path measures — eight minutes
+and a gigabyte of heap for a 1 GB share, before the first frame goes out. Same
+reasoning `tauri-sink.js` records for the write side. The asset scope is narrowed
+to that one cache subdirectory in `tauri.conf.template.json`, and `ASSET_ORIGINS`
+in `build-site.mjs` is what puts it in the app's CSP and, deliberately, not the
+website's.
+
+**Comments in `AndroidManifest.xml` must not contain a double hyphen.** XML
+forbids it inside a comment and this repository's prose style uses it as an em
+dash. Gradle reports the result only as `Error parsing AndroidManifest.xml`.
+
+**`element.js`'s `sendFile()` is the one public way to hand the component a
+file from outside it**, and it has two callers that are not a person clicking:
+the deployed site receiving an OS share (`site/sw.js` → `site/main.js`) and the
+Tauri shell receiving an Android intent. It is guarded to the choose screen
+exactly as drop, paste and `_consumeHashCode` are — a share can arrive at an app
+that is already open and busy — and it returns whether it was accepted so a
+caller can tell "sent" from "ignored". It goes through the same `_startSend`
+everything else does, so the SAS is still confirmed before any manifest leaves.
+Do not add a second external entry that reaches past it into `_startSend`.
 
 **The platform seam must stay a seam.** `src/web/element.js` reads
 `getPlatform().createSink` from `src/web/platform.js` rather than importing

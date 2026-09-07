@@ -52,10 +52,28 @@ test('the website policy does not carry Tauri IPC origins', () => {
   assert.doesNotMatch(csp, /ipc\.localhost/)
 })
 
-test('ipc: true adds both IPC forms, ahead of the signalling origins', () => {
+test('ipc: true adds the Tauri runtime origins, ahead of the signalling ones', () => {
   const csp = buildCSP(['wss://a.example'], { ipc: true })
   const connect = csp.split('; ').find(d => d.startsWith('connect-src '))
-  assert.equal(connect, `connect-src 'self' ipc: http://ipc.localhost wss://a.example`)
+  // Both IPC forms and all three asset-protocol forms, because the scheme
+  // differs per platform and one config is built for all of them. The asset
+  // entries are what let app/src/main.js read a file another app shared into
+  // it -- see ASSET_ORIGINS in scripts/build-site.mjs.
+  assert.equal(
+    connect,
+    `connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://asset.localhost wss://a.example`,
+  )
+})
+
+test('the website carries no Tauri runtime origins at all', () => {
+  // The half that matters more, and the reason this is a parameter rather
+  // than an unconditional entry: the deployed site has no Tauri runtime, so
+  // an ipc: or asset: entry there would be an unjustified allowance in a
+  // policy whose whole argument is that every entry is justified.
+  const connect = buildCSP(['wss://a.example']).split('; ').find(d => d.startsWith('connect-src '))
+  for (const origin of ['ipc:', 'ipc.localhost', 'asset:', 'asset.localhost']) {
+    assert.ok(!connect.includes(origin), `website connect-src should not name ${origin}`)
+  }
 })
 
 // The regression this exists for: without the IPC origin in connect-src, Tauri

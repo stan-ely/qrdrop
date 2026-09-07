@@ -26,7 +26,13 @@ crate-type = ["staticlib", "cdylib", "lib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.5", features = [] }
+# protocol-asset backs tauri.conf.json's assetProtocol, which is how
+# app/src/main.js reads a file another app shared into it: convertFileSrc +
+# fetch gives a disk-backed Blob, so src/web/source.js's block reads work on
+# it unchanged, where plugin-fs would pull the whole file across IPC at
+# ~2 MB/s. The feature and the config field are checked against each other by
+# tauri's build script, which is what caught their being out of step here.
+tauri = { version = "2.11.5", features = ["protocol-asset"] }
 # The native sink: plugin-dialog's save() picks the destination, and this
 # crate's own sink_* commands (src/sink.rs) move the bytes -- NOT plugin-fs,
 # whose write() is bandwidth-bound at ~2 MB/s on WebView2 (app/CAPABILITIES.md

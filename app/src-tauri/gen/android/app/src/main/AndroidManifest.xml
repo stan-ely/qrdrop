@@ -48,6 +48,40 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!--
+              THE SHARE SHEET. This is the third hand edit inside gen/, after
+              the CAMERA permission above and the adaptive icon background in
+              res/values/ic_launcher_background.xml. CLAUDE.md lists all
+              three, and that list is the only thing standing between a
+              `tauri android init` and losing them with nothing to diff.
+
+              There is no tauri.conf.json field that emits an ACTION_SEND
+              filter, which is the same reason the CAMERA permission is a hand
+              edit: the delta can only live here.
+
+              mimeType */* because qrdrop sends any file, and narrowing it to
+              image/* would take the app out of the share sheet for exactly
+              the documents it is best at moving.
+
+              SEND_MULTIPLE is declared even though only one file is taken.
+              qrdrop moves one file at a time, and the alternative was to
+              leave it out. But an app that vanishes from the share sheet
+              the moment a second photo is selected reads as broken, where
+              taking the first and naming it on the send screen says plainly
+              what happened. MainActivity.kt's firstStream does that.
+
+              The receiving end is MainActivity.stashSharedFile, then
+              src/share.rs, then app/src/main.js. Adding this filter without
+              that chain would put qrdrop in the share sheet and have it do
+              nothing, which is worse than not being there at all.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
             <intent-filter android:autoVerify="true" >
                 <action android:name="android.intent.action.VIEW" />

@@ -218,6 +218,24 @@ async function readBuildMeta() {
 const IPC_ORIGINS = ['ipc:', 'http://ipc.localhost']
 
 /**
+ * Tauri's asset protocol, as connect-src entries, and listed for the same
+ * platform reason IPC_ORIGINS is: the scheme differs per target and one
+ * config is built for all of them.
+ *
+ * The app fetches exactly one kind of thing over this: a file another app
+ * shared into it, which MainActivity.kt has already copied into the app's own
+ * cache directory (see app/src-tauri/src/share.rs). Reading it through the
+ * asset protocol rather than through plugin-fs is what makes it a real File
+ * in the webview, so src/web/source.js's block reads and read-ahead work on
+ * it unchanged and the whole file never has to be held in JS memory.
+ *
+ * The scope is narrowed to that cache directory in tauri.conf.template.json.
+ * This list is only what CSP has to permit; it is not itself an authorisation
+ * to read anything.
+ */
+const ASSET_ORIGINS = ['asset:', 'http://asset.localhost', 'https://asset.localhost']
+
+/**
  * The Content-Security-Policy, as a single generated string.
  *
  * connect-src is built from SIGNALING_URLS -- every URL src/transport/room.js
@@ -288,12 +306,15 @@ const IPC_ORIGINS = ['ipc:', 'http://ipc.localhost']
  * entry is justified. Hence a parameter rather than an unconditional entry.
  *
  * @param {readonly string[]} signalingUrls
- * @param {{ ipc?: boolean }} [options]
+ * @param {{ ipc?: boolean }} [options] `ipc` adds the Tauri runtime's own
+ *   origins: the IPC endpoints and the asset protocol the shared-file path
+ *   reads through. One flag for both because they arrive together -- a build
+ *   with a Tauri runtime has both, and a build without has neither.
  * @returns {string}
  */
 export function buildCSP(signalingUrls, { ipc = false } = {}) {
   const origins = [...new Set(signalingUrls.map(u => new URL(u).origin))]
-  const connect = [`'self'`, ...(ipc ? IPC_ORIGINS : []), ...origins]
+  const connect = [`'self'`, ...(ipc ? [...IPC_ORIGINS, ...ASSET_ORIGINS] : []), ...origins]
   const directives = [
     `default-src 'self'`,
     `script-src 'self'`,

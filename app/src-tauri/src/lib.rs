@@ -1,3 +1,4 @@
+mod share;
 mod sink;
 
 use tauri::Manager;
@@ -46,6 +47,13 @@ pub fn run() {
             sink::sink_write,
             sink::sink_close,
             sink::sink_abort,
+            // The Android share sheet's pickup end. Registered on every
+            // target, not gated on #[cfg(target_os = "android")]: it is
+            // std::fs on the app's own cache directory, it returns Ok(None)
+            // everywhere nothing has been shared, and a command that exists
+            // only on one platform is a command whose absence the JS side has
+            // to special-case. See src/share.rs.
+            share::take_shared_file,
         ])
         .setup(|app| {
             // Desktop dev has no installer to have registered the `qrdrop`

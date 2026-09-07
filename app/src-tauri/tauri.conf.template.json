@@ -15,7 +15,11 @@
       }
     ],
     "security": {
-      "csp": "__CSP__"
+      "csp": "__CSP__",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPCACHE/shared/*"]
+      }
     }
   },
   "bundle": {

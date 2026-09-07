@@ -88,3 +88,75 @@ import('@tauri-apps/plugin-deep-link')
   .catch(error => {
     console.warn('qrdrop: deep-link plugin unavailable', String(error))
   })
+
+/**
+ * The Android share sheet's last leg.
+ *
+ * MainActivity.kt copied the shared stream into the app's cache directory and
+ * wrote a handoff beside it; src-tauri/src/share.rs reads and deletes that
+ * handoff. This turns what comes back into a File and hands it to the
+ * component through its one public entry.
+ *
+ * WHY THE ASSET PROTOCOL AND NOT plugin-fs. convertFileSrc + fetch gives back
+ * a Response the webview can turn into a Blob, and a Blob in a Chromium
+ * webview is backed by disk once it is any size at all -- so the File built
+ * from it slices lazily, and src/web/source.js's 2 MiB block reads and
+ * read-ahead work on it completely unchanged. plugin-fs's readFile would
+ * bring the entire file across the IPC boundary into JS memory first, at the
+ * ~2 MB/s app/CAPABILITIES.md measured for that path: a 1 GB share would be
+ * eight minutes of waiting and a gigabyte of heap before the first frame went
+ * out. It is the same reasoning tauri-sink.js records for the write side.
+ *
+ * The asset scope is narrowed to that one cache subdirectory in
+ * tauri.conf.template.json, and the CSP entries are ASSET_ORIGINS in
+ * scripts/build-site.mjs.
+ */
+async function consumeSharedFile() {
+  try {
+    const { invoke, convertFileSrc } = await import('@tauri-apps/api/core')
+
+    // Ok(None) on every ordinary launch: the app was opened from its icon and
+    // nothing was shared in. Not an error and not worth a log line.
+    const shared = await invoke('take_shared_file')
+    if (!shared) return
+
+    const response = await fetch(convertFileSrc(shared.path))
+    if (!response.ok) throw new Error(`asset protocol returned ${response.status}`)
+
+    // The name from the content provider, which is what the person saw in the
+    // app they shared from. It reaches the UI through the vdom like every
+    // other filename, and is never used to build a path on either side.
+    const file = new File([await response.blob()], shared.name, {
+      type: response.headers.get('content-type') || 'application/octet-stream',
+    })
+
+    // Declines rather than clobbers if a transfer is already running -- see
+    // element.js's sendFile. Android can hand a share to an app that is
+    // already open and busy, and on that path the person did not necessarily
+    // mean to interrupt anything.
+    el?.sendFile(file)
+  } catch (error) {
+    // Same posture as the deep-link plugin above: a share that cannot be
+    // picked up leaves the app on the choose screen, where the person can
+    // pick the file by hand. Warned rather than silent, because unlike the
+    // Kotlin side this runs where a developer can see a console.
+    console.warn('qrdrop: no shared file taken', String(error))
+  }
+}
+
+/*
+ * Twice, and both are needed.
+ *
+ * A share to an app that was not running arrives before this script does, so
+ * the call at load finds the handoff already written. A share to an app that
+ * WAS running goes through MainActivity.onNewIntent while this page is alive
+ * and unaware, and the only signal the web layer gets is the window coming
+ * back to the foreground. Handling just the first case works exactly once per
+ * cold start, which is the most misleading way this could fail: it looks
+ * correct the first time anyone tries it.
+ *
+ * take_shared_file deletes the handoff as it reads it, so the extra calls
+ * this makes on every focus are a file stat that finds nothing.
+ */
+consumeSharedFile()
+window.addEventListener('focus', () => { consumeSharedFile() })
