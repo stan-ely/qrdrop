@@ -245,7 +245,7 @@ test('every manifest icon is a file the build actually emits', () => {
     assert.equal(icon.purpose, 'any maskable')
   }
   // 192 and 512 are the two Chrome checks for installability.
-  const sizes = manifest.icons.map(i => i.sizes)
+  const sizes = manifest.icons.map((/** @type {{ sizes: string }} */ i) => i.sizes)
   assert.ok(sizes.includes('192x192'))
   assert.ok(sizes.includes('512x512'))
 })

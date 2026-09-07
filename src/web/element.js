@@ -622,6 +622,9 @@ export class QRDropElement extends HTMLElement {
   _dispatch(intent, payload) {
     switch (intent) {
       case 'send:pick': return this._pickFile()
+      // Same picker, told to open the camera. See _pickFile for why this is a
+      // parameter rather than a second function.
+      case 'send:photo': return this._pickFile(undefined, { accept: 'image/*', capture: 'environment' })
       case 'receive:scan': return void this._beginScan().catch(e => this._fail(e))
       case 'beam:pick': return this._pickFile(file => this._startBeamSend(file))
       case 'beam:scan': return void this._startBeamReceive()

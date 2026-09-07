@@ -632,9 +632,44 @@ function choose(state, dispatch) {
     actions: [
       h('button', { id: 'btn-send', class: 'btn primary', onclick: () => dispatch('send:pick') },
         'Send a file'),
+
+      /*
+       * Coarse only, and this is the one place in this file where the pointer
+       * decides whether a control EXISTS rather than what it says.
+       *
+       * That is allowed here and nowhere else: the choose screen has no
+       * adopted node, so a pointer change rebuilding this subtree costs
+       * nothing but a re-render. Do not copy the pattern onto send, receive
+       * or either beam screen, where the QR, the viewfinder and the canvas
+       * are kept alive by their position in the tree.
+       *
+       * It is here because a camera is not a file browser. On a phone the
+       * thing a person most often wants to send is the photo in front of
+       * them, and reaching it through "choose a file" is two dialogs and a
+       * folder tree. capture=environment opens the rear camera directly.
+       *
+       * WORTH KNOWING BEFORE MOVING IT: on Android the plain picker already
+       * offers Camera in its system chooser, so this button saves a tap there
+       * rather than enabling anything new. It earns its place on iOS, where
+       * the Files picker offers no such thing, and on any Android launcher
+       * whose chooser has been replaced by a file manager that does not.
+       *
+       * IT SITS DIRECTLY AFTER "Send a file", not at the end of the bar, and
+       * that is a layout decision as much as an editorial one. Both are ways
+       * of starting a send and they read as a pair; parked after "Receive a
+       * file" it read as a third, unrelated thing. It also costs a row --
+       * .card-actions wraps greedily and .btn's 12rem basis means two
+       * full-width buttons cannot share a line on a 390px phone, so a ghost
+       * button beside the primary fills a gap that was there anyway, while
+       * the same button at the end pushed "No network?" onto a third row.
+       */
+      state.coarse
+        ? h('button', { id: 'btn-photo', class: 'btn ghost', onclick: () => dispatch('send:photo') },
+          'Take a photo')
+        : null,
       h('button', { id: 'btn-receive', class: 'btn', onclick: () => dispatch('receive:scan') },
         'Receive a file'),
-    ],
+    ].filter(Boolean),
 
     // Beam is not an equal option, and now nothing on the screen implies it is:
     // it has no button here at all, only the frame's generic details button
