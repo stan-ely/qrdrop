@@ -52,7 +52,33 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 // pushed a button off the bottom at 1280x620" is precisely the class of thing
 // this file exists to catch. A check that only ever saw one of the two trees
 // would be checking the half that did not change.
-const DIST = path.resolve(ROOT, process.argv[2] ?? path.join('site', 'dist'))
+const args = process.argv.slice(2)
+
+/*
+ * --shots writes a picture of EVERY combination, not only the failing ones.
+ *
+ *   node scripts/check-layout.mjs --shots
+ *   node scripts/check-layout.mjs --shots site/dist-edge
+ *
+ * The assertions in this file can only see a layout that is illegal. They
+ * cannot see one that is legal and wrong, and CLAUDE.md records what that
+ * costs: a build stamp shipped with its link label clipped to sr-only, which
+ * overflowed nothing and read on a phone as a bare shield glyph parked beside
+ * the byline. No check here would ever have said a word about it.
+ *
+ * So this flag is the deliberate second half of the same job -- 8 screens x 4
+ * viewports x 2 pointers x 2 engines is far too many pictures to keep, which
+ * is why they go to the same gitignored directory the failures do and are not
+ * committed. Run it, look at the phone.touch column, delete them.
+ *
+ * It is a flag rather than a separate script because everything it needs --
+ * the server, the fixtures, the qrcode route, the settled-frame wait -- is
+ * already standing up here. make-screenshots.mjs is NOT the place for it: that
+ * file produces the README's three pictures and only those, and CLAUDE.md has
+ * a paragraph about what happened the last time it claimed a wider remit.
+ */
+const SHOTS = args.includes('--shots')
+const DIST = path.resolve(ROOT, args.find(a => !a.startsWith('--')) ?? path.join('site', 'dist'))
 const OUT = path.join(ROOT, 'docs', 'screenshots', 'layout')
 
 const QRCODE = path.join(ROOT, 'node_modules', 'qrcode-generator', 'dist', 'qrcode.js')
@@ -76,6 +102,35 @@ const VIEWPORTS = [
   // is the shape that made the width-only media query the page used to have
   // report success while Accept sat off the bottom of the screen.
   { name: 'laptop-short', width: 1280, height: 620 },
+]
+
+/*
+ * The pointer axis, crossed with every viewport above.
+ *
+ * Without it this script had a blind spot exactly the shape of the bug it was
+ * written to catch. It measured the phone viewport with a MOUSE, so the
+ * @media (pointer: coarse) rules in src/web/styles.js -- the tighter card
+ * padding, the 3rem button floor, the bottom sheet -- were never once laid
+ * out by it, and neither was the branch in view.js that decides whether the
+ * choose screen offers a gesture the device has. A 390x844 window on a laptop
+ * is not a phone, and the whole point of this file is that the difference
+ * shows up in pixels.
+ *
+ * hasTouch alone, not hasTouch + isMobile. Measured against both engines
+ * before writing this: each reports `pointer: coarse` from hasTouch on its
+ * own, so isMobile adds a Chromium-only option (it also imposes a mobile meta
+ * viewport, which would make the two engines measure different pages) for a
+ * result already in hand.
+ *
+ * Both engines carry this axis, which was not a foregone conclusion and is
+ * why it was measured rather than assumed. If a future Playwright drops touch
+ * emulation from one of them, do not quietly narrow this to one engine: the
+ * reason two are here at all is that they disagree about SIZING, and the
+ * coarse block is nothing but sizing.
+ */
+const POINTERS = [
+  { name: 'mouse', hasTouch: false },
+  { name: 'touch', hasTouch: true },
 ]
 
 await rm(OUT, { recursive: true, force: true })
@@ -121,8 +176,10 @@ for (const engine of BROWSERS) {
   console.log(`\n${engine.name}`)
 
 for (const vp of VIEWPORTS) {
+for (const pointer of POINTERS) {
   const context = await browser.newContext({
     viewport: { width: vp.width, height: vp.height },
+    hasTouch: pointer.hasTouch,
   })
   const page = await context.newPage()
   await page.goto(server.url)
@@ -248,7 +305,7 @@ for (const vp of VIEWPORTS) {
       }
     })
 
-    const id = `${fixture.name}.${vp.name}.${engine.name}`
+    const id = `${fixture.name}.${vp.name}.${pointer.name}.${engine.name}`
     const problems = []
     if (report.pageOverflow > 1) problems.push(`page scrolls by ${report.pageOverflow}px`)
     // Same 1px subpixel tolerance as the offscreen check below, for the same
@@ -268,6 +325,7 @@ for (const vp of VIEWPORTS) {
     if (report.sheetFocusProblem) problems.push(report.sheetFocusProblem)
 
     if (problems.length === 0) {
+      if (SHOTS) await page.screenshot({ path: path.join(OUT, `${id}.png`) })
       console.log(`  ok    ${id}`)
       continue
     }
@@ -283,6 +341,7 @@ for (const vp of VIEWPORTS) {
   }
 
   await context.close()
+}
 }
 
   await browser.close()
