@@ -18,6 +18,14 @@
   bar, and the padding without this attribute is what we already had.
 -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<!--
+  Stated here as well as in the stylesheet (src/web/tokens.js emits the CSS
+  property) because the browser decides whether to algorithmically darken this
+  page before the stylesheet has arrived, and a first paint it decided to
+  invert is a flash of a theme this page does not use.
+-->
+<meta name="color-scheme" content="light dark">
 <title>qrdrop</title>
 <meta name="description" content="Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.">
 

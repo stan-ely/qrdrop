@@ -53,6 +53,30 @@ export const THEME_COLOR = '#f7f6f3'
 export function tokensCSS(selector) {
   return `
 ${selector} {
+  /*
+   * WITHOUT THIS THE DARK PALETTE AT THE FOOT OF THIS FILE NEVER RUNS ON
+   * ANDROID, and that was as true of the deployed site as of the app.
+   *
+   * A page that never declares color-scheme is treated as light-only.
+   * Android WebView, and Chrome with force-dark on, respond by
+   * ALGORITHMICALLY DARKENING it -- a post-render pixel transform that
+   * inverts the light theme and is invisible to CSS and JS, which go on
+   * reporting prefers-color-scheme: light. So the careful dark values below
+   * sat unused while a machine-generated approximation shipped in their
+   * place, and nothing measurable said so: on a device in night mode the
+   * computed styles read light, the screenshot came back dark, and the two
+   * disagreed only because one of them was a photograph.
+   *
+   * Declaring both schemes says the page handles this itself. The browser
+   * stops transforming, prefers-color-scheme starts telling the truth, and
+   * the block at the end of this file is what paints.
+   *
+   * It belongs here rather than only in the site stylesheet because the
+   * component ships standalone and has to take its own scheme with it -- and
+   * because this also decides how the UA draws form controls and scrollbars.
+   */
+  color-scheme: light dark;
+
   /* ---- space: 4/8/12/16/24/32/48px, as rem ---- */
   --sp-1: 0.25rem;
   --sp-2: 0.5rem;

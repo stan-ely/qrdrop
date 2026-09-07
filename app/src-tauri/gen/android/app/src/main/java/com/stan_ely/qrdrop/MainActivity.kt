@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.activity.enableEdgeToEdge
 import org.json.JSONObject
 import java.io.File
@@ -34,6 +35,11 @@ import java.io.File
  * app that appears in the share sheet and then does nothing.
  */
 class MainActivity : TauriActivity() {
+  private companion object {
+    /** One tag for the whole chain, so it is an `adb logcat -s qrdrop` away. */
+    const val TAG = "qrdrop"
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
@@ -60,18 +66,29 @@ class MainActivity : TauriActivity() {
   /**
    * Copies a shared stream into the cache directory and writes the handoff.
    *
-   * Deliberately silent on every failure. A share that cannot be read is
-   * indistinguishable, from here, from an app being opened normally, and the
-   * web layer already handles "no handoff" as the ordinary case: the person
-   * gets the choose screen and picks a file. Throwing would crash the app on
-   * the way in from another app's share sheet, which is the worst possible
-   * place to surface a copy error.
+   * Never throws, and always logs. Those are two separate decisions, and the
+   * first version of this conflated them: it caught everything and said
+   * nothing, on the reasoning that a share which cannot be read must not
+   * crash the app on the way in from another app's share sheet. That half is
+   * right -- the web layer treats "no handoff" as the ordinary case and the
+   * person lands on the choose screen.
+   *
+   * Swallowing the REASON as well was the mistake, and it cost the first
+   * device run: the shared/ directory appeared, nothing landed in it, and
+   * logcat had not one word to say about why. A silent catch turns the single
+   * most likely failure on this path -- a URI the app was never granted
+   * permission to read -- into something indistinguishable from the feature
+   * not being wired up at all. Log.w crashes nobody.
    */
   private fun stashSharedFile(intent: Intent?) {
     if (intent == null) return
     if (intent.action != Intent.ACTION_SEND && intent.action != Intent.ACTION_SEND_MULTIPLE) return
 
-    val uri = firstStream(intent) ?: return
+    val uri = firstStream(intent)
+    if (uri == null) {
+      Log.w(TAG, "share intent carried no EXTRA_STREAM: " + intent.action)
+      return
+    }
 
     try {
       val name = displayName(uri)
@@ -89,9 +106,14 @@ class MainActivity : TauriActivity() {
       val safe = File(name).name.ifBlank { "shared-file" }
       val payload = File(dir, safe)
 
-      val copied = contentResolver.openInputStream(uri)?.use { input ->
+      val stream = contentResolver.openInputStream(uri)
+      if (stream == null) {
+        Log.w(TAG, "openInputStream returned null for " + uri)
+        return
+      }
+      val copied = stream.use { input ->
         payload.outputStream().use { output -> input.copyTo(output) }
-      } ?: return
+      }
 
       // The name in the handoff is the ORIGINAL, not the sanitised filename:
       // the sanitising exists to keep this process from writing somewhere it
@@ -107,8 +129,12 @@ class MainActivity : TauriActivity() {
       // Named by src/share.rs's HANDOFF constant. The two must agree and
       // nothing can check that, so both sides say so.
       File(cacheDir, "qrdrop-share.json").writeText(handoff.toString())
-    } catch (_: Exception) {
-      // See the note above: silence is the correct posture here.
+      Log.i(TAG, "stashed " + copied + " bytes as \"" + name + "\"")
+    } catch (e: Exception) {
+      // A SecurityException here is the sending app not having granted read
+      // access to the URI, which is both the likeliest failure on this path
+      // and the one that looks exactly like nothing having happened.
+      Log.w(TAG, "could not stash the shared file", e)
     }
   }
 

@@ -560,9 +560,20 @@ footer summary:focus-visible {
  * since Level 2. The second arm is the landscape phone, 844x390, which is
  * short by this file's other measure but wide enough to miss the first arm.
  *
- * pointer: coarse gates both, so a 390px-wide DESKTOP window -- someone with
- * a browser docked to a quarter of a monitor -- keeps its chrome. That window
- * is narrow by choice and can be widened; a phone cannot.
+ * pointer: coarse gates the first two arms, so a 390px-wide DESKTOP window --
+ * someone with a browser docked to a quarter of a monitor -- keeps its chrome.
+ * That window is narrow by choice and can be widened; a phone cannot.
+ *
+ * THE THIRD ARM HAS NO POINTER GATE, and it is there because that reasoning
+ * runs out below 26rem. At 360px the beam screen's card copy scrolled by 74px
+ * in both engines with a mouse -- the progress bar clipped off the bottom --
+ * and no amount of "the window can be widened" makes a clipped progress bar
+ * the right thing to render. The layout has already collapsed to its phone
+ * shape by then; keeping a two-line strapline and a footer link row above it
+ * is spending 112px the card is visibly short of. Found by adding a 360px
+ * viewport to check-layout.mjs after a real device turned out to report
+ * innerWidth 360, not the 390 that file had always assumed was the narrow
+ * end.
  *
  * WHAT STAYS, and it is the part worth checking on a real device: the
  * masthead keeps the h1 and the build stamp, and the footer keeps the
@@ -573,7 +584,8 @@ footer summary:focus-visible {
  * be the wrong 68px to save, on the one screen where trust matters most.
  */
 @media (pointer: coarse) and (max-width: 30rem),
-       (pointer: coarse) and (max-height: 30rem) {
+       (pointer: coarse) and (max-height: 30rem),
+       (max-width: 26rem) {
   .tagline { display: none; }
   .meta { display: none; }
 }

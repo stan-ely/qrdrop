@@ -94,6 +94,22 @@ const QRCODE = path.join(ROOT, 'node_modules', 'qrcode-generator', 'dist', 'qrco
  * beam screen's two-column layout exists for.
  */
 const VIEWPORTS = [
+  /*
+   * 360x800 before 390x844, because 390 is not the narrow end and this file
+   * spent its whole life believing it was. A Realme RMX3868 on Android 16
+   * reports innerWidth 360 at DPR 3, and 360 is the width Android has used as
+   * its reference phone for years -- a large share of the phones in use are
+   * this and not an iPhone.
+   *
+   * The 30px matters more than it looks. .btn's flex basis is 12rem, so at
+   * 390 the card's 361px of inner width fits a full-width button beside a
+   * ghost one and the action bar is two rows; at 360 there are 302px, the
+   * pair no longer fits, and the same bar becomes three rows that it pays for
+   * out of the media block above. Everything still fit -- but "fits" was the
+   * only question being asked, and the answer was the same on a layout that
+   * had visibly changed shape.
+   */
+  { name: 'phone-narrow', width: 360, height: 800 },
   { name: 'phone', width: 390, height: 844 },
   { name: 'tablet', width: 834, height: 1112 },
   { name: 'laptop', width: 1440, height: 900 },

@@ -807,6 +807,15 @@ ${buttonCSS()}
  */
 .dropzone {
   appearance: none;
+  /* appearance: none does NOT clear the UA background. A <button> keeps
+   * background-color: buttonface, which is rgb(239,239,239) -- close enough to
+   * this card's white to pass for deliberate in a desktop screenshot, and a
+   * solid grey slab filling most of the landing screen on a phone in dark
+   * mode. The div this replaced had no background at all, so transparent is
+   * what restores the look it is meant to have. .is-dragging below still sets
+   * its own. Found on a device; no assertion in check-layout.mjs could have
+   * seen it, and neither could I in the light-theme pictures. */
+  background: transparent;
   inline-size: 100%;
   font: inherit;
   cursor: pointer;
