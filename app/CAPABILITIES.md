@@ -1199,7 +1199,33 @@ above. None of it blocks the config gate.
    previous one predated `wellKnownFiles` entirely -- and then a manual
    dispatch, per 6b above.
 
-   **Still unverified on a device.** Every part of the chain is now correct as
-   published; nobody has yet installed the signed APK and scanned a code to
-   see the OS open the app instead of a browser. That is the check this all
-   exists for and it stays open.
+   **Verified on a device (2026-09-08), and the answer is yes.** A
+   release-signed 0.1.0 installed on the Realme RMX3868 (Android 16) reports
+   `share.stan-ely.com: verified` in `pm get-app-links`, and
+   `pm get-app-link-owners` resolves the domain to `VERIFIED[4]:
+   com.stan_ely.qrdrop`. Firing the real thing --
+   `am start -a android.intent.action.VIEW -d 'https://share.stan-ely.com/#qrdrop:<code>'`
+   -- brings `com.stan_ely.qrdrop/.MainActivity` to the foreground rather than
+   a browser. The chain published in 6b is therefore correct end to end.
+
+   **What had been hiding it is worth keeping, because it is not a qrdrop bug
+   and it will happen again.** The phone was carrying a locally built debug
+   APK, signed `3C:EE:D5:54...D2:55:4E:2E`, and while that was installed the
+   same dump read `share.stan-ely.com: 1024` -- unverified. That is correct
+   behaviour: the debug certificate is not one of the fingerprints in
+   `assetlinks.json`, so association legitimately fails. Android also refuses
+   to replace an app with one signed by a different key
+   (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`), so the release build could not be
+   installed over it at all -- and the phone reports that as a generic
+   "app not installed". **Uninstall any debug build before testing
+   association, and read `pm get-app-links` rather than trusting a tap**: a
+   debug build on the device makes a correctly published assetlinks.json look
+   broken, which is the same symptom as not having published one.
+
+   It was verified through the F-Droid repository rather than by sideloading,
+   which is the stronger test: `installerPackageName` is
+   `com.machiav3lli.fdroid`, so those were bytes fetched and installed by a
+   real client, and the signature the OS recorded
+   (`0D:6F:10:46...D3:53:1A:44`) is the one `ANDROID_CERT_FINGERPRINT`
+   publishes. That equality is the whole reason the repository serves our own
+   signed APK instead of being an f-droid.org listing; see `fdroid/config.yml`.
