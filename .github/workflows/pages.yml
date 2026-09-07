@@ -166,6 +166,42 @@ jobs:
       # rm is for an edge tree built by some older revision of the script that
       # wrote one anyway: a stray CNAME in a subdirectory is inert, but it
       # looks like a second binding to whoever finds it next.
+      # The F-Droid repository, as BYTES rather than as a build.
+      # .github/workflows/app-release.yml generates and signs it on an app-v*
+      # tag and force-pushes it to the orphan `fdroid-repo` branch; this only
+      # copies the result in.
+      #
+      # Regenerating it here was the alternative and is wrong twice over. It
+      # would put the repository signing key into a workflow whose whole job is
+      # publishing public HTML; and a signed index rebuildable on every push to
+      # main is a repository whose fingerprint could change without a release,
+      # which an F-Droid client that pinned the old certificate answers by
+      # refusing the repository outright -- with no recovery but asking every
+      # user to remove and re-add it.
+      #
+      # A separate checkout with `path:`, so it does not disturb the tree this
+      # job is standing on, which by this point is detached at the release tag.
+      - uses: actions/checkout@v7
+        with:
+          ref: fdroid-repo
+          path: fdroid-published
+
+      # Straight into _site/, and NOT into site/dist or _site/edge. Both of
+      # those are --out directories for build-site.mjs, whose main() does an
+      # rm -rf on its output before writing a byte, so anything staged in
+      # either is deleted by the next build. _site/ itself is only ever merged
+      # into (cp -R site/dist/. _site/ below), so a directory placed here
+      # survives.
+      #
+      # The branch carries its own .gitattributes marking everything `-text`,
+      # because entry.json pins index-v2.json by sha256 AND size: one LF
+      # rewritten to CRLF on checkout changes the hash and every client
+      # rejects the repository. Nothing here may normalise those bytes.
+      - name: Copy the F-Droid repository into the deploy
+        run: |
+          mkdir -p _site/fdroid
+          cp -R fdroid-published/repo _site/fdroid/
+
       - name: Assemble the deploy
         run: |
           cp -R site/dist/. _site/
@@ -180,6 +216,36 @@ jobs:
           # next release, which is a true statement made at the wrong volume.
           test -f _site/edge/.well-known/assetlinks.json \
             || { echo "_site/edge/.well-known/assetlinks.json missing -- app links cannot work." >&2; exit 1; }
+
+          # The F-Droid repository, copied in above rather than built here. A
+          # missing index is not a 404 anyone reports: the client shows the
+          # repository as present and EMPTY, which reads as "no releases yet"
+          # rather than as anything broken.
+          test -f _site/fdroid/repo/index-v2.json \
+            || { echo "_site/fdroid/repo/index-v2.json missing -- the F-Droid client would show this repository as empty rather than broken." >&2; exit 1; }
+          test -f _site/fdroid/repo/entry.jar \
+            || { echo "_site/fdroid/repo/entry.jar missing -- the index is unsigned and every F-Droid client refuses it." >&2; exit 1; }
+          ls _site/fdroid/repo/*.apk >/dev/null 2>&1 \
+            || { echo "_site/fdroid/repo carries no APK -- the listing would offer nothing to install." >&2; exit 1; }
+
+          # The served index must be byte-for-byte what was signed. entry.json
+          # pins index-v2.json by sha256 AND size, so this is what catches a
+          # line-ending rewrite anywhere between the signing job and here -- a
+          # corruption that otherwise surfaces only as every client quietly
+          # refusing to update, which names nothing.
+          node -e '
+            const fs = require("fs"), c = require("crypto")
+            const d = "_site/fdroid/repo/"
+            const e = JSON.parse(fs.readFileSync(d + "entry.json"))
+            const b = fs.readFileSync(d + "index-v2.json")
+            const sha = c.createHash("sha256").update(b).digest("hex")
+            if (b.length !== e.index.size || sha !== e.index.sha256) {
+              console.error("index-v2.json does not match what entry.json signed -- every F-Droid client will reject this repository.")
+              console.error("  size " + b.length + ", expected " + e.index.size)
+              process.exit(1)
+            }
+            console.log("F-Droid index is byte-exact against its signature.")
+          '
 
       - uses: actions/configure-pages@v6
 
