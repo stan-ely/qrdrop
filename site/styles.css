@@ -82,7 +82,7 @@ main {
  * two copies, and if they disagree the component lays out in two columns inside
  * a column too narrow to hold them.
  */
-@media (min-width: 60rem) and (max-height: 62rem) {
+@media (min-width: 48rem) and (max-height: 62rem) {
   main { max-inline-size: 62rem; }
 }
 

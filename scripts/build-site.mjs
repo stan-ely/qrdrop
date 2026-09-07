@@ -681,7 +681,7 @@ async function main() {
   let siteCSS = await readFile(path.join(SITE, 'styles.css'), 'utf8')
   // Interpolate breakpoint values into media query strings so they match the
   // component's styles exactly (defined in src/web/tokens.js).
-  siteCSS = siteCSS.replaceAll('(min-width: 60rem) and (max-height: 62rem)', BREAKPOINT_WIDE)
+  siteCSS = siteCSS.replaceAll('(min-width: 48rem) and (max-height: 62rem)', BREAKPOINT_WIDE)
   siteCSS = siteCSS.replaceAll('(max-height: 46rem)', BREAKPOINT_SHORT)
   const css = tokensCSS(':root') + sheetCSS('var(--col)') + buttonCSS() + siteCSS
 

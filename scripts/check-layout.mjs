@@ -111,6 +111,26 @@ const VIEWPORTS = [
    */
   { name: 'phone-narrow', width: 360, height: 800 },
   { name: 'phone', width: 390, height: 844 },
+  /*
+   * The same two phones turned sideways, and they are here because their
+   * absence is what let a broken landscape ship.
+   *
+   * A landscape phone is SHORT WITHOUT BEING WIDE, and nothing above covered
+   * that shape: BREAKPOINT_SHORT is max-height 46rem so 360 matches it, while
+   * BREAKPOINT_WIDE wants min-width 60rem (960px) and 800 does not reach it.
+   * So the card takes the short branch in ONE column -- a combination no
+   * viewport in this list produced. laptop-short is short and wide and takes
+   * the two-column branch; the portrait phones are narrow and tall. The gap
+   * between them was exactly the phone in the tester's hand.
+   *
+   * What it hid: .card-media is `flex: 1 100 auto` and collapses to a block
+   * size of 0 under that pressure, while .scan-panel and .scanner-frame hold
+   * an 8rem floor -- so both painted 128px tall inside a 0px parent, over the
+   * top of the action bar. Measured on a device at 800x360 before it was
+   * measured here.
+   */
+  { name: 'phone-narrow-landscape', width: 800, height: 360, allowBodyScroll: true },
+  { name: 'phone-landscape', width: 844, height: 390, allowBodyScroll: true },
   { name: 'tablet', width: 834, height: 1112 },
   { name: 'laptop', width: 1440, height: 900 },
   // Wide and short, which is the case a design tuned on a phone forgets: a
@@ -320,6 +340,31 @@ for (const pointer of POINTERS) {
         mediaName: media ? `.${media.className.trim().split(/\s+/).join('.')}` : null,
         mediaBox: mediaBox ? { width: mediaBox.width, height: mediaBox.height } : null,
         bodyOverflow: body ? body.scrollHeight - body.clientHeight : 0,
+        // Content pushed off the START of the scroll container, which is a
+        // different and worse failure than overflow: scrollTop is already 0
+        // there, so nothing can scroll back up to it. It is what
+        // `justify-content: center` does to a column it cannot fit -- the
+        // overflow goes out BOTH ends -- and on a landscape phone it took the
+        // heading and beam's encryption warning off the top of the screen
+        // while the assertions below saw only an ordinary overflow. A screen
+        // that scrolls has merely run out of room; a screen with content above
+        // its own scroll origin has lost it.
+        clippedAbove: body
+          ? [...body.children]
+            .filter(c => {
+              const r = c.getBoundingClientRect()
+              // Zero-box children are skipped, for exactly the reason the
+              // offscreen check below skips a closed dialog: an element that
+              // is not laid out reports 0x0 at the origin, and the origin is
+              // above every scroll container on the page. A screen builder
+              // that emits an empty `div.stack` -- verify does, when it has no
+              // tiles yet -- would otherwise be reported as having lost
+              // content it never had.
+              if (r.width === 0 && r.height === 0) return false
+              return r.top < body.getBoundingClientRect().top - 1
+            })
+            .map(c => c.tagName.toLowerCase() + (c.className ? '.' + String(c.className).trim().split(/\s+/)[0] : ''))
+          : [],
         pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
         headingCount,
         strayActions,
@@ -344,7 +389,34 @@ for (const pointer of POINTERS) {
         `${report.mediaName} is ${Math.round(report.mediaBox.width)}x${Math.round(report.mediaBox.height)}, expected square`,
       )
     }
-    if (report.bodyOverflow > 1) problems.push(`card copy scrolls by ${report.bodyOverflow}px`)
+    // Always fatal, on every viewport: unreachable content is never the
+    // "last resort" the layout is allowed to fall back on.
+    for (const c of report.clippedAbove) {
+      problems.push(`${c} is above the copy column's scroll origin and cannot be reached`)
+    }
+    /*
+     * Overflow itself is fatal EXCEPT where the viewport says it cannot fit.
+     *
+     * The architecture's rule is that the body may scroll as a last resort and
+     * the action bar never does (CLAUDE.md, "Web UI architecture"), and this
+     * check has always been stricter than that -- rightly, because on every
+     * shape here until now "it does not fit" meant "something is wrong".
+     * A landscape phone is the first viewport where it means what it says:
+     * 800x360 leaves the copy column 111px after the page chrome, the card
+     * padding and an action bar that may not move, and beam wants 213 for a
+     * heading, a filename, a speed control and two callouts whose wording
+     * CLAUDE.md explicitly refuses to shorten. No arrangement of that fits.
+     *
+     * So the choice was between scrolling the column and moving the
+     * encryption warning behind a tap in the info sheet, and scrolling wins:
+     * a safety notice below the fold is still on the screen, where one behind
+     * a disclosure is not. The clippedAbove check above is what makes that
+     * trade honest -- it holds the line that everything stays REACHABLE, and
+     * it is the assertion that would have caught this bug.
+     */
+    if (report.bodyOverflow > 1 && !vp.allowBodyScroll) {
+      problems.push(`card copy scrolls by ${report.bodyOverflow}px`)
+    }
     for (const b of report.offscreen) problems.push(`button out of view: ${b}`)
     // One heading per visible screen -- see `headingCount` in the evaluate above.
     if (report.headingCount !== 1) problems.push(`visible screen has ${report.headingCount} <h2>, expected 1`)

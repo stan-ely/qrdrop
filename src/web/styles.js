@@ -1463,7 +1463,25 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
    * -- two columns that had visibly not been laid out together. In one column
    * this changes nothing: the copy hugs its content there (grow 0) and there
    * is no slack to centre within. */
-  .card-copy { flex: 1 1 20rem; justify-content: center; }
+  /*
+   * \`safe center\`, and the keyword is the whole point rather than a nicety.
+   *
+   * Plain \`center\` distributes overflow to BOTH ends, and the start end of a
+   * scroll container is not reachable -- scrollTop 0 is already the top, so
+   * anything pushed above it can never be scrolled back to. On a landscape
+   * phone (800x360) the copy column gets 111px and beam's content wants 213,
+   * and the measurement was unambiguous: the column ran y=110..221 while its
+   * <h2> sat at y=8 and the encryption callout at y=46, both off the top and
+   * unreachable. The screen looked like it had lost its heading, which is
+   * exactly what it had done.
+   *
+   * \`safe\` falls back to flex-start the moment the content overflows, so the
+   * column reads from the top and the rest is a scroll away. Centred still,
+   * whenever there is room to centre -- which is every other viewport in
+   * check-layout.mjs, so this changes nothing anywhere it was already right.
+   * Both engines were checked for support before this shipped.
+   */
+  .card-copy { flex: 1 1 20rem; justify-content: safe center; }
 
   /* Height stops being the scarce axis in two columns, so the QR goes back to
    * filling the width it is given. */

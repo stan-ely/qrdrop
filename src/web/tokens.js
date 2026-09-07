@@ -6,7 +6,30 @@
  * a media query itself. This is the single-home solution to the problem of
  * two hardcoded copies that have to agree.
  */
-export const BREAKPOINT_WIDE = '(min-width: 60rem) and (max-height: 62rem)'
+/*
+ * 48rem, not the 60rem this started at, and the 12rem is a landscape phone.
+ *
+ * The query describes a shape -- wide enough for two columns, too short to
+ * stack them -- and 60rem drew that line above every phone held sideways.
+ * A 360x800 device is 800x360 turned, which is short (BREAKPOINT_SHORT is
+ * max-height 46rem) and NOT wide, so the card took the short branch in one
+ * column: a combination no viewport in check-layout.mjs produced and no
+ * branch here was written for. Every screen overflowed, and .card-media
+ * (flex: 1 100 auto) collapsed to a block size of 0 under an aspect-ratio
+ * box holding an 8rem floor, so the scan panel and the scanner frame painted
+ * over the action bar. Found on a device, not here.
+ *
+ * 48rem is 768px, which is the narrowest thing that can hold a 22rem media
+ * column beside a 20rem copy column with the card's padding around them --
+ * the two flex bases the wide branch already sets. Lower would promise two
+ * columns the card cannot deliver.
+ *
+ * What this newly captures is only widths 768-959 at a height of 62rem or
+ * less: landscape phones and small desktop windows. A portrait tablet
+ * (834x1112) is too tall to match either way, and every laptop shape that
+ * matched at 60rem still does.
+ */
+export const BREAKPOINT_WIDE = '(min-width: 48rem) and (max-height: 62rem)'
 export const BREAKPOINT_SHORT = '(max-height: 46rem)'
 
 /**

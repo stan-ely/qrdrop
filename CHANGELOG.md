@@ -5,6 +5,19 @@ is the finer-grained record.
 
 ## Unreleased
 
+**A phone held sideways works.** Rotating the phone put the scanner panel and the
+camera frame on top of the buttons underneath them, and cost the beam screen its
+heading and its encryption warning. Two separate faults met there: a landscape phone
+is short without being wide, which was the one shape none of the layout's branches
+were written for, so the card laid out in a single column and the media block
+collapsed to nothing under boxes that refused to shrink; and the copy column was
+centred, which pushes anything that does not fit out of *both* ends — and the top end
+of a scrolling column cannot be scrolled back to. Landscape now uses the two-column
+layout it always should have, and a column with too much in it reads from the top
+with the rest a scroll away, so nothing is out of reach. The layout check gained both
+landscape sizes and an assertion for content pushed above its own scroll origin,
+which is the fault that had been invisible to it.
+
 **On a phone, qrdrop opens as a scanner.** The choose screen's biggest element used
 to be a second "Send a file" button — it took every spare pixel of the card to offer
 what the button below it already offered, and in landscape it spent the whole left
