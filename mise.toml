@@ -30,6 +30,16 @@ cargo-release = "1.1.5"
 # `mise run test`, which was simply wrong about what this plugin does.
 android-sdk = "23.0"
 
+# The F-Droid repository tooling, for the binary repo served at /fdroid/ (see
+# CLAUDE.md). uv is here only because mise's pipx backend needs one of uv or
+# pipx to exist, and uv is the one it reaches for first -- there is no uv in
+# any script. fdroidserver over apt's fdroidserver was not a preference: the
+# CI runner is ubuntu-latest, whose apt carries 2.2.1, and pinning a version
+# here is what stops a local run and a release run signing indexes with two
+# different generations of the same tool.
+uv = "latest"
+"pipx:fdroidserver" = "2.4.5"
+
 # The SDK packages the pin above does NOT carry, named once. NDK_HOME below
 # and the app:android:sdk task both read these, so the version a build links
 # against and the version that gets installed cannot drift apart -- the same
@@ -255,3 +265,37 @@ description = "Build the iOS app (macOS only; needs a signing identity)"
 depends = ["app:build-site", "app:config"]
 dir = "app"
 run = "npx tauri ios build"
+
+# Build and sign the F-Droid repository from whatever APKs are in fdroid/repo/.
+#
+# LINUX ONLY, and that is upstream rather than a choice here. fdroidserver's
+# insert_localized_app_metadata builds its glob with os.path.join and then
+# parses the result with `root.split('/')` -- on Windows os.walk yields
+# backslashes, so the split returns one segment and `segments[1]` raises
+# IndexError before any index is written. Measured on 2.4.5. Run it under WSL
+# locally; CI runs it on ubuntu-latest, which is the same shape.
+#
+# It also needs two things beyond fdroidserver itself, both found the hard way:
+# `apksigner`, without which fdroidserver falls back to Java's jarsigner and
+# rejects the release APK outright ("jar is unsigned") because that APK carries
+# only an APK Signature v2 block, which jarsigner cannot read; and a real JDK
+# rather than a JRE, because it shells out to `jar cf` to build index.jar.
+#
+# The icon copy is not tidying. `fdroid update` OWNS repo/icons/ and overwrites
+# icon.png with a generated placeholder when it finds none, so the committed
+# source lives at fdroid/icon.png and is copied in on every run.
+#
+# Wants FDROID_KEYSTORE, FDROID_KEY_ALIAS, FDROID_KEYSTORE_PASSWORD and
+# FDROID_KEY_PASSWORD, which fdroid/config.yml reads via {env:}. Point them at
+# a THROWAWAY keystore for local work -- an index signed by the published key
+# outside a release is how a fingerprint changes without one, and an F-Droid
+# client that has pinned the old certificate answers that by refusing the
+# repository with no recovery but remove-and-re-add.
+[tasks."app:fdroid"]
+description = "Build and sign the local F-Droid repo (Linux/WSL only; wants a throwaway keystore)"
+dir = "fdroid"
+run = """
+mkdir -p repo/icons
+cp icon.png repo/icons/icon.png
+fdroid update --verbose --pretty
+"""

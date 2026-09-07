@@ -1,0 +1,38 @@
+# The F-Droid repository served at https://share.stan-ely.com/fdroid/repo.
+#
+# A BINARY repository: it carries this project's own release-signed APK -- the
+# same file the GitHub Release does, fetched from that Release by the fdroid job
+# in .github/workflows/app-release.yml -- and there are no build recipes here.
+# That is not a shortcut taken to avoid writing them.
+#
+# An app built by F-Droid is signed with F-Droid's key, and that certificate's
+# fingerprint is not the one published at .well-known/assetlinks.json on this
+# very domain. Android checks app-link association against the signing
+# certificate and says nothing at all when it does not match -- so a scanned
+# pairing code would open a browser tab instead of the app, for every install
+# from such a build, with nothing anywhere to read about why. Shipping our own
+# signed bytes is what keeps ANDROID_CERT_FINGERPRINT true for every install
+# route at once.
+repo_url: https://share.stan-ely.com/fdroid/repo
+repo_name: qrdrop
+repo_description: >-
+  Signed builds of the qrdrop Android app, published straight from the release
+  workflow at github.com/stan-ely/qrdrop. The same APK the GitHub Release
+  carries, signed with the same key.
+repo_icon: icon.png
+
+# Everything stays in repo/ and nothing is retired into archive/. The client's
+# version list is short because there are few releases, and an archive is a
+# second index at a second URL for a problem this repository does not have.
+# The fdroid job prunes to the newest few APKs instead, which is a size
+# decision about one git branch rather than a second thing to serve.
+archive_older: 0
+
+# The REPOSITORY signing key, which is NOT the APK signing key -- see CLAUDE.md
+# for why those are two keys. Read from the environment so no password reaches
+# a file in the workspace: the workspace is what gets pushed to a public branch,
+# and this file is committed.
+keystore: {env: FDROID_KEYSTORE}
+repo_keyalias: {env: FDROID_KEY_ALIAS}
+keystorepass: {env: FDROID_KEYSTORE_PASSWORD}
+keypass: {env: FDROID_KEY_PASSWORD}

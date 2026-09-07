@@ -1,0 +1,19 @@
+qrdrop moves a file directly between two devices over an encrypted peer
+connection. Nothing in between ever holds a readable copy.
+
+Pairing is a QR code: one device shows it, the other points a camera at it,
+and that scan is the one channel an attacker cannot stand in the middle of.
+Both ends then show the same four symbols, which you read aloud and match by
+hand, so you can check you are talking to the device you think you are. Only
+then does the file move.
+
+There is also Beam, which carries a file as animated QR codes across a camera
+and needs no network at all.
+
+ON ANDROID, QRDROP CAN SEND AND CANNOT YET RECEIVE. The Storage Access
+Framework hands back a content:// URI where the app's file sink expects a
+filesystem path. Point this phone's camera at the code on the other device
+and send; to receive, use the other device.
+
+This app is built and signed by the project's own release workflow and
+published here as the identical file the GitHub Release carries.
