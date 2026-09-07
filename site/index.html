@@ -4,7 +4,20 @@
 <html lang="en" data-channel="__CHANNEL__">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  viewport-fit=cover is not cosmetic, and without it the safe-area handling in
+  site/styles.css is dead code. env(safe-area-inset-*) resolves to 0 in the
+  default (contain) mode, so every calc() in that file adding an inset was
+  adding nothing, on every notched phone, since the day it was written -- the
+  page simply stopped short of the rounded corners and nobody could tell the
+  difference between that and insets being honoured.
+
+  Opting in extends the page under the notch and the home indicator, which is
+  what makes those calc() terms mean something. The two changes only work as a
+  pair: this attribute without the padding puts the footer under the gesture
+  bar, and the padding without this attribute is what we already had.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>qrdrop</title>
 <meta name="description" content="Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.">
 

@@ -518,9 +518,64 @@ footer summary:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
+/*
+ * THE ENV() TERMS ARE NOT DECORATION IN HERE. This block sets `padding`, the
+ * shorthand, so it replaced all four sides of the rule above it -- including
+ * the safe-area insets -- on exactly the devices that have insets. It went
+ * unnoticed because viewport-fit was not set either, so every inset was 0 and
+ * losing them cost nothing. site/index.html now opts in, and from that moment
+ * a shorthand here without env() would put the footer under the home
+ * indicator on every phone narrower than 30rem, which is most of them.
+ *
+ * Any future rule that sets main's padding has to carry these terms too. That
+ * is the trap this comment exists to close, and it is the same shape as the
+ * "anywhere a rule sets display, say the hiding again" note in
+ * src/web/styles.js: a shorthand quietly resetting what a longhand elsewhere
+ * was relying on.
+ */
 @media (max-width: 30rem) {
-  main { padding: var(--sp-5) var(--sp-3) var(--sp-6); }
+  main {
+    padding:
+      calc(var(--sp-5) + env(safe-area-inset-top))
+      calc(var(--sp-3) + env(safe-area-inset-right))
+      calc(var(--sp-6) + env(safe-area-inset-bottom))
+      calc(var(--sp-3) + env(safe-area-inset-left));
+  }
+}
 
+/*
+ * A phone, in either orientation: the page chrome gets out of the component's
+ * way entirely.
+ *
+ * The max-height: 46rem block above already does half of this for any short
+ * window, laptop included. What it does not catch is the commonest phone
+ * there is -- 390x844 is 24.4rem by 52.8rem, so it is not short, it is
+ * narrow, and it was keeping the tagline and the whole footer link row on the
+ * device with the least room to spare. Together those are ~110px of a 844px
+ * screen spent on a strapline and three links, while the card underneath is
+ * the thing that has to fit a camera, a filename and two buttons.
+ *
+ * Written as two comma-separated queries rather than one `(A or B)`: the or
+ * keyword is Media Queries Level 4 and the comma has meant the same thing
+ * since Level 2. The second arm is the landscape phone, 844x390, which is
+ * short by this file's other measure but wide enough to miss the first arm.
+ *
+ * pointer: coarse gates both, so a 390px-wide DESKTOP window -- someone with
+ * a browser docked to a quarter of a monitor -- keeps its chrome. That window
+ * is narrow by choice and can be widened; a phone cannot.
+ *
+ * WHAT STAYS, and it is the part worth checking on a real device: the
+ * masthead keeps the h1 and the build stamp, and the footer keeps the
+ * #protect-open chip. The security disclosure is that chip, not one of the
+ * links in .meta -- .meta is Source, Feedback and the byline, all of which
+ * are navigation away from a page someone is in the middle of using. Hiding
+ * the one thing that explains what this tool does and does not protect would
+ * be the wrong 68px to save, on the one screen where trust matters most.
+ */
+@media (pointer: coarse) and (max-width: 30rem),
+       (pointer: coarse) and (max-height: 30rem) {
+  .tagline { display: none; }
+  .meta { display: none; }
 }
 
 /* The same bargain src/web/styles.js strikes for the component: someone who
