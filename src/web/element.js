@@ -78,24 +78,24 @@ const CAPABILITY_NOTE =
  * "assume a mouse", which is the behaviour this component already had.
  */
 /**
- * The screens that must not let the display time out.
+ * The screens on which something is running.
  *
- * Everything except the two a person is looking at while deciding something:
- * 'choose', where nothing is running, and 'done', where nothing is left to
- * run. In between, the phone is either showing a code for another device to
- * read, pointed at one, or moving bytes -- and on none of those is anyone
- * touching the screen, which is exactly what the display timeout counts.
+ * Everything except the two where nothing is: 'choose', where it has not
+ * started, and 'done', where it has finished. In between there is a room open,
+ * a camera on, or bytes moving, and usually a peer on the other end waiting.
  *
- * BEAM IS WHY THIS EXISTS. A beam runs for minutes with the phone held up to
- * another camera and nothing touching it, so the screen dims and then sleeps
- * mid-transfer and the QR the other device is reading goes out. The network
- * path has the same problem more slowly: a large file over a slow link
- * outlasts a 30-second timeout many times over, and 'transfer' has no input
- * to keep the display awake either.
+ * ONE SET, TWO CONSEQUENCES, and they are two readings of the same fact rather
+ * than a coincidence worth splitting. The display must not sleep here
+ * (_syncWakeLock), because on none of these screens is anyone touching the
+ * phone -- which is exactly what a display timeout counts, and a beam runs for
+ * minutes held up to another device's camera. And the back gesture must not
+ * walk out of here without asking (_syncBackGuard), because leaving abandons a
+ * live session rather than a screen. Two sets would be two places to add the
+ * next screen to, and forgetting either fails silently.
  *
  * @type {Set<string>}
  */
-const AWAKE_SCREENS = new Set([
+const RUNNING_SCREENS = new Set([
   'send', 'receive', 'verify', 'transfer', 'beam-send', 'beam-receive',
 ])
 
@@ -253,6 +253,33 @@ export class QRDropElement extends HTMLElement {
      * @type {(() => void) | null}
      */
     this._onVisibility = null
+
+    /**
+     * The window-level popstate listener, kept for the same reason.
+     * @type {(() => void) | null}
+     */
+    this._onPopState = null
+
+    /** Whether a sentinel history entry is currently pushed. */
+    this._backGuard = false
+
+    /**
+     * Whether the next popstate is one this component caused itself, by
+     * winding the sentinel back off the stack on the way out of a running
+     * screen. Without it that pop would be read as a back gesture and answer
+     * itself with a toast on the screen the user just legitimately reached.
+     */
+    this._popSuppressed = false
+
+    /**
+     * Whether a back gesture has already been refused once and a second one
+     * would cancel. Cleared on a timer and on every screen change, so the
+     * armed window cannot outlive the screen that armed it.
+     */
+    this._backArmed = false
+
+    /** @type {any} */
+    this._backTimer = null
 
     /**
      * Whether the exchange has reached a terminal state.
@@ -597,6 +624,21 @@ export class QRDropElement extends HTMLElement {
       document.addEventListener('visibilitychange', this._onVisibility)
     }
 
+    // The back gesture, on every platform that has one -- see _syncBackGuard
+    // for why this is a history entry rather than a Kotlin override, and why
+    // it is emphatically not navigation.
+    this._onPopState = () => {
+      if (this._popSuppressed) {
+        this._popSuppressed = false
+        return
+      }
+      // Not on a running screen, so there is nothing to protect and no reason
+      // to interfere: let the browser or the activity do what it would have.
+      if (!RUNNING_SCREENS.has(this._state.screen)) return
+      this._onBackGesture()
+    }
+    window.addEventListener('popstate', this._onPopState)
+
     // The pointer can change under a running page -- a folio keyboard comes
     // off a tablet, a mouse is plugged into a phone dock -- and the choose
     // screen's copy tells the user which gesture to make. Read once at
@@ -709,6 +751,15 @@ export class QRDropElement extends HTMLElement {
     if (this._onVisibility) document.removeEventListener('visibilitychange', this._onVisibility)
     this._onVisibility = null
 
+    if (this._onPopState) window.removeEventListener('popstate', this._onPopState)
+    this._onPopState = null
+    // Takes the sentinel back off the history stack if one is still pushed,
+    // via the isConnected term in _syncBackGuard. A detached component leaving
+    // its guard behind would make the page's own back button dead for one
+    // press, on a page that no longer has anything to guard.
+    this._syncBackGuard()
+    this._disarmBack()
+
     // Before _teardown, so a component pulled out of the document mid-beam
     // stops holding the display on. Nothing else would ever release it: the
     // lock outlives the element, and the screen it was taken for is gone.
@@ -790,10 +841,16 @@ export class QRDropElement extends HTMLElement {
 
     if (this._state.screen !== prevScreen) {
       this._focusScreenHeading()
-      // Screens differ in whether the display may sleep on them -- see
-      // AWAKE_SCREENS. Hung off the screen change rather than off every
-      // _setState because a transfer calls this once per progress tick.
+      // Both consequences of RUNNING_SCREENS -- whether the display may sleep
+      // here, and whether the back gesture may leave. Hung off the screen
+      // change rather than off every _setState because a transfer calls this
+      // once per progress tick.
       this._syncWakeLock()
+      this._syncBackGuard()
+      // An armed "press back again" belongs to the screen that armed it. A
+      // transfer that finishes inside the window would otherwise leave the
+      // next press cancelling on the done screen.
+      this._disarmBack()
     }
   }
 
@@ -823,7 +880,7 @@ export class QRDropElement extends HTMLElement {
     // but a component torn out of the document mid-transfer must not have its
     // lock re-taken by a _setState still in flight behind it.
     const want = this.isConnected
-      && AWAKE_SCREENS.has(this._state.screen)
+      && RUNNING_SCREENS.has(this._state.screen)
       // The platform revokes the lock whenever the page stops being visible
       // and will not grant one while it is hidden, so asking is pointless
       // until it comes back. The visibilitychange listener is what re-asks.
@@ -845,7 +902,7 @@ export class QRDropElement extends HTMLElement {
       // request was out. Releasing immediately is the whole point of
       // re-checking: a lock taken for a transfer that has since been
       // cancelled has nothing left to release it.
-      if (!this.isConnected || !AWAKE_SCREENS.has(this._state.screen)) {
+      if (!this.isConnected || !RUNNING_SCREENS.has(this._state.screen)) {
         lock.release?.().catch(() => {})
         return
       }
@@ -869,6 +926,97 @@ export class QRDropElement extends HTMLElement {
     const lock = this._wakeLock
     this._wakeLock = null
     lock?.release?.().catch(() => {})
+  }
+
+  /**
+   * Keep exactly one sentinel history entry pushed while a session is running,
+   * so the back gesture has something to land on instead of leaving.
+   *
+   * WHAT BACK DID BEFORE THIS: closed the app, mid-transfer, silently. The
+   * generated WryActivity installs an OnBackPressedCallback that calls
+   * mWebView.goBack() when canGoBack() and finishes the activity otherwise, so
+   * with no history to walk, a gesture made by accident on a phone ended a
+   * running transfer with no confirmation and no way back. The installed PWA
+   * and a mobile browser tab behave the same way for the same reason.
+   *
+   * A pushState entry is a navigation-controller entry, so canGoBack() sees it
+   * and goBack() fires popstate -- which means one implementation in the
+   * component covers the app, the PWA and the web, rather than a Kotlin
+   * override that would cover only the first.
+   *
+   * THIS IS NOT NAVIGATION, and must not become it. The screens are not
+   * history entries and back does not move between them: the entry exists only
+   * to be a thing to catch, and the answer to catching it is a question, never
+   * a transition. That distinction is what keeps the two safety gestures safe
+   * -- back can offer to cancel on the verify screen and on beam's Accept, and
+   * there is no gesture that can advance past either.
+   */
+  _syncBackGuard() {
+    const running = this.isConnected && RUNNING_SCREENS.has(this._state.screen)
+    if (running === this._backGuard) return
+
+    if (running) {
+      // No URL argument: the address must not change. A history entry that
+      // altered the URL would be one a person could bookmark or share, and on
+      // this component the only thing a URL ever carries is a code.
+      history.pushState({ qrdropGuard: true }, '')
+      this._backGuard = true
+      return
+    }
+
+    this._backGuard = false
+    this._disarmBack()
+    // Wind the sentinel back off on the way out, or it would outlive the
+    // session that needed it: back from the done screen would then be absorbed
+    // by a guard for a transfer that has already finished, and a person would
+    // have to press it twice to leave. history.back() fires popstate
+    // asynchronously, hence the suppression flag rather than a local.
+    if (history.state?.qrdropGuard) {
+      this._popSuppressed = true
+      history.back()
+    }
+  }
+
+  /**
+   * A back gesture arrived on a running screen.
+   *
+   * Answered the way Android has answered "are you sure" without a dialog for
+   * fifteen years: refuse once, say so, and let a second press within the
+   * window mean it. A modal would be the other option and is worse here -- it
+   * is one more thing that can be dismissed by the same gesture that opened
+   * it, and on the verify screen it would put a dialog over the SAS at the
+   * exact moment a person is comparing four words with someone.
+   *
+   * The second press cancels rather than confirming anything, which is the
+   * only direction back is ever allowed to move: _reset tears the session down
+   * and returns to choose. There is no path from here that accepts a file or
+   * confirms an SAS.
+   */
+  _onBackGesture() {
+    // Put the sentinel straight back, so a third press is caught too. Done
+    // before anything else: if this throws or the state below changes, the
+    // guard must already be in place.
+    history.pushState({ qrdropGuard: true }, '')
+    this._backGuard = true
+
+    if (this._backArmed) {
+      this._disarmBack()
+      this._reset()
+      return
+    }
+
+    this._backArmed = true
+    this._toast('Press back again to cancel.')
+    // Matched to the toast's own 4000ms in _toast: the window has to end when
+    // the message saying it is open does, or a press four seconds after the
+    // words disappeared would cancel a transfer with nothing on screen having
+    // asked for it.
+    this._backTimer = setTimeout(() => { this._backArmed = false }, 4000)
+  }
+
+  _disarmBack() {
+    clearTimeout(this._backTimer)
+    this._backArmed = false
   }
 
   _render() {
