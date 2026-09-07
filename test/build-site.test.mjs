@@ -259,3 +259,31 @@ test('the manifest colours are the token, not a second copy of it', () => {
   // a mismatch shows up only as a flash on a cold start.
   assert.ok(tokensCSS(':root').includes(`--bg: ${THEME_COLOR};`))
 })
+
+test('the share target posts files to its own channel', () => {
+  const target = JSON.parse(webManifest({ channel: 'stable' })).share_target
+
+  // POST + multipart is the only form of share_target that carries FILES.
+  // The GET form takes a title, a text and a URL and nothing else, so a
+  // "simplification" to GET here would silently make the app a share target
+  // that can never receive the thing it exists to send.
+  assert.equal(target.method, 'POST')
+  assert.equal(target.enctype, 'multipart/form-data')
+
+  // Relative, like start_url: an absolute '/share' would have a share into
+  // the edge install POST to the stable tree's worker.
+  assert.equal(target.action, 'share')
+
+  // The field name is a contract with site/sw.js, which reads formData.get.
+  assert.equal(target.params.files[0].name, 'file')
+  // Any file. Narrowing this to image/* would take qrdrop out of the share
+  // sheet for exactly the documents it moves best.
+  assert.deepEqual(target.params.files[0].accept, ['*/*'])
+})
+
+test('the policy names worker-src, so tightening script-src cannot break the share target', () => {
+  // It is already permitted by fallback (worker-src -> script-src ->
+  // default-src, all 'self'), which is precisely why it is spelled out: a
+  // policy that works only by fallback is one plausible edit away from not.
+  assert.ok(buildCSP([]).includes(`worker-src 'self'`))
+})

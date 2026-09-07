@@ -565,6 +565,38 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
+   * Hand this component a file to send, from outside it.
+   *
+   * THE ONE PUBLIC WAY IN, and it exists because there are now two callers
+   * that are not a person clicking: the deployed site receiving an OS share
+   * (site/sw.js hands the file to site/main.js), and the Tauri shell
+   * receiving an Android ACTION_SEND intent. Both had the alternative of
+   * reaching into _startSend, and a private method with two external callers
+   * is a public method that nobody has thought about.
+   *
+   * Guarded to the choose screen, exactly as drop, paste and _consumeHashCode
+   * are, and for the same reason: a share arriving mid-transfer would clobber
+   * a session already in flight, and on this path the person did not
+   * necessarily mean to interrupt anything -- Android may hand the intent to
+   * an app that was already open and busy. Declining is the safe answer and
+   * the return value says which happened, so a caller can tell the difference
+   * between "sent" and "ignored" rather than guessing from the screen.
+   *
+   * It does NOT bypass either safety gesture. This is the same entry a drop
+   * or a picked file uses, so the sender still confirms the SAS before a
+   * manifest goes out.
+   *
+   * @param {File} file
+   * @returns {boolean} whether the file was accepted. False means a transfer
+   *   was already in progress and nothing was touched.
+   */
+  sendFile(file) {
+    if (this._state.screen !== 'choose') return false
+    this._startSend(file).catch(e => this._fail(e))
+    return true
+  }
+
+  /**
    * Reads a `#qrdrop:…` code out of location.hash, clears it, and starts a
    * receive. A no-op unless the component is idle on the choose screen.
    *

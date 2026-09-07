@@ -297,6 +297,12 @@ export function buildCSP(signalingUrls, { ipc = false } = {}) {
   const directives = [
     `default-src 'self'`,
     `script-src 'self'`,
+    // The service worker (site/sw.js). worker-src falls back to script-src
+    // and then to default-src, both of which are 'self' here, so this is
+    // already permitted -- it is spelled out because a policy that only
+    // works by fallback is one edit away from not working, and the edit
+    // would be tightening script-src, which looks like an improvement.
+    `worker-src 'self'`,
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob:`,
     `media-src 'self' blob: mediastream:`,
@@ -370,6 +376,32 @@ export function webManifest({ channel }) {
       { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
       { src: 'favicon.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
     ],
+    /*
+     * The OS share sheet. This is what puts qrdrop in the list an Android
+     * phone shows when someone taps Share in Photos or Files.
+     *
+     * method POST with multipart/form-data, because that is the only form
+     * that carries FILES; the GET form can carry a title, a text and a URL
+     * and nothing else. A static host cannot answer a POST, so site/sw.js
+     * exists to intercept it -- there is no version of this feature without
+     * a service worker, which is stated here because "why is there a service
+     * worker in a project with four dependencies" is a fair question.
+     *
+     * The action is relative, like start_url and scope above, so each channel
+     * posts to its own tree.
+     *
+     * accept is ["*.*"] deliberately: this app sends any file, and narrowing
+     * it to image/* would take the tool out of the share sheet for exactly
+     * the documents it is best at moving.
+     */
+    share_target: {
+      action: 'share',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: {
+        files: [{ name: 'file', accept: ['*/*'] }],
+      },
+    },
     // Which build this is, for anyone reading an installed manifest and
     // wondering which of the two they have. Not consumed by any platform.
     channel,
@@ -524,6 +556,43 @@ async function bundle(dist, entry) {
 }
 
 /**
+ * Bundles the service worker, separately from the app and on different terms.
+ *
+ * NOT HASHED, and that is the whole reason this is a second esbuild call
+ * rather than a second entry point in the one above. A service worker's URL
+ * is its identity and its scope: the browser matches an update against the
+ * same path it registered, and the directory that path sits in decides which
+ * pages the worker controls. A content hash in the filename would make every
+ * build a different worker at a different scope, so registration would either
+ * fail or silently accumulate one worker per deploy.
+ *
+ * That is also why the cache-busting argument the hashed bundle is built on
+ * does not apply here. A service worker is revalidated by the browser on its
+ * own schedule and byte-compared against the installed copy; it is the one
+ * script on the page that does not need a filename to tell it apart from its
+ * predecessor.
+ *
+ * format: 'iife' rather than 'esm', so the output is a classic worker. Module
+ * service workers need Chrome 91 / Safari 16.4 and buy nothing here -- the
+ * only reason sw.js has an import at all is share-keys.js, and bundling
+ * inlines it.
+ *
+ * @param {string} dist
+ */
+async function bundleWorker(dist) {
+  await esbuild.build({
+    entryPoints: [path.join(SITE, 'sw.js')],
+    outfile: path.join(dist, 'sw.js'),
+    bundle: true,
+    minify: true,
+    sourcemap: true,
+    format: 'iife',
+    target: ['es2022'],
+    absWorkingDir: ROOT,
+  })
+}
+
+/**
  * Reads `--name value` out of argv, or null if the flag is absent.
  *
  * Deliberately not `--name=value` as well: two accepted spellings is two
@@ -636,6 +705,12 @@ async function main() {
   if (stamp.channel === 'stable') {
     await writeFile(path.join(dist, 'CNAME'), new URL(ORIGIN).host + '\n')
   }
+
+  // The service worker, which exists only to answer the share target's POST.
+  // Not for the app channel: a Tauri bundle has no share sheet to register
+  // with and no HTTP origin for a worker to have a scope in -- the app takes
+  // shares through a platform intent instead.
+  if (stamp.channel !== 'app') await bundleWorker(dist)
 
   // The web app manifest. Not for the app channel: a Tauri bundle is already
   // an installed application, and a manifest there would offer to install a
