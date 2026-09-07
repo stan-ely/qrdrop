@@ -77,6 +77,28 @@ const CAPABILITY_NOTE =
  * this module is imported by tests that never build an element. Absent means
  * "assume a mouse", which is the behaviour this component already had.
  */
+/**
+ * The screens that must not let the display time out.
+ *
+ * Everything except the two a person is looking at while deciding something:
+ * 'choose', where nothing is running, and 'done', where nothing is left to
+ * run. In between, the phone is either showing a code for another device to
+ * read, pointed at one, or moving bytes -- and on none of those is anyone
+ * touching the screen, which is exactly what the display timeout counts.
+ *
+ * BEAM IS WHY THIS EXISTS. A beam runs for minutes with the phone held up to
+ * another camera and nothing touching it, so the screen dims and then sleeps
+ * mid-transfer and the QR the other device is reading goes out. The network
+ * path has the same problem more slowly: a large file over a slow link
+ * outlasts a 30-second timeout many times over, and 'transfer' has no input
+ * to keep the display awake either.
+ *
+ * @type {Set<string>}
+ */
+const AWAKE_SCREENS = new Set([
+  'send', 'receive', 'verify', 'transfer', 'beam-send', 'beam-receive',
+])
+
 const coarsePointer = () =>
   typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 
@@ -205,6 +227,32 @@ export class QRDropElement extends HTMLElement {
      * @type {{ query: MediaQueryList, handler: () => void } | null}
      */
     this._onPointerChange = null
+
+    /**
+     * The held screen wake lock, or null when the screen is free to sleep.
+     *
+     * @type {any}
+     */
+    this._wakeLock = null
+
+    /**
+     * Whether a wake lock request is in flight.
+     *
+     * request() is async and the screen can change while it is out, so
+     * without this a person who reached 'transfer' and cancelled before the
+     * promise settled would be handed a lock nothing would ever release --
+     * and a second, third and fourth request would queue up behind every
+     * re-render that asked. _acquireWakeLock re-checks the screen when the
+     * promise lands, for the same reason.
+     */
+    this._wakeLockPending = false
+
+    /**
+     * The document-level visibilitychange listener, kept so
+     * disconnectedCallback can take it off -- see _onPaste above.
+     * @type {(() => void) | null}
+     */
+    this._onVisibility = null
 
     /**
      * Whether the exchange has reached a terminal state.
@@ -537,6 +585,18 @@ export class QRDropElement extends HTMLElement {
     this._onHashChange = () => this._consumeHashCode()
     window.addEventListener('hashchange', this._onHashChange)
 
+    // The platform drops a screen wake lock every time the page is hidden and
+    // never gives it back on its own, so coming back to the foreground is the
+    // only moment a lock can be re-taken -- see _syncWakeLock. Without this,
+    // glancing at a notification mid-beam would leave the display free to
+    // sleep for the rest of the transfer, which is both the longest and the
+    // likeliest case. Bound here and removed in disconnectedCallback like
+    // _onPaste, for the same detached-component reason.
+    if (typeof document !== 'undefined') {
+      this._onVisibility = () => this._syncWakeLock()
+      document.addEventListener('visibilitychange', this._onVisibility)
+    }
+
     // The pointer can change under a running page -- a folio keyboard comes
     // off a tablet, a mouse is plugged into a phone dock -- and the choose
     // screen's copy tells the user which gesture to make. Read once at
@@ -646,6 +706,14 @@ export class QRDropElement extends HTMLElement {
     if (this._onHashChange) window.removeEventListener('hashchange', this._onHashChange)
     this._onHashChange = null
 
+    if (this._onVisibility) document.removeEventListener('visibilitychange', this._onVisibility)
+    this._onVisibility = null
+
+    // Before _teardown, so a component pulled out of the document mid-beam
+    // stops holding the display on. Nothing else would ever release it: the
+    // lock outlives the element, and the screen it was taken for is gone.
+    this._releaseWakeLock()
+
     if (this._onPointerChange) {
       const { query, handler } = this._onPointerChange
       query.removeEventListener('change', handler)
@@ -720,7 +788,87 @@ export class QRDropElement extends HTMLElement {
     this._state = { ...this._state, ...partial }
     this._render()
 
-    if (this._state.screen !== prevScreen) this._focusScreenHeading()
+    if (this._state.screen !== prevScreen) {
+      this._focusScreenHeading()
+      // Screens differ in whether the display may sleep on them -- see
+      // AWAKE_SCREENS. Hung off the screen change rather than off every
+      // _setState because a transfer calls this once per progress tick.
+      this._syncWakeLock()
+    }
+  }
+
+  /**
+   * Take or drop the screen wake lock to match the screen being shown.
+   *
+   * Called on every screen change and on every visibility change, and it is
+   * idempotent in both directions so neither caller has to know what the
+   * other did.
+   *
+   * WHY THIS IS IN THE COMPONENT AND NOT IN KOTLIN. The obvious home for
+   * "keep the display on" is an Android window flag, and it would fix the app
+   * and nothing else. The deployed site has the identical problem -- a beam
+   * from Chrome on a phone is the same phone held up to the same camera for
+   * the same several minutes -- so a fix that only the packaged shell gets
+   * leaves the larger half of the users with the bug. navigator.wakeLock
+   * needs a secure context, which the app has: wry serves the page from
+   * http://tauri.localhost, and *.localhost is potentially trustworthy, which
+   * WebCrypto working in the app already proves.
+   *
+   * Absent on Firefox, hence the feature test -- a screen that sleeps is the
+   * behaviour every browser had until this line, so there is nothing to warn
+   * about and nothing to fall back to.
+   */
+  _syncWakeLock() {
+    // isConnected as well as the screen: disconnectedCallback releases too,
+    // but a component torn out of the document mid-transfer must not have its
+    // lock re-taken by a _setState still in flight behind it.
+    const want = this.isConnected
+      && AWAKE_SCREENS.has(this._state.screen)
+      // The platform revokes the lock whenever the page stops being visible
+      // and will not grant one while it is hidden, so asking is pointless
+      // until it comes back. The visibilitychange listener is what re-asks.
+      && (typeof document === 'undefined' || document.visibilityState === 'visible')
+
+    if (want) this._acquireWakeLock()
+    else this._releaseWakeLock()
+  }
+
+  _acquireWakeLock() {
+    if (this._wakeLock || this._wakeLockPending) return
+    const wakeLock = /** @type {any} */ (navigator).wakeLock
+    if (!wakeLock) return
+
+    this._wakeLockPending = true
+    wakeLock.request('screen').then(/** @param {any} lock */ lock => {
+      this._wakeLockPending = false
+      // The screen may have moved on, or the element been detached, while the
+      // request was out. Releasing immediately is the whole point of
+      // re-checking: a lock taken for a transfer that has since been
+      // cancelled has nothing left to release it.
+      if (!this.isConnected || !AWAKE_SCREENS.has(this._state.screen)) {
+        lock.release?.().catch(() => {})
+        return
+      }
+      this._wakeLock = lock
+      // The platform releases the lock on its own when the page is hidden,
+      // and does not tell _syncWakeLock. Without this the field would still
+      // name a dead sentinel, _acquireWakeLock would decline to ask for
+      // another, and the screen would sleep for the rest of the transfer once
+      // it had been backgrounded a single time.
+      lock.addEventListener?.('release', () => {
+        if (this._wakeLock === lock) this._wakeLock = null
+      })
+    }).catch(() => {
+      // Denied, or the document was not visible after all. Not worth a
+      // warning: the consequence is the display behaving as it always did.
+      this._wakeLockPending = false
+    })
+  }
+
+  _releaseWakeLock() {
+    const lock = this._wakeLock
+    this._wakeLock = null
+    lock?.release?.().catch(() => {})
   }
 
   _render() {
