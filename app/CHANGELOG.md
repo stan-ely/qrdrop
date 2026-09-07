@@ -13,6 +13,27 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**Long-press the icon, or pull down the shade.** Two launcher shortcuts, "Scan a
+code" and "Send a file", and a Quick Settings tile that opens straight onto the
+scanner. Receiving starts with a code already on someone else's screen and a person
+waiting, so the taps before the camera opens are spent while they wait; from the
+shade it is one pull and one tap without leaving the app you were in.
+
+Both travel the share sheet's own chain, carrying an action string where a share
+carries a file — the activity writes a small file into the app cache, Rust takes and
+deletes it, and the web layer starts the screen it names. One mechanism for both
+entry points rather than a second one to keep in step. A shortcut that arrives while
+a transfer is running is declined and says so, exactly as a share is.
+
+**The back gesture no longer closes the app mid-transfer.** It did, silently, and
+that was never a feature this app added — the gesture is the platform's and the
+generated activity forwards it. The first press now says what a second one will do.
+It cannot dismiss the SAS confirmation or beam's Accept.
+
+**The screen stays awake while a transfer or a beam is running**, which matters most
+on the mode where the phone is held up to another camera for minutes with nothing
+touching it.
+
 **The Android share sheet opens qrdrop.** Tapping Share in Photos or Files and
 choosing qrdrop lands the file on the send screen with its own name on it, instead
 of opening the app and picking the same file again by hand. It handles a share into

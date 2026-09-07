@@ -48,6 +48,21 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+
+            <!--
+              LAUNCHER SHORTCUTS. Long press the icon, land on a screen. This
+              line is a hand edit; res/xml/shortcuts.xml, which it points at,
+              is a file Tauri does not generate and so is merely added. Both
+              are in CLAUDE.md's list, because a re-init dropping this line
+              would leave that file orphaned with no error anywhere: the
+              shortcuts would simply stop appearing.
+
+              The chain from a shortcut to the UI is the share sheet's chain
+              with an action string in place of a file. See shortcuts.xml.
+            -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!--
               THE SHARE SHEET. This is the third hand edit inside gen/, after
               the CAMERA permission above and the adaptive icon background in
@@ -99,6 +114,37 @@
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
+
+        <!--
+          THE QUICK SETTINGS TILE. Receiving starts with a code already on
+          someone else's screen and a person waiting, so every tap before the
+          camera opens is spent while they wait. From the shade it is one pull
+          and one tap, without leaving whatever app you were in.
+
+          android:permission is not optional and not a precaution: a tile
+          service that does not require BIND_QUICK_SETTINGS_TILE is one any
+          app could bind to, and Android will not list it. exported must be
+          true for the same reason, since the system binds it from outside.
+
+          It reaches the web layer through the same extra, the same
+          MainActivity.stashLaunchAction and the same cache file handoff the
+          launcher shortcuts use. One mechanism for both, so there is one
+          thing to keep in step with a chain that already has four links.
+
+          Note for editors: this repository's prose style uses a double hyphen
+          as an em dash, and XML forbids that sequence inside a comment.
+          Gradle reports it only as "Error parsing AndroidManifest.xml".
+        -->
+        <service
+            android:name=".QrdropTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_qrdrop_scan"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <provider
           android:name="androidx.core.content.FileProvider"

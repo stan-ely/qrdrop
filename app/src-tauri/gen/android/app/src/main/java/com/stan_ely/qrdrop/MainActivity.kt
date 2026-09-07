@@ -13,11 +13,14 @@ import java.io.File
 /**
  * The app shell, plus the writing end of the share-sheet handoff.
  *
- * THIS FILE IS A HAND EDIT INSIDE gen/, and the third one. The other two are
- * the CAMERA permission in AndroidManifest.xml and the adaptive-icon
- * background colour in res/values/ic_launcher_background.xml. CLAUDE.md lists
- * all three; that list is the only thing standing between a `tauri android
- * init` and silently losing them, which is why gen/ is committed at all.
+ * THIS FILE IS A HAND EDIT INSIDE gen/ -- one of the entries in CLAUDE.md's
+ * table of them, which is the only thing standing between a `tauri android
+ * init` and silently losing the whole delta. That is why gen/ is committed at
+ * all. Do not add an edit here without adding a row there.
+ *
+ * It holds the writing end of BOTH handoffs: a shared file (below) and a
+ * launcher shortcut or Quick Settings tile's chosen screen (further below).
+ * They are the same mechanism carrying different cargo.
  *
  * WHY THE HANDOFF IS A FILE ON DISK. An ACTION_SEND intent arrives as a
  * `content://` URI that only Android's ContentResolver can open -- there is
@@ -35,9 +38,36 @@ import java.io.File
  * app that appears in the share sheet and then does nothing.
  */
 class MainActivity : TauriActivity() {
-  private companion object {
+  companion object {
     /** One tag for the whole chain, so it is an `adb logcat -s qrdrop` away. */
     const val TAG = "qrdrop"
+
+    /**
+     * The extra a launcher shortcut or the Quick Settings tile carries to say
+     * which screen it meant. Named here rather than in each caller because
+     * QrdropTileService reads it off this class -- res/xml/shortcuts.xml
+     * cannot, XML having no way to reference a Kotlin constant, so that file
+     * spells the same string out and says that it is doing so.
+     */
+    const val EXTRA_LAUNCH_ACTION = "com.stan_ely.qrdrop.LAUNCH_ACTION"
+
+    /**
+     * The actions this build will pass on, and the reason this check exists.
+     *
+     * MainActivity is an exported activity -- it has to be, or the share sheet
+     * and the deep links could not reach it -- so any app on the device can
+     * fire an intent at it carrying whatever it likes in that extra. Nothing
+     * downstream interpolates the value (src/share.rs carries the string,
+     * element.js looks it up in a fixed map), so an unknown one would be
+     * inert anyway. It is filtered here regardless, at the boundary where the
+     * value stops being someone else's: an allowlist beside the definition is
+     * cheaper to keep true than an argument about why the layers below are
+     * safe.
+     */
+    val LAUNCH_ACTIONS = setOf("receive", "send", "photo")
+
+    /** Named by src/share.rs's LAUNCH_HANDOFF. The two must agree. */
+    const val LAUNCH_HANDOFF = "qrdrop-launch.json"
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +75,7 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     // A share to an app that was not running lands here.
     stashSharedFile(intent)
+    stashLaunchAction(intent)
   }
 
   /**
@@ -61,6 +92,45 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     stashSharedFile(intent)
+    stashLaunchAction(intent)
+  }
+
+  /**
+   * Records which screen a launcher shortcut or the Quick Settings tile asked
+   * for, in the same shape and for the same reasons as stashSharedFile above.
+   *
+   * A file on disk rather than anything cleverer, because the web layer is not
+   * running yet on a cold start and there is nothing to postMessage to; and a
+   * take rather than a read on the other side, because app/src/main.js polls
+   * on every window focus and a handoff that survived would drag a person back
+   * to the scanner from wherever they had since got to.
+   *
+   * Never throws and always logs, exactly as stashSharedFile does. The reason
+   * is written out there in full: a silent catch on this path turns the one
+   * likely failure into something indistinguishable from the feature not being
+   * wired up at all, and it cost a whole device run once already.
+   */
+  private fun stashLaunchAction(intent: Intent?) {
+    val requested = intent?.getStringExtra(EXTRA_LAUNCH_ACTION) ?: return
+
+    if (requested !in LAUNCH_ACTIONS) {
+      // Logged rather than dropped in silence: this is what a shortcut
+      // definition drifting from the web layer looks like from the device,
+      // and it is otherwise indistinguishable from the extra not arriving.
+      Log.w(TAG, "ignoring unknown launch action: " + requested)
+      return
+    }
+
+    try {
+      // Kept as JSON rather than a bare string so the Rust side deserialises
+      // it the way it deserialises the share handoff, and so a later field
+      // does not have to change the file's format.
+      val handoff = JSONObject().put("action", requested)
+      File(cacheDir, LAUNCH_HANDOFF).writeText(handoff.toString())
+      Log.i(TAG, "stashed launch action " + requested)
+    } catch (e: Exception) {
+      Log.w(TAG, "could not stash the launch action", e)
+    }
   }
 
   /**

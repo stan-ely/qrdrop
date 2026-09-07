@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A viewfinder: four corner brackets and a scan line.
+
+  ADDED, NOT EDITED. Unlike AndroidManifest.xml and MainActivity.kt this file
+  is not one Tauri generates, so a re-init has nothing here to overwrite. It is
+  still listed in CLAUDE.md, because a re-init that dropped the manifest entry
+  pointing at it would leave an orphan nobody could explain.
+
+  Monochrome on purpose and used in two places: the "Scan a code" launcher
+  shortcut and the Quick Settings tile. A tile icon is tinted by the system to
+  match the current theme, so any colour here would be discarded; a single
+  glyph serving both is one fewer thing to keep in step.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M3,8 V5 A2,2 0 0 1 5,3 H8 M16,3 H19 A2,2 0 0 1 21,5 V8 M21,16 V19 A2,2 0 0 1 19,21 H16 M8,21 H5 A2,2 0 0 1 3,19 V16" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M6,11 H18 V13 H6 Z" />
+</vector>

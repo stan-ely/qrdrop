@@ -97,6 +97,64 @@ pub fn take_shared_file_in(dir: &Path) -> Result<Option<SharedFile>, String> {
     Ok(Some(shared))
 }
 
+/// The launch handoff's filename. Written by MainActivity.kt, same agreement
+/// and same lack of a compiler to check it as `HANDOFF` above.
+pub const LAUNCH_HANDOFF: &str = "qrdrop-launch.json";
+
+/// What a launcher shortcut or the Quick Settings tile asked for.
+///
+/// One string, and it is deliberately not an enum on this side. The set of
+/// actions is defined twice already -- in res/xml/shortcuts.xml, which names
+/// them, and in element.js's `startAction`, which maps them to intents -- and
+/// a third definition here would be a third place to edit and the only one
+/// that cannot be tested against the other two. This layer's job is to carry
+/// the string and delete the file.
+///
+/// IT IS NOT TRUSTED INPUT, despite coming from our own manifest. MainActivity
+/// is an exported activity, so any app on the device can fire an intent at it
+/// carrying whatever it likes in that extra. That is harmless because nothing
+/// ever interpolates this value -- Kotlin checks it against a fixed list
+/// before writing it, and element.js looks it up in a fixed map that returns
+/// nothing for anything else -- but the reason it is harmless is worth
+/// writing down, since the obvious "just pass it through" is only safe while
+/// both of those hold.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LaunchAction {
+    pub action: String,
+}
+
+/// Reads and removes the launch handoff, if MainActivity left one.
+///
+/// The share handoff's twin in every respect that matters: `Ok(None)` on the
+/// ordinary launch, a take rather than a read so a resume does not re-run the
+/// same shortcut, and registered on every target rather than gated behind
+/// `#[cfg(target_os = "android")]` so it compiles and tests on a desktop host
+/// and JS never has to special-case a missing command.
+#[tauri::command]
+pub fn take_launch_action(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    take_launch_action_in(&dir)
+}
+
+/// The testable half -- see `take_shared_file_in`.
+pub fn take_launch_action_in(dir: &Path) -> Result<Option<String>, String> {
+    let handoff: PathBuf = dir.join(LAUNCH_HANDOFF);
+    let raw = match fs::read_to_string(&handoff) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    // Deleted before parsing, for the reason take_shared_file_in gives: a
+    // handoff this side cannot understand would otherwise fail identically on
+    // every resume with no way to clear it short of reinstalling.
+    let _ = fs::remove_file(&handoff);
+
+    let launch: LaunchAction = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    Ok(Some(launch.action))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +228,67 @@ mod tests {
         assert!(take_shared_file_in(&dir).is_err());
         // Deleted before parsing, so it cannot fail the same way forever.
         assert_eq!(take_shared_file_in(&dir).unwrap(), None);
+    }
+
+    #[test]
+    fn no_launch_handoff_is_not_an_error() {
+        let dir = temp();
+        assert_eq!(take_launch_action_in(&dir).unwrap(), None);
+    }
+
+    #[test]
+    fn a_launch_action_is_returned_once_and_then_gone() {
+        let dir = temp();
+        fs::write(
+            dir.join(LAUNCH_HANDOFF),
+            serde_json::to_string(&LaunchAction { action: "receive".into() }).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(take_launch_action_in(&dir).unwrap().as_deref(), Some("receive"));
+        // The JS side calls this again on every window focus, and a shortcut
+        // that re-ran itself on every resume would drag a person back to the
+        // scanner from wherever they had got to.
+        assert_eq!(take_launch_action_in(&dir).unwrap(), None);
+    }
+
+    #[test]
+    fn a_malformed_launch_handoff_errors_but_does_not_come_back() {
+        let dir = temp();
+        fs::write(dir.join(LAUNCH_HANDOFF), "{not json").unwrap();
+        assert!(take_launch_action_in(&dir).is_err());
+        assert_eq!(take_launch_action_in(&dir).unwrap(), None);
+    }
+
+    #[test]
+    fn the_two_handoffs_do_not_collide() {
+        // They live in one directory and are taken by two callers on the same
+        // resume. A share must survive a launch pickup and the other way
+        // round, or a file shared into a cold app would be dropped by the
+        // shortcut check that runs beside it.
+        let dir = temp();
+        let payload = dir.join("notes.txt");
+        fs::write(&payload, b"bytes").unwrap();
+        fs::write(
+            dir.join(HANDOFF),
+            serde_json::to_string(&SharedFile {
+                name: "notes.txt".into(),
+                path: payload.to_string_lossy().into_owned(),
+                size: 5,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            dir.join(LAUNCH_HANDOFF),
+            serde_json::to_string(&LaunchAction { action: "send".into() }).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(take_launch_action_in(&dir).unwrap().as_deref(), Some("send"));
+        assert_eq!(
+            take_shared_file_in(&dir).unwrap().expect("a share").name,
+            "notes.txt"
+        );
     }
 }

@@ -54,6 +54,10 @@ pub fn run() {
             // only on one platform is a command whose absence the JS side has
             // to special-case. See src/share.rs.
             share::take_shared_file,
+            // The launcher shortcuts' and the Quick Settings tile's pickup
+            // end, the same shape and registered everywhere for the same
+            // reasons. See src/share.rs.
+            share::take_launch_action,
         ])
         .setup(|app| {
             // Desktop dev has no installer to have registered the `qrdrop`

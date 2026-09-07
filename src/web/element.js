@@ -710,6 +710,61 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
+   * Start one of the choose screen's actions from outside the component --
+   * sendFile's counterpart for an entry point that carries an intention rather
+   * than a file.
+   *
+   * Its callers are the Android launcher shortcuts and the Quick Settings
+   * tile, both of which mean "open qrdrop, on this screen". The OS is the menu
+   * there, which is the point: a person who long-presses the icon to reach the
+   * scanner should not land on the choose screen and have to choose again.
+   *
+   * IT GOES THROUGH _dispatch AND MUST KEEP DOING SO. Reaching past it into
+   * _beginScan or _startSend would be a second way into a flow that already
+   * has one, and the guarantees live on this side of that call -- most of all
+   * that a send confirms the SAS before a manifest goes out. Same rule
+   * sendFile is written to, and the same reason CLAUDE.md gives for there
+   * being no third entry.
+   *
+   * Guarded to the choose screen exactly as sendFile, drop, paste and
+   * _consumeHashCode are, and for a sharper reason than any of them: a tile
+   * can be pulled down from inside another app while a transfer is running
+   * here, and the person doing it has no way of knowing that. Declining and
+   * saying so beats interrupting.
+   *
+   * @param {string} action One of 'receive', 'send' or 'photo'.
+   * @returns {boolean} Whether it was accepted.
+   */
+  startAction(action) {
+    // 'receive' means "point the camera at the other screen", and which scan
+    // that is follows rtcAvailable -- the same test view.js's choose screen
+    // makes. Without it a shortcut on a platform with no WebRTC would open a
+    // scanner for a pairing code that can never arrive.
+    const intents = {
+      receive: this._state.rtcAvailable ? 'receive:scan' : 'beam:scan',
+      send: this._state.rtcAvailable ? 'send:pick' : 'beam:pick',
+      photo: 'send:photo',
+    }
+    const intent = intents[/** @type {keyof typeof intents} */ (action)]
+    if (!intent) {
+      // A name this build does not know, which means a shortcut definition
+      // shipped in the Android manifest and a web layer that predates it --
+      // the app updates as one package, so this is a mistake rather than a
+      // version skew, and it is worth a console line.
+      console.warn('qrdrop: unknown launch action', action)
+      return false
+    }
+
+    if (this._state.screen !== 'choose') {
+      this._toast('Finish this transfer first.')
+      return false
+    }
+
+    this._dispatch(intent)
+    return true
+  }
+
+  /**
    * Reads a `#qrdrop:…` code out of location.hash, clears it, and starts a
    * receive. A no-op unless the component is idle on the choose screen.
    *

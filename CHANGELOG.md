@@ -5,6 +5,28 @@ is the finer-grained record.
 
 ## Unreleased
 
+**On a phone, qrdrop opens as a scanner.** The choose screen's biggest element used
+to be a second "Send a file" button — it took every spare pixel of the card to offer
+what the button below it already offered, and in landscape it spent the whole left
+half of the screen doing it. On a touch device with a camera it is now the way into
+the scanner, and the action bar keeps sending. Two things the app does, two regions,
+neither said twice. On a mouse nothing changed: it is still the drop target, because
+dragging is still the fastest way to send and a thumb still cannot do it.
+
+**The screen no longer goes to sleep mid-transfer.** A beam runs for minutes with
+the phone held up to another device's camera and nothing touching the screen, which
+is exactly what a display timeout counts — so the code being read would go dark
+part-way through. A large file over a slow link had the same problem. The display is
+now held awake from the moment a transfer starts until it ends, and re-held after
+you glance at a notification, which the platform would otherwise not give back.
+
+**The back gesture asks before throwing a transfer away.** It used to close the app,
+mid-transfer, without a word — in the packaged app, in an installed PWA, and in a
+browser tab. Now the first press says so and the second cancels. It never moves
+between screens and never dismisses the SAS confirmation or beam's Accept: those are
+the two gestures nothing is allowed to advance past, and a gesture that could
+dismiss them would be the same bug from the other side.
+
 **The UI works on a touch screen, which it did not.** The choose screen's biggest,
 most eye-catching element was a dashed box reading "Drop a file here" — an
 instruction a phone cannot follow, sitting above the two buttons that could. It is

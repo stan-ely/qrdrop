@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher shortcuts: long-press the icon and land on a screen.
+
+  WHY THESE EXIST. The choose screen is a menu, and a menu is what an OS can
+  render better than an app can - it is already on screen, already under the
+  thumb, and it costs no launch. So the two things qrdrop does are offered
+  before it starts, and a person who wanted the scanner does not open the app
+  in order to say so a second time.
+
+  HOW THE INTENT REACHES THE WEB LAYER. The extra below is read by
+  MainActivity.stashLaunchAction, written to a small JSON in the app cache
+  directory, taken and deleted by src/share.rs's take_launch_action, and handed
+  to the component's startAction by app/src/main.js. That is exactly the chain
+  the share sheet already uses, with an action string where the share has a
+  file - one mechanism, documented in one place, rather than a second way of
+  getting an intention across the same boundary.
+
+  The order is deliberate: scan first. It is the shortcut that saves the most,
+  since sending already begins in a file picker the OS draws, and a launcher
+  that shows only one is showing the more useful one.
+
+  If a launcher ever failed to inflate the extra, the shortcut would open the
+  app on the choose screen - which is what tapping the icon does. The failure
+  mode is losing the shortcut's value, never doing the wrong thing.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="scan"
+        android:enabled="true"
+        android:icon="@drawable/ic_qrdrop_scan"
+        android:shortcutShortLabel="@string/shortcut_scan_short"
+        android:shortcutLongLabel="@string/shortcut_scan_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="com.stan_ely.qrdrop"
+            android:targetClass="com.stan_ely.qrdrop.MainActivity">
+            <extra
+                android:name="com.stan_ely.qrdrop.LAUNCH_ACTION"
+                android:value="receive" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="send"
+        android:enabled="true"
+        android:icon="@drawable/ic_qrdrop_send"
+        android:shortcutShortLabel="@string/shortcut_send_short"
+        android:shortcutLongLabel="@string/shortcut_send_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="com.stan_ely.qrdrop"
+            android:targetClass="com.stan_ely.qrdrop.MainActivity">
+            <extra
+                android:name="com.stan_ely.qrdrop.LAUNCH_ACTION"
+                android:value="send" />
+        </intent>
+    </shortcut>
+</shortcuts>

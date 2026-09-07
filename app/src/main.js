@@ -144,6 +144,40 @@ async function consumeSharedFile() {
   }
 }
 
+/**
+ * The launcher shortcuts' and the Quick Settings tile's last leg.
+ *
+ * consumeSharedFile's twin, and deliberately built the same way: MainActivity
+ * wrote which screen was asked for into a small JSON in the app cache
+ * directory, src-tauri/src/share.rs reads and deletes it, and this hands the
+ * name to the component. An intention rather than a file, through the same
+ * boundary, because a second way of getting one across would be a second thing
+ * to keep in step with a chain that already has four links.
+ *
+ * startAction, not a click on a button in the shadow DOM. It validates the
+ * name, goes through the same _dispatch every other control does, and declines
+ * on anything but the choose screen -- which matters more here than it does
+ * for a share: a tile can be pulled down from inside another app while a
+ * transfer is running, and the person doing it has no way to know that.
+ */
+async function consumeLaunchAction() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+
+    // Ok(None) on every ordinary launch, exactly as take_shared_file is.
+    const action = await invoke('take_launch_action')
+    if (!action) return
+
+    el?.startAction(action)
+  } catch (error) {
+    // Same posture as the two above: a shortcut that cannot be picked up
+    // leaves the app on the choose screen, which is where tapping the icon
+    // would have left it anyway. The failure mode is losing the shortcut's
+    // value, never doing the wrong thing.
+    console.warn('qrdrop: no launch action taken', String(error))
+  }
+}
+
 /*
  * Twice, and both are needed.
  *
@@ -157,6 +191,17 @@ async function consumeSharedFile() {
  *
  * take_shared_file deletes the handoff as it reads it, so the extra calls
  * this makes on every focus are a file stat that finds nothing.
+ *
+ * The launch action rides along on both calls for exactly the same reasons --
+ * a shortcut can start a cold app or reach a running one, and only the window
+ * coming back to the foreground tells the web layer about the second. The two
+ * handoffs are separate files, so taking one never consumes the other; a
+ * Rust test pins that, since it is the kind of thing that would only show up
+ * as "sharing into a cold app sometimes does nothing".
  */
 consumeSharedFile()
-window.addEventListener('focus', () => { consumeSharedFile() })
+consumeLaunchAction()
+window.addEventListener('focus', () => {
+  consumeSharedFile()
+  consumeLaunchAction()
+})

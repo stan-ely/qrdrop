@@ -43,8 +43,8 @@ fan-out to every platform size is `npx tauri icon app/src-tauri/icons/source.png
 deliberately a second command because it writes into `app/src-tauri/gen/`, which
 is committed source. **Read that diff.** It resets the adaptive-icon background
 colour in `gen/android/.../values/ic_launcher_background.xml` to white every
-time, and that file is a hand-edit — one of two in `gen/`, the other being the
-camera permission. The mark occupies the middle 47% of the canvas and that is
+time, and that file is a hand-edit — one of several in `gen/`, tabulated under
+"**The Tauri app**" below. The mark occupies the middle 47% of the canvas and that is
 arithmetic, not taste: the same image becomes Android's adaptive-icon
 foreground, a launcher masks it to the central 66.7%, and the largest square
 inside that circle is 47.1%. At 64% the corner eyes are outside the mask on any
@@ -511,22 +511,40 @@ drift this exists to prevent. `Cargo.lock` is committed because this is a binary
 **`app/src-tauri/gen/` is committed source, except `gen/schemas/`.** It used to be
 ignored whole, and the reasoning was sound while it held nothing but generated
 schemas: `tauri android init` regenerates it in one command, so a committed copy
-would be a second source of truth. Android broke that. **There are three hand
-edits in that tree and this list is the only thing standing between a re-init and
-losing them:**
+would be a second source of truth. Android broke that. **This table is the only
+thing standing between a `tauri android init` and losing the delta**, and it is
+a table rather than the prose list it started as because the list reached the
+size where "there are three of them" stopped being checkable at a glance.
 
-1. `<uses-permission android:name="android.permission.CAMERA"/>` in
-   `app/src/main/AndroidManifest.xml` — without it the scanner and beam cannot
-   open the camera.
-2. The adaptive-icon background colour in
-   `app/src/main/res/values/ic_launcher_background.xml`, which `tauri icon`
-   resets to white every time.
-3. The `ACTION_SEND` / `ACTION_SEND_MULTIPLE` intent-filter in that same
-   `AndroidManifest.xml`, plus its handler in `app/src/main/java/com/stan_ely/
-   qrdrop/MainActivity.kt` — the share sheet.
-   See "**The Android share sheet**" below for the whole chain; the filter
-   without the handler puts qrdrop in the share sheet and has it do nothing,
-   which is worse than not being there.
+Paths are under `app/src-tauri/gen/android/app/src/main/`.
+
+**Edits to files Tauri generates** — a re-init overwrites these, silently:
+
+| Path | What, and what breaks without it |
+|---|---|
+| `AndroidManifest.xml` | `<uses-permission android.permission.CAMERA>`. The scanner and beam cannot open the camera. |
+| `AndroidManifest.xml` | The `ACTION_SEND` / `ACTION_SEND_MULTIPLE` intent-filter. The share sheet. |
+| `AndroidManifest.xml` | `<meta-data android:name="android.app.shortcuts">`. The launcher shortcuts stop appearing, and `res/xml/shortcuts.xml` is orphaned with no error anywhere. |
+| `AndroidManifest.xml` | The `QrdropTileService` `<service>`. The Quick Settings tile stops being offered; the class stays in the tree doing nothing. |
+| `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. |
+| `res/values/ic_launcher_background.xml` | The adaptive-icon background colour, which **`tauri icon` also** resets to white every time. |
+
+**Files Tauri does not generate** — added rather than edited, so a re-init has
+nothing to overwrite. They are listed because each is reached only through a
+hand edit above, and losing that edit leaves the file inert:
+
+| Path | What |
+|---|---|
+| `java/com/stan_ely/qrdrop/QrdropTileService.kt` | The Quick Settings tile. |
+| `res/xml/shortcuts.xml` | The two launcher shortcuts. |
+| `res/values/qrdrop_entry_points.xml` | Their labels, and the tile's. Deliberately **not** in the generated `strings.xml`. |
+| `res/drawable/ic_qrdrop_scan.xml`, `ic_qrdrop_send.xml` | Their icons. |
+
+The manifest's four entries and `MainActivity.kt` are one delta, not five: the
+filter without the handler puts qrdrop in the share sheet and has it do
+nothing, which is worse than not being there, and the same is true of a
+shortcut that opens the app and forgets what it was for. See "**The Android
+share sheet**" and "**The Android entry points**" below for the two chains.
 
 **`tauri.conf.json` has no field that can express any of them**, so
 the delta lives only in `gen/` — where an ignored tree means every re-init silently
@@ -722,7 +740,71 @@ and `share.rs`'s tests pass on the host. What that cannot show is the share
 actually appearing in the sheet and landing, and whether Tauri's
 `app_cache_dir()` resolves to the same directory as Kotlin's `cacheDir` — the
 one assumption the chain rests on. Check the served behaviour, not the built
-tree, remains the rule.
+tree, remains the rule. (That one is now answered: it does — measured on
+device, `app_cache_dir()` is Kotlin's `cacheDir`.)
+
+**The Android entry points are the share sheet's chain carrying an intention
+instead of a file, and that reuse is the design.** A launcher shortcut
+(long-press the icon) and the Quick Settings tile both mean "open qrdrop, on
+this screen". Both put a string in `EXTRA_LAUNCH_ACTION`;
+`MainActivity.stashLaunchAction` writes `qrdrop-launch.json` beside the share's
+handoff; `share.rs`'s `take_launch_action` **reads and deletes** it;
+`app/src/main.js` hands the name to the component's `startAction`. Same file-on-
+disk bridge, same take-not-read, same called-on-load-and-on-focus, same
+registered-on-every-target. A second mechanism for the second entry point was
+the alternative and it is one more thing to keep in step with a chain that
+already has four links.
+
+Four things worth knowing before touching it. **The two handoffs are separate
+files**, because both are taken on the same resume and a shared union would
+have a shortcut's pickup swallow a file — `share.rs` has a test for exactly
+that, since it would otherwise surface only as "sharing into a cold app
+sometimes does nothing". **The action string is not trusted input** despite
+coming from our own manifest: `MainActivity` is exported, so any app can fire
+that extra at it. Nothing interpolates it — Kotlin filters it against
+`LAUNCH_ACTIONS` and `startAction` looks it up in a fixed map — but the reason
+it is safe is worth keeping true rather than rediscovering. **`startAction`
+goes through `_dispatch`**, like `sendFile` goes through `_startSend`, and is
+guarded to the choose screen for a sharper reason than any other caller: a tile
+can be pulled down from inside another app while a transfer is running here,
+and the person doing it cannot know that. And **`startActivityAndCollapse`'s
+`Intent` overload throws on API 34+** — the version branch in
+`QrdropTileService` is not politeness about a deprecation warning.
+
+The set of action names is defined in three places and deliberately not four:
+`res/xml/shortcuts.xml` names them, `MainActivity.LAUNCH_ACTIONS` filters them,
+`element.js`'s `startAction` maps them to intents. `share.rs` carries the string
+without an enum, because a fourth definition would be the only one nothing can
+check against the others.
+
+**`navigator.wakeLock` is held on every screen where something is running, and
+that is a `src/web` concern rather than an Android one.** `RUNNING_SCREENS` in
+`element.js` drives both it and the back guard below — one set, because they are
+two readings of one fact and two sets would be two places to add the next screen
+to. Beam is why it exists: minutes with the phone held up to another camera and
+nothing touching the screen, which is exactly what a display timeout counts. A
+Kotlin `FLAG_KEEP_SCREEN_ON` would have fixed the packaged app and left the
+deployed site — where most of this runs, with the identical problem — alone.
+The app has a secure context for it (`http://tauri.localhost`; `*.localhost` is
+potentially trustworthy, which WebCrypto already working there proves). The
+platform revokes the lock whenever the page is hidden and does not give it back,
+so the `visibilitychange` listener is not optional: without it, one glance at a
+notification frees the display for the rest of the transfer.
+
+**The back gesture is answered, not navigated with.** It always existed —
+`WryActivity` installs an `OnBackPressedCallback` that calls `mWebView.goBack()`
+when `canGoBack()` and finishes the activity otherwise — so before this, an
+accidental swipe closed the app mid-transfer, silently, and the installed PWA
+and a browser tab did the same. `element.js` pushes one sentinel `pushState`
+entry while a session is running and winds it off when it ends; a `pushState`
+entry is a navigation-controller entry, so `canGoBack()` sees it and one
+implementation covers the app, the PWA and the web. **Screens are not history
+entries and back must never move between them.** The entry exists only to be
+caught, and the answer to catching it is a question — refuse once with a toast,
+cancel on a second press inside the toast's own 4000ms. That is what keeps the
+two safety gestures safe: back may offer to cancel on the verify screen and on
+beam's Accept, and nothing anywhere can advance past either. Do not "finish"
+this by mapping back to screen transitions.
 
 **Dark mode on this app is not under our control, and the investigation is
 recorded here so it is not repeated.** The app theme is DayNight, so on a phone
