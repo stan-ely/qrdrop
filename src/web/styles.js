@@ -846,6 +846,73 @@ ${buttonCSS()}
   color: var(--text);
 }
 
+/* ---- the same box, as a viewfinder ----
+ *
+ * On a coarse pointer with a camera the choose screen's slot stops being a
+ * drag target and becomes the way into the scanner (view.js's dropzone). It
+ * is the SAME element restyled rather than a second one swapped in, because
+ * vdom.js's canReuse matches by tag and position and the rule that a pointer
+ * change may alter copy and never shape is worth keeping unbroken where it is
+ * free. Nothing adopted lives on this screen, so breaking it here would be
+ * survivable -- and the screens where it is not free give no warning.
+ *
+ * It has to READ as the receive screen's viewfinder, since that is what it is
+ * a preview of: same dark ground, same corner brackets, same square. A box
+ * that merely said "tap to scan" would be a button with new words on it, and
+ * the tap it saves is not the point -- the point is that a phone opening this
+ * app looks like a scanner.
+ *
+ * The dark ground is not decoration and it is why the brackets can exist:
+ * --scan-line is white (tokens.js), so the brackets are invisible on the light
+ * card this box otherwise sits on. Ground and brackets ship together or
+ * neither does.
+ *
+ * Specificity, not order, is what these have to beat: .dropzone:hover and
+ * .dropzone:focus-visible are 0-2-0, so a plain .scan-panel rule later in the
+ * file still loses to them. Each state is therefore restated here rather than
+ * inherited, which is also why this block looks more repetitive than it is.
+ */
+.scan-panel {
+  /* Read by the corner-bracket rules further down, which are shared with
+   * .viewfinder. That one is an absolutely positioned overlay already inset
+   * 12% from the video, so its corners sit at 0; this one IS the box, so its
+   * corners need holding off the dashed edge themselves. */
+  --corner-inset: var(--sp-4);
+  position: relative;
+  background: var(--scan-bg);
+  color: var(--scan-line);
+  /*
+   * Square, by the same mechanism .qr uses and for a related reason: this is a
+   * picture of a viewfinder, and a viewfinder that is not square stops looking
+   * like one -- it reads as a slab with brackets stuck on the corners.
+   *
+   * flex: 0 0 auto, and that is the whole trick. The coarse rule at the foot
+   * of this file gives .dropzone a grow of 1 so the DRAG TARGET fills the
+   * slot, which is right for a box whose only job is to be big. Applied to an
+   * aspect-ratio box it is the 352x306 bug again from the growth side instead
+   * of the shrink side: check-layout measured 302x417, 332x461 and 478x622
+   * across the viewports before this line existed, because flex-grow settles
+   * the block axis and aspect-ratio never gets to. Hence the :not() on that
+   * rule -- the panel opts out of filling and states its own shape.
+   *
+   * Which axis DRIVES that shape then depends on which one is scarce, exactly
+   * as it does for .qr: inline here, where height is plentiful, and block in
+   * the short and wide branches below, where it is not. Setting both pins the
+   * box and clamping one without releasing the other is what breaks the
+   * square.
+   */
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  min-block-size: 8rem;
+  margin-inline: auto;
+}
+
+/* Neither of these inherits from the .dropzone versions: those resolve to
+ * --text and --surface-raised, which are the page's dark-on-light pair and
+ * disappear on this box's dark ground. */
+.scan-panel:hover { border-color: var(--scan-line); color: var(--scan-line); }
+.scan-panel:active { background: var(--scan-bg); border-color: var(--accent); }
+
 /* Always light, whatever the page theme: scanners read dark-on-light best. */
 /*
  * Sized from its INLINE size, with aspect-ratio deriving the height, and NOT
@@ -977,18 +1044,53 @@ ${buttonCSS()}
   pointer-events: none;
   border-radius: var(--r-sm);
 }
+/*
+ * Four corners out of two elements, and the choose screen's scan panel is
+ * hung on the same rules rather than given its own copy of them.
+ *
+ * A pseudo-element pair gives two corners, so the bottom two come from a
+ * child's pair: .viewfinder's <span>, and on the panel the <p> holding its one
+ * line (view.js keeps that child there at every pointer). Neither child is
+ * positioned, so all four resolve against the same containing block. Four
+ * extra elements was the alternative, and it puts markup in the vdom that
+ * exists only to be drawn on.
+ *
+ * --corner-inset is how one set of rules serves both. .viewfinder is an
+ * overlay already inset 12% from the video, so it wants 0; .scan-panel is the
+ * box itself and has to hold its corners off its own dashed edge. Pseudo
+ * elements inherit from the element they belong to, and the child inherits
+ * from the parent, so setting it once on each host reaches all four.
+ */
+.viewfinder { --corner-inset: 0px; }
 .viewfinder::before, .viewfinder::after,
-.viewfinder > span::before, .viewfinder > span::after {
+.viewfinder > span::before, .viewfinder > span::after,
+.scan-panel::before, .scan-panel::after,
+.scan-panel > p::before, .scan-panel > p::after {
   content: '';
   position: absolute;
   width: var(--sp-5);
   height: var(--sp-5);
   border: 3px solid var(--scan-line);
+  /* The panel's <p> is a flex item that would otherwise be laid out around
+   * these; the viewfinder's <span> is empty so it costs nothing there. */
+  pointer-events: none;
 }
-.viewfinder::before { top: 0; left: 0; border-right: none; border-bottom: none; }
-.viewfinder::after { top: 0; right: 0; border-left: none; border-bottom: none; }
-.viewfinder > span::before { bottom: 0; left: 0; border-right: none; border-top: none; }
-.viewfinder > span::after { bottom: 0; right: 0; border-left: none; border-top: none; }
+.viewfinder::before, .scan-panel::before {
+  top: var(--corner-inset); left: var(--corner-inset);
+  border-right: none; border-bottom: none;
+}
+.viewfinder::after, .scan-panel::after {
+  top: var(--corner-inset); right: var(--corner-inset);
+  border-left: none; border-bottom: none;
+}
+.viewfinder > span::before, .scan-panel > p::before {
+  bottom: var(--corner-inset); left: var(--corner-inset);
+  border-right: none; border-top: none;
+}
+.viewfinder > span::after, .scan-panel > p::after {
+  bottom: var(--corner-inset); right: var(--corner-inset);
+  border-left: none; border-top: none;
+}
 
 /* No camera on this device: view.js still fills the media slot, with an empty
  * frame the same size and shape as the live one so the screen keeps its
@@ -1307,6 +1409,13 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
   .card-actions { padding-block-start: var(--sp-3); }
   .outcome { padding: var(--sp-3); }
   .qr, .beam-stage { block-size: min(12rem, 100%); }
+  /* The scan panel joins them, and for the same reason spelled out on the
+   * wide-branch rule below: height is the scarce axis here, so it has to be
+   * the one that governs, with inline-size released so aspect-ratio can
+   * derive it. It keeps its own floor rather than taking the QR's cap -- 8rem
+   * is where a viewfinder stops being aimable, and unlike a code there is
+   * nothing here that has to resolve. */
+  .scan-panel { block-size: min(12rem, 100%); inline-size: auto; }
   .transfer-pct { font-size: var(--fs-2); }
 
   /* Callouts keep their colour, border and every word, and give up eight
@@ -1374,6 +1483,16 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
    * width, exactly as the base rule does.
    */
   .qr, .beam-stage { block-size: min(22rem, 100%); margin-inline: 0; }
+
+  /* The scan panel, same treatment and the same reasoning. This is the branch
+   * that exposed the bug: at 1280x620 the panel measured 352x302 in both
+   * engines, its width nailed to the 22rem column while the block axis gave
+   * way -- the 352x306 QR failure, on a different element, five hundred lines
+   * further down the file. It stays centred rather than taking the QR's
+   * margin-inline: 0, because a viewfinder centred in its column is where a
+   * person expects to aim and a code pushed left is easier to hold a phone up
+   * to. */
+  .scan-panel { block-size: min(22rem, 100%); inline-size: auto; }
 }
 
 /*
@@ -1463,7 +1582,14 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
    * Scoped to .dropzone, not to .card-media's children, precisely so the QR
    * and the camera keep the shape they are asserted to have.
    */
-  .dropzone { padding: var(--sp-5) var(--sp-4); flex: 1 1 auto; }
+  /* :not(.scan-panel), because "fill the slot" is advice for a box with no
+   * shape of its own. The scan panel is square and says so where it is
+   * defined; letting flex-grow reach it settles the block axis before
+   * aspect-ratio can, which is the same class of bug as the 352x306 QR seen
+   * from the other end. Both halves are needed -- the padding here is still
+   * right for it, only the flex is not. */
+  .dropzone { padding: var(--sp-5) var(--sp-4); }
+  .dropzone:not(.scan-panel) { flex: 1 1 auto; }
 
   /*
    * 2.75rem is 44px, which is the floor every platform guideline names, and a

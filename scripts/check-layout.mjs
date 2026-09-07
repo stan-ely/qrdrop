@@ -301,10 +301,23 @@ for (const pointer of POINTERS) {
       // any box that is not square, so the rest becomes a white band. Nothing
       // else in this report measures a SHAPE, which is exactly how a
       // rectangle survived on the send screen in one of the two engines.
-      const media = screen ? screen.querySelector('.qr, .beam-stage') : null
+      //
+      // .scan-panel joins them for a related reason rather than the same one.
+      // It has no quiet zone to protect -- it is the choose screen's slot on a
+      // coarse pointer, and nothing is decoded from it. It is asserted because
+      // it is a PICTURE OF a viewfinder, and a viewfinder that is not square
+      // stops looking like one: it is handed a 22rem full-height column by the
+      // two-column landscape branch, which is precisely the shape that turned
+      // the send screen's QR into 352x306. Same trap, same measurement.
+      const media = screen ? screen.querySelector('.qr, .beam-stage, .scan-panel') : null
       const mediaBox = media ? media.getBoundingClientRect() : null
 
       return {
+        // Named rather than assumed, so the failure says which of the three
+        // boxes it measured. It used to hardcode ".qr/.beam-stage" in the
+        // message, which was already a guess between two and is now one
+        // between three.
+        mediaName: media ? `.${media.className.trim().split(/\s+/).join('.')}` : null,
         mediaBox: mediaBox ? { width: mediaBox.width, height: mediaBox.height } : null,
         bodyOverflow: body ? body.scrollHeight - body.clientHeight : 0,
         pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
@@ -328,7 +341,7 @@ for (const pointer of POINTERS) {
     // reason. The failure this exists to catch was ~44px out, nowhere near it.
     if (report.mediaBox && Math.abs(report.mediaBox.width - report.mediaBox.height) > 1) {
       problems.push(
-        `.qr/.beam-stage is ${Math.round(report.mediaBox.width)}x${Math.round(report.mediaBox.height)}, expected square`,
+        `${report.mediaName} is ${Math.round(report.mediaBox.width)}x${Math.round(report.mediaBox.height)}, expected square`,
       )
     }
     if (report.bodyOverflow > 1) problems.push(`card copy scrolls by ${report.bodyOverflow}px`)

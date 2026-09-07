@@ -538,8 +538,49 @@ function screen(name, state, dispatch) {
 }
 
 /**
- * The choose screen's media block: the drag target on a mouse, and on every
- * pointer the largest tap target in the app.
+ * Whether the choose screen's media slot is a scanner rather than a drag
+ * target -- asked by dropzone() and by choose(), which must agree or the
+ * screen grows two ways to scan or none.
+ *
+ * Both terms are necessary. `coarse` is the whole point: a mouse can drag and
+ * a thumb cannot, so the slot's best use differs by pointer. `cameraAvailable`
+ * is the one that is easy to forget -- a panel reading "Tap to scan a code" on
+ * a device with no camera is an instruction that cannot be followed, which is
+ * the exact complaint this work started from, reintroduced from the other
+ * side. Without a camera the box stays the file target it has always been.
+ *
+ * @param {State} state
+ */
+function slotScans(state) {
+  return state.coarse && state.cameraAvailable
+}
+
+/**
+ * The choose screen's media block: the drag target on a mouse, the scanner on
+ * a thumb, and on every pointer the largest tap target in the app.
+ *
+ * WHAT THIS SLOT IS FOR, since it is now two different things. It is the
+ * screen's primary spatial affordance -- the thing big enough to hit without
+ * reading -- and what deserves that differs by pointer. On a mouse it is a
+ * drop target, because dropping is the fastest way to send and there is
+ * nowhere else to express it. On a phone it is a viewfinder, because holding
+ * the device up and pointing it is the one thing here that WANTS a large
+ * target, and because the alternative was what shipped last round: a box
+ * taking every spare pixel of the card to offer one tap that the button two
+ * inches below it already offered. Send did not need the space twice; receive
+ * had none.
+ *
+ * So the action bar and this box divide the screen's two verbs between them
+ * rather than both spending themselves on one. See choose(), which drops the
+ * bar's receive button exactly when this takes it over.
+ *
+ * NOT A LIVE CAMERA. It looks like the viewfinder on the receive screen and it
+ * is not one: tapping it dispatches the same intent the button did, and the
+ * camera opens over there as it always has. Landing on a running camera was
+ * the other design and is worse for three reasons -- a permission prompt on
+ * cold start, the most-visited screen holding the one resource qr.js's release
+ * invariant exists to police, and an app about privacy switching the camera on
+ * because someone opened it.
  *
  * A <button>, at EVERY pointer, and that is load-bearing twice over.
  *
@@ -557,23 +598,44 @@ function screen(name, state, dispatch) {
  * the touch fix is the desktop fix -- the same element, doing on click what
  * it already did on drop.
  *
- * The copy is the only thing the pointer changes. "Drop a file here" is an
- * instruction that cannot be followed on a phone, which is exactly the
- * complaint this work started from: the app's tallest, most eye-catching
- * element was telling a person to perform a gesture their device does not
- * have, directly above the two buttons that do work.
+ * The copy, the class and the handler are the only things the pointer changes.
+ * "Drop a file here" is an instruction that cannot be followed on a phone,
+ * which is exactly the complaint this work started from: the app's tallest,
+ * most eye-catching element was telling a person to perform a gesture their
+ * device does not have, directly above the two buttons that do work.
+ *
+ * WHICH SCAN, and it is not always the network one. Without WebRTC the choose
+ * screen offers beam and nothing else (see choose()), so a panel dispatching
+ * 'receive:scan' there would open a scanner for a pairing code that can never
+ * arrive. The slot's meaning is constant -- "point the camera at the other
+ * screen" -- and which of the two scans that is follows the same
+ * rtcAvailable test the rest of the screen already follows.
+ *
+ * The id comes with the job. Whichever button the panel replaces in the action
+ * bar gives up its id to it, so #btn-receive and #btn-beam-receive each exist
+ * exactly once at every pointer -- they are part of the contract with
+ * e2e/transfer.e2e.mjs, and a duplicate or a missing one is a broken selector
+ * on a suite that runs at the other pointer and would never see it.
  *
  * @param {State} state
  * @param {Dispatch} dispatch
  */
 function dropzone(state, dispatch) {
+  const scan = slotScans(state)
+  const beam = !state.rtcAvailable
   return h('button', {
     type: 'button',
-    class: `dropzone${state.dragging ? ' is-dragging' : ''}`,
-    onclick: () => dispatch('send:pick'),
+    id: scan ? (beam ? 'btn-beam-receive' : 'btn-receive') : undefined,
+    class: `dropzone${scan ? ' scan-panel' : ''}${state.dragging ? ' is-dragging' : ''}`,
+    onclick: () => dispatch(scan ? (beam ? 'beam:scan' : 'receive:scan') : 'send:pick'),
   }, [
-    h('p', {}, state.coarse
-      ? 'Tap to choose a file.'
+    // is-dragging is still honoured on a scan panel, and that is not an
+    // oversight: element.js does not gate its drag listeners on the pointer,
+    // because a tablet reports coarse and can still have a file dragged onto
+    // it from a desktop-class file manager. A drop there sends, exactly as it
+    // does on the mouse layout, so the highlight is telling the truth.
+    h('p', {}, scan
+      ? 'Tap to scan a code.'
       : 'Drop a file here, or click to choose one.'),
   ])
 }
@@ -604,9 +666,15 @@ function choose(state, dispatch) {
       actions: [
         h('button', { id: 'btn-beam', class: 'btn primary', onclick: () => dispatch('beam:pick') },
           'Show it as a QR code'),
-        h('button', { id: 'btn-beam-receive', class: 'btn', onclick: () => dispatch('beam:scan') },
-          'Scan a beamed file'),
-      ],
+        // Gone when the panel above is the scanner, which took this button's
+        // id with it -- see dropzone(). Leaving it would put "scan" on the
+        // screen twice, which is the duplication this whole change removes,
+        // and would put the id on the screen twice, which breaks a selector.
+        slotScans(state)
+          ? null
+          : h('button', { id: 'btn-beam-receive', class: 'btn', onclick: () => dispatch('beam:scan') },
+            'Scan a beamed file'),
+      ].filter(Boolean),
     }
   }
 
@@ -662,13 +730,35 @@ function choose(state, dispatch) {
        * full-width buttons cannot share a line on a 390px phone, so a ghost
        * button beside the primary fills a gap that was there anyway, while
        * the same button at the end pushed "No network?" onto a third row.
+       *
+       * That last measurement predates the scan panel taking "Receive a file"
+       * out of this bar. The bar is now one primary and two ghosts, which lays
+       * out as Send on its own row and the two ghosts sharing the next -- so
+       * the placement no longer costs or saves a row either way. It stays here
+       * for the first reason, which was never about rows: this and "Send a
+       * file" are both ways of starting a send and read as a pair.
        */
       state.coarse
         ? h('button', { id: 'btn-photo', class: 'btn ghost', onclick: () => dispatch('send:photo') },
           'Take a photo')
         : null,
-      h('button', { id: 'btn-receive', class: 'btn', onclick: () => dispatch('receive:scan') },
-        'Receive a file'),
+      /*
+       * Gone exactly when the media slot became the scanner, which took this
+       * button's id with it (dropzone()). The bar is then send and only send
+       * -- "Send a file", "Take a photo" -- and the box above is receive,
+       * which is the point of the rearrangement: two verbs, two regions,
+       * neither said twice.
+       *
+       * The condition is slotScans and not state.coarse, so a touch device
+       * with no camera keeps this button and keeps a way to reach the
+       * manual-code form behind it. That is the only route to a transfer left
+       * on such a device, and losing it would be a phone that can send and
+       * cannot receive.
+       */
+      slotScans(state)
+        ? null
+        : h('button', { id: 'btn-receive', class: 'btn', onclick: () => dispatch('receive:scan') },
+          'Receive a file'),
     ].filter(Boolean),
 
     // Beam is not an equal option, and now nothing on the screen implies it is:
