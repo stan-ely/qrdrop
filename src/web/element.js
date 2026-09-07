@@ -591,7 +591,18 @@ export class QRDropElement extends HTMLElement {
    *   was already in progress and nothing was touched.
    */
   sendFile(file) {
-    if (this._state.screen !== 'choose') return false
+    if (this._state.screen !== 'choose') {
+      // SAYING SO, not just declining. A share arriving at a busy app is
+      // exactly what _toast is for -- a change the user did not cause and
+      // could not otherwise notice. Returning false silently was the first
+      // shape and it is the failure this whole path is most likely to have:
+      // the person taps Share, the app comes to the front showing a transfer
+      // they had forgotten about, and nothing they can see connects that to
+      // the file they just sent. The return value is still there for a caller
+      // that wants to act on it; this is for the person holding the phone.
+      this._toast(`Finish this transfer before sending ${file.name}`)
+      return false
+    }
     this._startSend(file).catch(e => this._fail(e))
     return true
   }
