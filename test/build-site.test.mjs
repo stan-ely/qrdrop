@@ -70,7 +70,8 @@ test('the website carries no Tauri runtime origins at all', () => {
   // than an unconditional entry: the deployed site has no Tauri runtime, so
   // an ipc: or asset: entry there would be an unjustified allowance in a
   // policy whose whole argument is that every entry is justified.
-  const connect = buildCSP(['wss://a.example']).split('; ').find(d => d.startsWith('connect-src '))
+  const connect = /** @type {string} */ (
+    buildCSP(['wss://a.example']).split('; ').find(d => d.startsWith('connect-src ')))
   for (const origin of ['ipc:', 'ipc.localhost', 'asset:', 'asset.localhost']) {
     assert.ok(!connect.includes(origin), `website connect-src should not name ${origin}`)
   }
