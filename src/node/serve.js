@@ -49,6 +49,18 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  // Without this the manifest falls through to application/octet-stream, and
+  // _headers sends X-Content-Type-Options: nosniff -- so the browser declines
+  // to parse it and the page is simply not installable, with nothing in the
+  // console pointing at a MIME map.
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  // Every image in the built tree, which until now was served as
+  // application/octet-stream by both of these maps. A browser renders an
+  // <img> from that anyway, so the og card and the favicon looked fine and
+  // nobody had reason to look -- but an installable manifest is checked
+  // rather than rendered, and an icon whose type is not an image type is one
+  // of the ways a page silently fails to be installable.
+  '.png': 'image/png',
 }
 
 /**

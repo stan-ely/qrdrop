@@ -161,6 +161,33 @@ try {
   await writeFile(favicon, small)
   console.log(`Wrote ${path.relative(ROOT, favicon)} (${FAV}x${FAV}, ${(small.length / 1024).toFixed(1)} kB)`)
 
+  /*
+   * The web manifest's small icon. 512 is already covered by favicon.png
+   * above -- the manifest points at that same file rather than at a second
+   * copy of the same pixels, so only the size that does not exist yet is
+   * drawn here.
+   *
+   * NO SEPARATE MASKABLE RENDER, and that is the SAFE constant's doing
+   * rather than an omission. A maskable icon has to keep its content inside
+   * a circle of 80% diameter, because the launcher may crop to any shape
+   * within that; this mark already occupies the middle 47% for the stricter
+   * Android adaptive-icon reason documented at the top of this file.
+   * Anything that survives a 66.7% mask survives an 80% one with room to
+   * spare, so both PNGs are declared "any maskable" in the manifest and one
+   * image serves both purposes.
+   *
+   * If SAFE is ever raised past ~0.8 that stops being true and the manifest
+   * has to go back to declaring a separate maskable variant. The adaptive
+   * icon would have broken first, which is the louder failure.
+   */
+  const SMALL = 192
+  await page.setViewportSize({ width: SMALL, height: SMALL })
+  await page.setContent(markup(SMALL), { waitUntil: 'load' })
+  const icon192 = path.join(ROOT, 'site', 'icon-192.png')
+  const tiny = await page.screenshot({ type: 'png' })
+  await writeFile(icon192, tiny)
+  console.log(`Wrote ${path.relative(ROOT, icon192)} (${SMALL}x${SMALL}, ${(tiny.length / 1024).toFixed(1)} kB)`)
+
   console.log('\nNext: npx tauri icon app/src-tauri/icons/source.png -- and READ the diff.')
   console.log('It writes into app/src-tauri/gen/, which is committed source.')
 } finally {

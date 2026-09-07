@@ -105,6 +105,21 @@
 <link rel="icon" href="favicon.png" type="image/png">
 <link rel="apple-touch-icon" href="favicon.png">
 
+<!--
+  The web app manifest, which is what makes this installable to a home screen
+  and able to run without the URL bar. Generated per channel rather than
+  committed -- scripts/build-site.mjs's webManifest explains why a single file
+  cannot be right for both the stable tree at / and the edge tree at /edge/.
+
+  theme-color is substituted from the same constant the manifest and --bg are
+  built from (src/web/tokens.js). It tints the browser's own chrome around the
+  page before any stylesheet has painted, so a hardcoded copy here would show
+  its drift as a flash of the wrong colour on every cold start -- and only on
+  a cold start, which is the hardest moment to be looking.
+-->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="__THEME_COLOR__">
+
 <!-- href is rewritten by scripts/build-site.mjs to the content-hashed stylesheet
      filename, for the same reason the script src below is. -->
 <link rel="stylesheet" href="__STYLES__">

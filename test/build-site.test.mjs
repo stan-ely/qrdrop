@@ -13,8 +13,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-import { buildCSP, buildStamp, wellKnownFiles } from '../scripts/build-site.mjs'
+import { buildCSP, buildStamp, webManifest, wellKnownFiles } from '../scripts/build-site.mjs'
 import { SIGNALING_URLS } from '../src/transport/room.js'
+import { tokensCSS, THEME_COLOR } from '../src/web/tokens.js'
 
 test('connect-src lists every signalling origin plus self, and nothing else', () => {
   const csp = buildCSP(['wss://a.example', 'wss://b.example:8443'])
@@ -203,4 +204,58 @@ test('an unknown channel fails the build rather than defaulting', () => {
   // copy of the stable page at /edge/, which is a silently wrong site rather
   // than a failed one.
   assert.throws(() => buildStamp({ channel: 'Edge', ...META }), /Unknown channel/)
+})
+
+/*
+ * The manifest. Pinned here rather than left to a build, for the same reason
+ * every other generator in this file is: these are the values a phone reads
+ * once, at install time, and gets wrong silently for as long as the icon
+ * stays on someone's home screen.
+ */
+test('the manifest start_url and scope are relative, so each channel installs itself', () => {
+  const stable = JSON.parse(webManifest({ channel: 'stable' }))
+  const edge = JSON.parse(webManifest({ channel: 'edge' }))
+
+  // The one property that makes a single generator correct for a site serving
+  // two builds out of one artifact. An absolute '/' here would have an
+  // installed /edge/ launch the stable tree, from an icon labelled edge.
+  for (const m of [stable, edge]) {
+    assert.equal(m.start_url, './')
+    assert.equal(m.scope, './')
+  }
+
+  // No explicit id, so it defaults to start_url and the two channels are
+  // distinct installs by construction. A literal id would have to be right
+  // per channel, which is the branching the relative URLs exist to avoid.
+  assert.equal('id' in stable, false)
+})
+
+test('every manifest icon is a file the build actually emits', () => {
+  const manifest = JSON.parse(webManifest({ channel: 'stable' }))
+  // Relative, like start_url, and matching what build-site copies into dist.
+  // A manifest naming an icon that is not there is not an error anywhere --
+  // the install prompt simply never appears.
+  const emitted = new Set(['icon-192.png', 'favicon.png'])
+  assert.ok(manifest.icons.length > 0)
+  for (const icon of manifest.icons) {
+    assert.ok(emitted.has(icon.src), `manifest names ${icon.src}, which the build does not emit`)
+    assert.equal(icon.type, 'image/png')
+    // Both sizes are safe to mask: see the note beside the 192px render in
+    // scripts/make-icon.mjs for why one image serves both purposes.
+    assert.equal(icon.purpose, 'any maskable')
+  }
+  // 192 and 512 are the two Chrome checks for installability.
+  const sizes = manifest.icons.map(i => i.sizes)
+  assert.ok(sizes.includes('192x192'))
+  assert.ok(sizes.includes('512x512'))
+})
+
+test('the manifest colours are the token, not a second copy of it', () => {
+  const manifest = JSON.parse(webManifest({ channel: 'stable' }))
+  assert.equal(manifest.theme_color, THEME_COLOR)
+  assert.equal(manifest.background_color, THEME_COLOR)
+  // And the token is what the stylesheet ships, which is the half that would
+  // otherwise drift: the manifest paints the splash before any CSS loads, so
+  // a mismatch shows up only as a flash on a cold start.
+  assert.ok(tokensCSS(':root').includes(`--bg: ${THEME_COLOR};`))
 })

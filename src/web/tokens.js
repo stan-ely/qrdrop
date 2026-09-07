@@ -10,6 +10,24 @@ export const BREAKPOINT_WIDE = '(min-width: 60rem) and (max-height: 62rem)'
 export const BREAKPOINT_SHORT = '(max-height: 46rem)'
 
 /**
+ * The page ground, exported for the same reason the breakpoints above are:
+ * something outside CSS needs the value and must not keep its own copy.
+ *
+ * Here it is the web manifest (scripts/build-site.mjs), whose theme_color and
+ * background_color decide what an installed app shows in the task switcher
+ * and on the splash screen BEFORE any stylesheet has loaded. A manifest that
+ * drifted from --bg would paint a flash of the wrong colour on every cold
+ * start -- the kind of thing that reads as a broken app and never as a stale
+ * constant, because the moment anyone looks the page has already loaded and
+ * the two agree again.
+ *
+ * The light value specifically: a manifest carries one colour, not a pair,
+ * and there is no media-query form of it. Chrome and Android tint from this
+ * regardless of the device theme.
+ */
+export const THEME_COLOR = '#f7f6f3'
+
+/**
  * The design token set: every colour, space, radius, type, and shadow value
  * the UI uses, in one place.
  *
@@ -120,7 +138,7 @@ ${selector} {
    * 3:1 floor for the large-text/UI-border uses (the step rail's active
    * segment, the SAS "these differ" note's accent underline).
    */
-  --bg: #f7f6f3;
+  --bg: ${THEME_COLOR};
   --surface: #ffffff;
   --surface-raised: #f1efe9;
   /* The other direction from --surface-raised, and the axis this palette was

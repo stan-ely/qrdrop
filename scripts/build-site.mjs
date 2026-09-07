@@ -32,7 +32,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { SIGNALING_URLS } from '../src/transport/room.js'
-import { tokensCSS, BREAKPOINT_WIDE, BREAKPOINT_SHORT } from '../src/web/tokens.js'
+import { tokensCSS, THEME_COLOR, BREAKPOINT_WIDE, BREAKPOINT_SHORT } from '../src/web/tokens.js'
 import { sheetCSS, buttonCSS } from '../src/web/styles.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -312,6 +312,71 @@ export function buildCSP(signalingUrls, { ipc = false } = {}) {
 }
 
 /**
+ * The web app manifest, which is what lets a phone install this from the
+ * browser and run it without the URL bar.
+ *
+ * GENERATED, not a static file copied across, for the reason CNAME and og:url
+ * are: the two deployed channels need different values and a single committed
+ * manifest would be right for at most one of them. The site is one Pages
+ * artifact serving the latest tag at / and the tip of main at /edge/ (see
+ * .github/workflows/pages.yml), so an installed /edge/ pointing its start_url
+ * at / would launch the stable build from an icon labelled edge.
+ *
+ * start_url and scope are RELATIVE, and that is what keeps this free of
+ * channel branching. Both resolve against the manifest's own URL, so "./"
+ * means / for the stable tree and /edge/ for the edge one without this
+ * function being told which it is building. It also survives the site moving
+ * to a different path, which a hardcoded "/edge/" would not.
+ *
+ * `id` is omitted deliberately, which makes it default to start_url. That is
+ * exactly the behaviour wanted here: the two channels then have different
+ * ids because they have different start_urls, so a phone can hold both
+ * installs at once and treat them as the separate applications they are.
+ * Naming an id explicitly would be one more thing to get right per channel
+ * for no gain.
+ *
+ * display: standalone rather than fullscreen. This app asks people to compare
+ * emoji on two screens and to point a camera at one of them; hiding the
+ * status bar takes away the clock and the battery for no room the layout
+ * needs, and site/styles.css already fits the viewport exactly.
+ *
+ * The icons are the ones make-icon.mjs writes, and both are declared
+ * "any maskable" -- see the note beside the 192px render there for why one
+ * image can serve both purposes here.
+ *
+ * @param {{ channel: string }} meta
+ * @returns {string} the manifest, as JSON
+ */
+export function webManifest({ channel }) {
+  return JSON.stringify({
+    name: 'qrdrop',
+    // What a launcher prints under the icon, where there is room for about a
+    // dozen characters. Identical to name here because the name is already
+    // short; stated anyway so that a longer name later cannot silently become
+    // an ellipsis on a home screen nobody on this project is looking at.
+    short_name: 'qrdrop',
+    description: 'Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.',
+    start_url: './',
+    scope: './',
+    display: 'standalone',
+    // Portrait is not forced. The beam and scanner screens are the ones a
+    // person holds a phone up for, and check-layout.mjs walks a landscape
+    // phone precisely because that is a shape this layout has to survive --
+    // locking orientation would be the app overriding a decision the person
+    // holding it already made.
+    theme_color: THEME_COLOR,
+    background_color: THEME_COLOR,
+    icons: [
+      { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+      { src: 'favicon.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    ],
+    // Which build this is, for anyone reading an installed manifest and
+    // wondering which of the two they have. Not consumed by any platform.
+    channel,
+  }, null, 2) + '\n'
+}
+
+/**
  * The two digital-asset-links files that let a scanned universal / app link
  * (`https://share.stan-ely.com/#qrdrop:…`) open the installed desktop/mobile
  * app instead of the browser. When the app is not installed the same URL just
@@ -559,6 +624,10 @@ async function main() {
   // them from one source.
   await copyFile(path.join(SITE, 'favicon.png'), path.join(dist, 'favicon.png'))
 
+  // The manifest's small icon. Committed and copied for the same reason
+  // favicon.png above is -- one hand-run generator, output in the repo.
+  await copyFile(path.join(SITE, 'icon-192.png'), path.join(dist, 'icon-192.png'))
+
   // Stable only. CNAME is what binds the custom domain, and GitHub Pages reads
   // exactly one of them, at the root of the deployed artifact -- the edge tree
   // is a subdirectory of that same artifact, so a CNAME inside it is not a
@@ -566,6 +635,13 @@ async function main() {
   // edge tree honest about being a subdirectory rather than a site.
   if (stamp.channel === 'stable') {
     await writeFile(path.join(dist, 'CNAME'), new URL(ORIGIN).host + '\n')
+  }
+
+  // The web app manifest. Not for the app channel: a Tauri bundle is already
+  // an installed application, and a manifest there would offer to install a
+  // web app from inside the native one it is a copy of.
+  if (stamp.channel !== 'app') {
+    await writeFile(path.join(dist, 'manifest.webmanifest'), webManifest({ channel: stamp.channel }))
   }
 
   // The universal / app link association files. Not for the app channel: the
@@ -620,10 +696,12 @@ async function main() {
     .replaceAll('__BUILD_LABEL__', stamp.label)
     .replaceAll('__BUILD_HREF__', stamp.href)
     .replaceAll('__BUILD_TITLE__', stamp.title)
+    .replaceAll('__THEME_COLOR__', THEME_COLOR)
 
   const leftover = [
     '__CSP__', '__SCRIPT__', '__STYLES__', '__OG_URL__', '__ORIGIN__',
     '__CHANNEL__', '__BUILD_LABEL__', '__BUILD_HREF__', '__BUILD_TITLE__',
+    '__THEME_COLOR__',
   ].filter(t => html.includes(t))
   if (leftover.length) {
     throw new Error(`site/index.html placeholder(s) not replaced: ${leftover.join(', ')} -- check the token still exists in the template`)
@@ -644,6 +722,18 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  // Without this the manifest falls through to application/octet-stream, and
+  // _headers sends X-Content-Type-Options: nosniff -- so the browser declines
+  // to parse it and the page is simply not installable, with nothing in the
+  // console pointing at a MIME map.
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  // Every image in the built tree, which until now was served as
+  // application/octet-stream by both of these maps. A browser renders an
+  // <img> from that anyway, so the og card and the favicon looked fine and
+  // nobody had reason to look -- but an installable manifest is checked
+  // rather than rendered, and an icon whose type is not an image type is one
+  // of the ways a page silently fails to be installable.
+  '.png': 'image/png',
 }
 
 /** @param {string} dist */
