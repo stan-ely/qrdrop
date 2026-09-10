@@ -371,6 +371,20 @@ auto-advance past either, never auto-focus either button, and keep Accept's hand
 losing its user activation behind an `await`. `--yes` skips the accept prompt and must
 never skip the SAS.
 
+**And the SAS gets one roll per secret.** Four symbols out of 64 is 24 bits, which is
+strength only if an attacker gets a single attempt at it — bits × shots, where the shots
+are a property of how the screens are wired rather than of any crypto. A user who can
+re-scan the same QR after a mismatch lets the attacker keep rolling, and by the third try
+that user has been taught to read a re-pair as ordinary flakiness. The only route back to
+a pairing is `choose` → `_startSend`, which calls `generateSecret()` for fresh bytes; the
+secret is a local in that method and never reaches `this` or `state`. So the verify screen
+must never grow a control that re-enters a pairing — a "Try again" button is the tempting
+one, because a genuine pairing failure and an attack look identical from that screen.
+`_rejectVerification` is the sanctioned exit and it is terminal: it ends the session and
+lands on `done` with outcome `mismatch`, whose restart label says *fresh code* rather than
+"Send another file". `test/view.test.mjs` walks the rendered verify screen, fires every
+`onclick` at a recording dispatch, and fails on any pairing intent by name.
+
 **The camera track is released on every path out of `scanQRStream`, including an
 abort that lands while the camera is still opening.** `src/web/qr.js` checks
 `signal.aborted` before `getUserMedia` *and* again after it, `video.play()` and

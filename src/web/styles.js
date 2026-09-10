@@ -538,6 +538,10 @@ ${tokensCSS(':host')}
 }
 #verify-status .btn { flex: 1 1 12rem; }
 #verify-status .btn.ghost { flex: 0 1 auto; }
+/* Same as .ghost and for the same reason: the primary carries the filename,
+ * so it is the one that deserves the row. Giving this a 12rem basis too wraps
+ * the pair onto two rows at 390px and pushes Cancel off the action bar. */
+#verify-status .btn.danger { flex: 0 1 auto; }
 
 /* The waiting branch: an indeterminate bar and the line explaining it, in the
  * same row the buttons will occupy once the offer lands. The bar has no
@@ -744,6 +748,19 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
  * tabbing onto the primary button gets an elevation change and no ring. */
 .btn.primary:focus-visible { box-shadow: var(--focus-ring); }
 .btn.primary:disabled { box-shadow: none; }
+
+/* The mismatch button on the verify screen, and the only place this variant
+ * is used. Outlined rather than filled: it sits beside the filled primary,
+ * and two filled buttons in one row would be asking the user to pick between
+ * two equally-weighted calls to action when only one of them is a decision
+ * about their file. The --bad pair is the same one .outcome.bad and
+ * .callout.danger already use, and it is defined in both palettes, so this
+ * needs no new token. */
+.btn.danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.btn.danger:hover { background: var(--bad-soft); border-color: var(--bad); }
 
 ${buttonCSS()}
 
