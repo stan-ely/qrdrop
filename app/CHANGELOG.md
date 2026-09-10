@@ -13,6 +13,13 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**"They don't match" is a button now.** The verify screen asked whether both devices
+showed the same four symbols and offered only "They match" and Cancel, so a mismatch
+had nothing to press that meant what you were seeing. It now ends the pairing, says
+that something is relaying between the two devices and that nothing about the file
+left yours, and asks for a fresh code. Deliberately no retry: four symbols is 24
+bits, which holds only at one attempt per code. Sender side for now.
+
 **qrdrop is on F-Droid — this project's own repository, not f-droid.org.** Add
 `https://share.stan-ely.com/fdroid/repo?fingerprint=889603b768cd2ca50f6c553086827880aa1aad5bbf0098a3028a7f1b7fd47582`
 in F-Droid, Neo Store or Droid-ify once, and every later release turns up as an

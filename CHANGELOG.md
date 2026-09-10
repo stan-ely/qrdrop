@@ -3,7 +3,28 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
-## Unreleased
+## 0.5.0 — 2026-09-11
+
+**A mismatch on the verify screen now has a button, and it ends the session.** The
+screen asks whether both devices show the same four symbols, and it used to offer
+only "They match" and a neutral Cancel — so someone looking at symbols that differed
+had nothing to press that meant what they were seeing, and Cancel dropped them back
+on the file picker without a word. "They don't match" now ends the pairing and says
+what that means: something is relaying between the two devices, nothing about the
+file left this one, not even its name, and starting over means a fresh code.
+
+That last part is the point. Four symbols out of 64 is 24 bits, which is strong only
+if an attacker gets a single attempt; a retry that showed the same code again would
+hand them another. So there is deliberately no retry, and a test now fails if one is
+ever added. This is on the sender's side for now.
+
+**The threat model says how long a code stays live.** Pairing latches onto the first
+device to arrive, and a code has no expiry, so a QR can be used for exactly as long
+as the sender sits on the QR screen waiting — which is also when a screen share or a
+recording is most likely to be running. The README now says that plainly instead of
+stopping at "show it to a person, not a room". A new test also checks that the code
+itself never reaches a relay in any encoding, which was always true and is now
+enforced.
 
 **A phone held sideways is now its own layout, not a squeezed portrait one.**
 Rotating the phone used to put the scanner panel and the camera frame on top of the
