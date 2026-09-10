@@ -201,6 +201,26 @@ export const FIXTURES = [
     },
   },
   {
+    // The mismatch outcome, which is the longest message this screen ever
+    // carries -- three sentences into the banner that 'done-failed' fills
+    // with one, on the screen whose card is otherwise the emptiest in the
+    // app. It is also the only outcome whose restart label is neither "Send
+    // another file" nor "Receive another file", so it is the only place that
+    // branch is drawn.
+    //
+    // role 'sender', because that is the only role that can reach it: the
+    // control lives in verifyStatus's sender branch.
+    name: 'done-mismatch',
+    screen: 'done',
+    state: {
+      screen: 'done', role: 'sender', outcome: 'mismatch',
+      // path explicitly null, not merely absent: _rejectVerification clears
+      // it, and a fixture that inherited 'local' from the screen before it
+      // would draw a badge the app never renders here.
+      file: null, digest: '', path: null,
+    },
+  },
+  {
     name: 'beam',
     screen: 'beam-send',
     state: {

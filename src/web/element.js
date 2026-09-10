@@ -490,7 +490,7 @@ export class QRDropElement extends HTMLElement {
       offer: /** @type {{ name: string, size: number } | null} */ (null),
       file: /** @type {{ name: string, size: number } | null} */ (null),
       progress: /** @type {{ moved: number, total: number } | null} */ (null),
-      outcome: /** @type {'sent' | 'received' | 'declined' | 'failed' | 'too-large' | null} */ (null),
+      outcome: /** @type {'sent' | 'received' | 'declined' | 'failed' | 'too-large' | 'mismatch' | null} */ (null),
       message: /** @type {string | null} */ (null),
       digest: '',
       dragging: false,
@@ -848,6 +848,11 @@ export class QRDropElement extends HTMLElement {
       case 'beam:fps': return this._setBeamFps(payload)
       case 'manual:submit': return this._submitManualCode(payload)
       case 'verify:confirm': return this._onVerifyConfirm?.()
+      // Not a one-shot callback like the three around it. Those need the live
+      // `room` out of _startSend's closure; this needs nothing the instance
+      // does not already hold, and making it a method is what lets it be the
+      // same answer whichever flow put us on the verify screen.
+      case 'verify:reject': return this._rejectVerification()
       case 'offer:accept': return this._onOfferAccept?.()
       case 'offer:decline': return this._onOfferDecline?.()
       // Closes the sheet only. Never routed to _reset: dismissing an
@@ -1214,6 +1219,56 @@ export class QRDropElement extends HTMLElement {
     this._endSession()
     this._setState({ screen: 'done', outcome: 'failed', file: null, digest: '', message: null })
     this._fail(error)
+  }
+
+  /**
+   * The sender says the four emoji do not match.
+   *
+   * The SAS is four symbols out of 64 -- 24 bits, and that number only holds
+   * at ONE attempt per secret. Bits times shots is the real strength, and the
+   * shots are a UX property rather than a cryptographic one: a user who can
+   * re-scan the same QR after a mismatch lets an attacker keep rolling
+   * against the same secret, and by the second or third try that user has
+   * been taught to read a re-pair as ordinary flakiness. A genuine pairing
+   * failure and an active attack look identical from here, which is exactly
+   * why the recovery cannot be cheap.
+   *
+   * So this ends the session and lands on 'done'. Deliberately not _reset():
+   * that returns to 'choose' with nothing said, which is the behaviour that
+   * left the user to guess what they had just seen. Deliberately not
+   * _failTransfer() either -- nothing failed, and an error sheet is the wrong
+   * register for a decision the user made correctly. The one route back to a
+   * pairing from 'done' is 'restart' -> _reset() -> 'choose' -> _startSend(),
+   * which mints a fresh secret; test/view.test.mjs pins that this screen
+   * offers no shortcut past it.
+   *
+   * Sender-only, matching where the control is rendered. The receiver sees
+   * the same symbols and a mismatch means the same thing there, but its
+   * verify screen already carries Accept and Decline and the copy is a
+   * separate question -- worth its own change rather than a guess made here.
+   */
+  _rejectVerification() {
+    if (this._state.screen !== 'verify' || this._state.role !== 'sender') return
+
+    // Before the teardown, not after: _endSession closes the room, and a
+    // confirm still armed at that point would seal a manifest into a channel
+    // that has gone.
+    this._onVerifyConfirm = null
+    this._onOfferAccept = null
+    this._onOfferDecline = null
+
+    this._endSession()
+
+    // `path` goes with it, which none of the other outcomes do. The badge
+    // describes the route to the peer we paired with -- and on this screen
+    // that peer is the one the mismatch says is relaying, so "Local network"
+    // would sit directly beside "something is relaying between them" and read
+    // as reassurance about the connection the user has just been told not to
+    // trust. Accurate and misleading at once. Caught by looking at the
+    // screenshot; every assertion in check-layout.mjs was green.
+    this._setState({
+      screen: 'done', outcome: 'mismatch', file: null, digest: '', message: null, path: null,
+    })
   }
 
   /**

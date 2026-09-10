@@ -94,7 +94,7 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {{ name: string, size: number } | null} offer
  * @property {{ name: string, size: number } | null} file
  * @property {{ moved: number, total: number } | null} progress
- * @property {'sent' | 'received' | 'declined' | 'failed' | 'too-large' | null} outcome
+ * @property {'sent' | 'received' | 'declined' | 'failed' | 'too-large' | 'mismatch' | null} outcome
  * @property {string | null} message
  * @property {string} digest
  * @property {boolean} dragging
@@ -1057,6 +1057,20 @@ function verifyStatus(state, dispatch) {
     return [
       h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('verify:confirm') },
         `They match — send ${state.file?.name ?? 'the file'}`),
+
+      // The other half of the question this screen asks. Without it the
+      // screen offers one answer and a neutral Cancel, so a user looking at
+      // four emoji that do not match has nothing to press that means what
+      // they are seeing -- and Cancel drops them on the file picker with no
+      // word about it, which reads as flakiness rather than as the thing the
+      // SAS exists to catch.
+      //
+      // Deliberately NOT .primary: e2e/transfer.e2e.mjs clicks
+      // '#verify-status button.primary', and a second one here would make
+      // that selector ambiguous rather than wrong -- a strict-mode throw in a
+      // suite that needs two browsers and a relay to run.
+      h('button', { class: 'btn danger', type: 'button', onclick: () => dispatch('verify:reject') },
+        "They don't match"),
     ]
   }
 
@@ -1151,7 +1165,7 @@ function transfer(state, dispatch) {
 
 /**
  * Glyph, colour variant, and heading for each terminal outcome.
- * @type {Record<'sent' | 'received' | 'declined' | 'too-large' | 'failed', { variant: string, glyph: string, title: string }>}
+ * @type {Record<'sent' | 'received' | 'declined' | 'too-large' | 'failed' | 'mismatch', { variant: string, glyph: string, title: string }>}
  */
 const OUTCOME_INFO = {
   // All five are noun phrases naming what happened to the file. They used to
@@ -1163,6 +1177,11 @@ const OUTCOME_INFO = {
   declined: { variant: 'warn', glyph: '⚠', title: 'File declined' },
   'too-large': { variant: 'warn', glyph: '⚠', title: 'Too large for this connection' },
   failed: { variant: 'bad', glyph: '✕', title: 'Transfer failed' },
+  // Not a noun phrase like the other five, and deliberately: this is the one
+  // outcome the user caused by reading the screen, and it is worth their
+  // words rather than the app's. It is also the only one that may be an
+  // attack in progress, so it takes the same weight as a failure.
+  mismatch: { variant: 'bad', glyph: '✕', title: "The symbols didn't match" },
 }
 
 /** @param {State} state */
@@ -1176,6 +1195,13 @@ function outcomeMessage(state) {
     case 'received': return 'The file was saved to your device.'
     case 'declined': return 'The other device turned down the file.'
     case 'failed': return 'Nothing was saved. Start over with a fresh code.'
+    // Three things, in the order they matter to someone who has just been
+    // told something is wrong: what is happening, that they lost nothing by
+    // stopping, and what "start over" has to mean. The last is the one the
+    // app cannot leave to inference -- see restartLabel below.
+    case 'mismatch': return 'Different symbols on each device means something is relaying between them. '
+      + 'Nothing about your file left this device — not its name, not its size. '
+      + 'Start over, and use a fresh code.'
     default: return ''
   }
 }
@@ -1185,6 +1211,12 @@ function outcomeMessage(state) {
  * @param {State} state
  */
 function restartLabel(state) {
+  // Ahead of the role, because after a mismatch the label is carrying the
+  // safety property rather than the convenience. "Send another file" would be
+  // true and would quietly invite the one thing that must not happen: the
+  // four emoji are 24 bits, which only holds at one attempt per secret, so
+  // re-offering the same code hands an attacker a second roll at it.
+  if (state.outcome === 'mismatch') return 'Start over with a fresh code'
   if (state.role === 'receiver') return 'Receive another file'
   if (state.role === 'sender') return 'Send another file'
   return 'Start over'
