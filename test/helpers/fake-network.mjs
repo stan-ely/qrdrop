@@ -25,22 +25,53 @@
  * @property {Map<string, FakeAction>} actions
  * @property {{ onPeerJoin: ((id: string) => void) | null,
  *              onPeerLeave: ((id: string) => void) | null }} room
+ *
+ * One outbound message, whatever namespace it went out on.
+ *
+ * @typedef {object} FakeSend
+ * @property {string} namespace
+ * @property {TrysteroPayload} data
+ * @property {string | undefined} target
+ *
+ * One call to strategy.join. `config` is the object handed to Trystero -- it
+ * carries appId, password, relayConfig and rtcConfig, and it is the only place
+ * a derived value could be swapped for the secret itself without any payload
+ * changing.
+ *
+ * @typedef {object} FakeJoin
+ * @property {unknown} config
+ * @property {string} topic
  */
 
 /**
  * A signalling network that never leaves the process.
  *
- * Returns the strategy plus `announced`, every payload sent on the 'ecdh'
- * namespace in order. That list is the most direct statement of the invariant
- * available: it is literally the public keys this process put on the wire.
+ * Returns the strategy plus four records of what this process put on the wire:
  *
- * @returns {{ strategy: SignalingStrategy, announced: string[] }}
+ *   announced  every payload sent on the 'ecdh' namespace, in order. The most
+ *              direct statement of the forward-secrecy invariant available: it
+ *              is literally the public keys this process announced.
+ *   sent       every payload on EVERY namespace, 'frame' included. `announced`
+ *              is the narrow view of this and is kept separate because it is
+ *              already load-bearing in room.test.mjs, where the assertion is a
+ *              count.
+ *   joins      the topic and the Trystero config per join.
+ *
+ * The last two exist for the flat negative -- that the secret appears nowhere
+ * in any of it -- which needs the whole wire rather than one namespace of it.
+ *
+ * @returns {{ strategy: SignalingStrategy, announced: string[],
+ *             sent: FakeSend[], joins: FakeJoin[] }}
  */
 export function fakeNetwork() {
   /** @type {Map<string, FakeMember[]>} */
   const topics = new Map()
   /** @type {string[]} */
   const announced = []
+  /** @type {FakeSend[]} */
+  const sent = []
+  /** @type {FakeJoin[]} */
+  const joins = []
   let nextId = 0
 
   /** @param {string} topic */
@@ -68,6 +99,10 @@ export function fakeNetwork() {
           async send(data, options) {
             if (namespace === 'ecdh' && typeof data === 'string') announced.push(data)
             const target = options?.target
+            // Every namespace, before any filtering: what the peer does or
+            // does not receive is beside the point for a leak, since a relay
+            // sees the send regardless of who it was addressed to.
+            sent.push({ namespace, data, target })
             for (const peer of roster) {
               if (peer === self) continue
               if (typeof target === 'string' && peer.id !== target) continue
@@ -123,12 +158,17 @@ export function fakeNetwork() {
       // rather than catching it; the fake conforms to what joinVia actually
       // calls, and this cast is where that claim is made explicit.
       join: /** @type {SignalingStrategy['join']} */ (
-        (_config, topic) => /** @type {import('@trystero-p2p/nostr').Room} */ (
-          /** @type {unknown} */ (join(topic))
-        )
+        (config, topic) => {
+          joins.push({ config, topic })
+          return /** @type {import('@trystero-p2p/nostr').Room} */ (
+            /** @type {unknown} */ (join(topic))
+          )
+        }
       ),
       urls: [],
     },
     announced,
+    sent,
+    joins,
   }
 }

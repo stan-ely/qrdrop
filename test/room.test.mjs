@@ -24,7 +24,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { openRoom } from '../src/transport/room.js'
-import { generateSecret, deriveTopic, derivePassword } from '../src/core/secret.js'
+import { generateSecret, deriveTopic, derivePassword, encodeSecret, toBase64url } from '../src/core/secret.js'
 import { fakeNetwork } from './helpers/fake-network.mjs'
 
 /**
@@ -165,3 +165,99 @@ test('frames from a third peer in the room never reach the receiver', async () =
   host.close()
   guest.close()
 })
+
+/**
+ * A flat negative, and it passes trivially today. That is the point.
+ *
+ * The two tests above are the shape a test usually takes: a feature works, and
+ * here is the thing that breaks if it stops. Neither would have noticed the
+ * bug this one guards, because that bug broke nothing a demo could see -- the
+ * transfer completed, the file arrived, and the only casualty was a claim in
+ * the README. Features have tests; promises usually do not.
+ *
+ * So this is the promise, written down where it can fail: the secret is the
+ * whole credential, and it must never be a value any relay operator can read
+ * off the wire. It exists for whoever later reads deriveTopic, notices it is
+ * hashing 32 bytes that were already random, and concludes the hash is
+ * ceremony. It is not: the topic is public and the secret is not.
+ *
+ * Checked against every encoding it could plausibly leak as rather than the
+ * one it happens to use, since the failure mode being guarded is somebody
+ * passing the secret somewhere it gets re-encoded on the way out.
+ */
+test('the secret never appears on the wire, in any encoding it could leak as', async () => {
+  const secret = generateSecret()
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  const { strategy, sent, joins } = fakeNetwork()
+  const { host, guest } = await pair(strategy, { topic, password, secret })
+
+  // One frame each way, so `sent` is not just the two ecdh announcements: the
+  // frame namespace carries the payloads, and a leak there would be the worse
+  // one of the two.
+  await host.channel.send(new Uint8Array([1, 2, 3]))
+  await guest.channel.send(new Uint8Array([4, 5, 6]))
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  host.close()
+  guest.close()
+
+  const raw = String.fromCharCode(...secret)
+  /** Every text form the 32 bytes could arrive in. */
+  const forms = {
+    'base64url': toBase64url(secret),
+    'the qrdrop: code form': encodeSecret(secret),
+    'standard base64': btoa(raw),
+    'lowercase hex': [...secret].map(b => b.toString(16).padStart(2, '0')).join(''),
+    'uppercase hex': [...secret].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase(),
+  }
+
+  // Everything textual this process put on the wire, in one string: the topic
+  // and Trystero config per join (appId, password, relayConfig, rtcConfig --
+  // the one place a derived value could be swapped for the secret with no
+  // payload changing), plus every string payload.
+  const text = JSON.stringify({
+    joins,
+    strings: sent.map(m => m.data).filter(d => typeof d === 'string'),
+  })
+
+  for (const [name, form] of Object.entries(forms)) {
+    assert.ok(!text.includes(form), `the secret must not reach the wire as ${name}`)
+  }
+
+  // The topic specifically, stated as its own equality rather than left to the
+  // substring scan above -- this is the exact bug, and a failure here should
+  // read as the bug rather than as a haystack miss.
+  for (const { topic: joined } of joins) {
+    assert.notEqual(joined, forms['base64url'], 'the rendezvous topic must not be the secret')
+    assert.notEqual(joined, forms['the qrdrop: code form'], 'the rendezvous topic must not be the code')
+  }
+
+  // And the binary payloads, which no string scan reaches. A sealed frame is
+  // ciphertext, so the 32 bytes appearing as a contiguous run in one is either
+  // a spectacular coincidence or the secret being sent in the clear.
+  const bytes = sent.map(m => m.data).filter(d => ArrayBuffer.isView(d) || d instanceof ArrayBuffer)
+  assert.ok(bytes.length >= 2, 'expected the two frames above, or this checks nothing')
+
+  for (const payload of bytes) {
+    const view = ArrayBuffer.isView(payload)
+      ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
+      : new Uint8Array(payload)
+    assert.ok(!containsBytes(view, secret), 'the secret must not reach the wire as raw bytes')
+  }
+})
+
+/**
+ * Whether `needle` appears as a contiguous run in `haystack`. Naive on
+ * purpose: the inputs here are a handful of 16 KiB frames, and a real
+ * substring search would be more code than the test it serves.
+ *
+ * @param {Uint8Array} haystack
+ * @param {Uint8Array} needle
+ */
+function containsBytes(haystack, needle) {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (haystack[i + j] !== needle[j]) continue outer
+    return true
+  }
+  return false
+}
