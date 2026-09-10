@@ -47,7 +47,11 @@ be a link back here.
 **Anyone holding the code can join.** The 32 bytes in the QR are the entire
 credential — there is no second factor and no account. Showing the code to a
 room means anyone in the room can pair. This is the design, and it is what makes
-"no signup" possible.
+"no signup" possible. How long a code stays useful — pairing latches on first
+arrival, there is no TTL, and the window is the sender's unpaired tab lifetime —
+is set out under [Threat
+model](README.md#threat-model) in the README, which is the one home for that
+reasoning.
 
 **Beam is unencrypted, and cannot be encrypted.** Animated-QR transfers have no
 handshake, therefore no key agreement, no forward secrecy, and no SAS: there is

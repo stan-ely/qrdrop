@@ -343,6 +343,32 @@ in a browser with no install on either side.
   a person, not to a room. Note the boundary this draws, though: someone
   *without* the code cannot read your file, cannot forge or alter one, and
   cannot stop one being transferred.
+
+  Because the QR *is* the credential, the leak paths stop being network paths:
+  a screen share, an OBS scene, a recorded standup, a screenshot that syncs to
+  a photo library. Unlike a password there is nothing to rotate afterwards. So
+  it is worth being precise about how long that code stays useful, which is
+  neither "one-shot" nor "live forever":
+
+  - The rendezvous topic is `HKDF(secret, "topic")` — deterministic, and
+    stable for the life of the secret. It is not a nonce and it does not
+    expire.
+  - **Pairing latches on first arrival.** In `joinVia`, the first peer to send
+    its ECDH public key sets `settled` and `pairedPeerId`; every later `ecdh`
+    message is ignored, and frames from anyone else are dropped.
+  - So a code is spent *for pairing purposes* once a pairing settles. But that
+    latch is the only thing that closes the window — and first-to-arrive can be
+    the attacker rather than the intended phone. The
+    [SAS](#two-gestures-and-why-neither-is-decorative) is what surfaces that,
+    and it is why a mismatch ends the session and asks for a fresh code rather
+    than offering to retry: four symbols out of 64 is 24 bits, which holds only
+    at one attempt per secret.
+  - **There is no TTL.** The window lasts exactly as long as the sender's tab
+    sits on the QR screen unpaired.
+
+  Net: a QR in a recording is a *live* code precisely while the sender is still
+  waiting for someone to scan — the same moment a screen share is typically
+  running.
 - **The host serving the page could serve modified code.** No in-browser design
   prevents that. It is mitigated by a strict CSP, no inline scripts, a small
   auditable surface, and shipped source maps — the deployed bundle is readable
