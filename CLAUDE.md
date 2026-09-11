@@ -828,8 +828,9 @@ disagrees with the reserved product is refused. Verified on a Developer Mode mac
 registering the loose layout (`Add-AppxPackage -Register
 app/src-tauri/target/msix/stage/AppxManifest.xml`): `tasklist /apps` shows the process
 running as `stan-ely.qrdrop_1.0.0.0_x64__h6gby7b5haf52`, a `qrdrop:` link launches the
-packaged exe with the URI in `argv[1]`, and a second link reaches the running window rather
-than starting another process. Publishing from CI with `msstore` needs Partner Center Entra
+packaged exe with the URI in `argv[1]`, a second link reaches the running window rather
+than starting another process, and Receive opens the live camera once the per-app switch
+(filed under `stan-ely.qrdrop_h6gby7b5haf52`) is on. Publishing from CI with `msstore` needs Partner Center Entra
 credentials that do not exist yet, so the first submission is made by hand from the
 `store-msix` artifact.
 
