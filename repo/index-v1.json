@@ -1,0 +1,114 @@
+{
+  "repo": {
+    "timestamp": 1789099961000,
+    "version": 20002,
+    "name": "qrdrop",
+    "icon": "icon.png",
+    "address": "https://share.stan-ely.com/fdroid/repo",
+    "description": "Signed builds of the qrdrop Android app, published straight from the release workflow at github.com/stan-ely/qrdrop. The same APK the GitHub Release carries, signed with the same key."
+  },
+  "requests": {
+    "install": [],
+    "uninstall": []
+  },
+  "apps": [
+    {
+      "authorName": "Bevan Stanely",
+      "categories": [
+        "Connectivity"
+      ],
+      "changelog": "https://github.com/stan-ely/qrdrop/blob/main/app/CHANGELOG.md",
+      "suggestedVersionCode": "1000000",
+      "description": "qrdrop moves a file directly between two devices over an encrypted peer\nconnection. Nothing in between ever holds a readable copy.\n\nPairing is a QR code: one device shows it, the other points a camera at it,\nand that scan is the one channel an attacker cannot stand in the middle of.\nBoth ends then show the same four symbols, which you read aloud and match by\nhand, so you can check you are talking to the device you think you are. Only\nthen does the file move.\n\nThere is also Beam, which carries a file as animated QR codes across a camera\nand needs no network at all.\n\nON ANDROID, QRDROP CAN SEND AND CANNOT YET RECEIVE. The Storage Access\nFramework hands back a content:// URI where the app's file sink expects a\nfilesystem path. Point this phone's camera at the code on the other device\nand send; to receive, use the other device.\n\nThis app is built and signed by the project's own release workflow and\npublished here as the identical file the GitHub Release carries.",
+      "issueTracker": "https://github.com/stan-ely/qrdrop/issues",
+      "license": "MIT",
+      "name": "qrdrop",
+      "sourceCode": "https://github.com/stan-ely/qrdrop",
+      "summary": "Send a file straight from one device to another",
+      "webSite": "https://share.stan-ely.com",
+      "added": 1789099960000,
+      "packageName": "com.stan_ely.qrdrop",
+      "lastUpdated": 1789099961000,
+      "localized": {
+        "en-US": {
+          "description": "qrdrop moves a file directly between two devices over an encrypted peer\nconnection. Nothing in between ever holds a readable copy.\n\nPairing is a QR code: one device shows it, the other points a camera at it,\nand that scan is the one channel an attacker cannot stand in the middle of.\nBoth ends then show the same four symbols, which you read aloud and match by\nhand, so you can check you are talking to the device you think you are. Only\nthen does the file move.\n\nThere is also Beam, which carries a file as animated QR codes across a camera\nand needs no network at all.\n\nON ANDROID, QRDROP CAN SEND AND CANNOT YET RECEIVE. The Storage Access\nFramework hands back a content:// URI where the app's file sink expects a\nfilesystem path. Point this phone's camera at the code on the other device\nand send; to receive, use the other device.\n\nThis app is built and signed by the project's own release workflow and\npublished here as the identical file the GitHub Release carries.\n",
+          "icon": "icon_s8CHrvlzPrTf-jKS7VuUxjLcaUT_X8KWR9lPw-XKm3Y=.png",
+          "name": "qrdrop",
+          "summary": "Send a file straight from one device to another"
+        }
+      }
+    }
+  ],
+  "packages": {
+    "com.stan_ely.qrdrop": [
+      {
+        "added": 1789099961000,
+        "apkName": "qrdrop-1.0.0.apk",
+        "hash": "f51ae36eacc143d7cf881233b51c141066510f465d8060888df8241d6e423424",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 45951316,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 1000000,
+        "versionName": "1.0.0"
+      },
+      {
+        "added": 1789099960000,
+        "apkName": "qrdrop-0.1.0.apk",
+        "hash": "288dea10afb7fefdb3ff7803b806e7928d5d1cf5835b1a8de0bd28a42350ab81",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 45425944,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 1000,
+        "versionName": "0.1.0"
+      }
+    ]
+  }
+}

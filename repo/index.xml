@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<fdroid>
+	<repo icon="icon.png" name="qrdrop" pubkey="3082052a30820312a003020102020900cde511621bb7e8c8300d06092a864886f70d01010c05003042310b3009060355040613024742310f300d060355040a1306717264726f703122302006035504031319717264726f7020462d44726f6964207265706f7369746f72793020170d3236303930373138353430325a180f32303534303132333138353430325a3042310b3009060355040613024742310f300d060355040a1306717264726f703122302006035504031319717264726f7020462d44726f6964207265706f7369746f727930820222300d06092a864886f70d01010105000382020f003082020a0282020100a514cc48db0a9b93fd4184ac1f87de90ec1786caa3494a3efa557a9cc649e216419c0992cab7ea3bfae20d8d4bd7e414d69f05da6050687b23881a025fa2c312e3b5817d7d08d35c4cf364308fefe38e2d87b6ba5dfab53c7d29926701f60fdb5090d01ee9a8dbd7fe475e9eceb17b5dc141c9c341ff55f210181d009740f66113021fa50baab22db48d4de2a9b57a6c4b27de7df0fb7d0c6a586352769a6a4209019847ef2745f94565f44fd8c954647e9aa1903adb0f1e76e0cffe5e324f4f087f6bf5e4468b3a33933ccd530a21f60dc48185502e5d3d75dccd0915f75d72ebc94e1967bd7951d37a39600fb079ace16175a6891790e7242e960cbc4e04fb9ea183b01af63120eff5cbf1ab92caf14d0ac983974f572c746276b8ade12c8d7c4fa77b3cf8155fb60d8d7b10af6afa264ee8a72c355ba579f4f565415952c8e1fc61101c2d52d998368b4e2f71a4c3eb9f3ddcac49fd944cd18222bd15945de4c4a7084d1ae03a0a1c30410ff4ba347d5fedfa99c2f1d7a0d6319114826c415046f91b97b82ae533076ca58db935b4b721a7d28afb4cd9ee141ca84dff460db6228c2e4b05253ac424408b52241421d01edae65345d03b16bf31dfb8d7c6325124232e4a5994d54743adf4af2fb8372214bf306a75caa26a420b4267d6a842f301198973dc2de4506172139ed6cf6f0e694336e6e901e99fdf6b4318e8c8bd0203010001a321301f301d0603551d0e04160414232512818b613428e6e66ab1fdd342c045b728bd300d06092a864886f70d01010c05000382020100677dd8adab064efd70dfb88530f762fd9f99f937061b3120cd33ceea5377e6b467687e583b0e88a64e4ea5495a78eefc0cd65e040b5e31db168e232a6b487506b7eda80b5f56f0c16456b9b5da7786b8ead36be59469cd950a265e7da43dbd00e446266fd14eecb931897c9d8c2af3ada95231b5a90659be8696c8e1517ed94f5adcc9e62b42ff223eb1e9a9232a2c6ed0ff07836fd44fa0c50e73bcb88a6e386057c87b30807e6deddc9cffacdf624d98d3f2eddb3e857bddf035b98fde96d4ae4c5e0672c80942124fa291086966471ba9c65dc57090c2daa73d8a2e00f587642f871701334e79bce4e22eb4050ce714a7a528a526868f1ae3615b94478dbbbd6984f3d121731f2118cb6d3dcaf884ac2adbd7288a43f5bffc3b2cbe725f628f90a8c3e3608488c036be6ccefed567c36ea82f5e980fc09ec0e665c1638c1dd0eb1e0474e968bced9a6c4f6aea54768abc19e9b7d6d6c05cbf4aebd4459dc95db92b93cc201eed3364f95e84f1d094f3297acb5a0d1ffe5192991a22363610b15fb986507ba1ffc98fdb8a7163cf5f011f2e048ba0ac560c860c379404805bef78f58037e4116ccb3a334736ff8941efa7a35655ae51ab375e054c0fdc45a27e051d71e9d8a17f84607d7898d675f48533a236dab311cd7bdb1954147f7fa611d64b7f47362be3e5d4aa272bc0a91b6746dc978d21989037716dc39e07aa62" timestamp="1789099961" url="https://share.stan-ely.com/fdroid/repo" version="20002">
+		<description>Signed builds of the qrdrop Android app, published straight from the release workflow at github.com/stan-ely/qrdrop. The same APK the GitHub Release carries, signed with the same key.</description>
+	</repo>
+	<application id="com.stan_ely.qrdrop">
+		<id>com.stan_ely.qrdrop</id>
+		<added>2026-09-11</added>
+		<lastupdated>2026-09-11</lastupdated>
+		<name>qrdrop</name>
+		<summary>Send a file straight from one device to another</summary>
+		<desc>qrdrop moves a file directly between two devices over an encrypted peer
+connection. Nothing in between ever holds a readable copy.
+
+Pairing is a QR code: one device shows it, the other points a camera at it,
+and that scan is the one channel an attacker cannot stand in the middle of.
+Both ends then show the same four symbols, which you read aloud and match by
+hand, so you can check you are talking to the device you think you are. Only
+then does the file move.
+
+There is also Beam, which carries a file as animated QR codes across a camera
+and needs no network at all.
+
+ON ANDROID, QRDROP CAN SEND AND CANNOT YET RECEIVE. The Storage Access
+Framework hands back a content:// URI where the app's file sink expects a
+filesystem path. Point this phone's camera at the code on the other device
+and send; to receive, use the other device.
+
+This app is built and signed by the project's own release workflow and
+published here as the identical file the GitHub Release carries.</desc>
+		<license>MIT</license>
+		<categories>Connectivity</categories>
+		<category>Connectivity</category>
+		<web>https://share.stan-ely.com</web>
+		<source>https://github.com/stan-ely/qrdrop</source>
+		<tracker>https://github.com/stan-ely/qrdrop/issues</tracker>
+		<changelog>https://github.com/stan-ely/qrdrop/blob/main/app/CHANGELOG.md</changelog>
+		<author>Bevan Stanely</author>
+		<marketversion></marketversion>
+		<marketvercode>1000000</marketvercode>
+		<package>
+			<version>1.0.0</version>
+			<versioncode>1000000</versioncode>
+			<apkname>qrdrop-1.0.0.apk</apkname>
+			<hash type="sha256">f51ae36eacc143d7cf881233b51c141066510f465d8060888df8241d6e423424</hash>
+			<size>45951316</size>
+			<sdkver>24</sdkver>
+			<targetSdkVersion>36</targetSdkVersion>
+			<added>2026-09-11</added>
+			<sig>ed9fd3c459e0b6abcba1896f7beb182e</sig>
+			<permissions>CAMERA,INTERNET,com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION</permissions>
+			<nativecode>arm64-v8a,armeabi-v7a,x86,x86_64</nativecode>
+		</package>
+		<package>
+			<version>0.1.0</version>
+			<versioncode>1000</versioncode>
+			<apkname>qrdrop-0.1.0.apk</apkname>
+			<hash type="sha256">288dea10afb7fefdb3ff7803b806e7928d5d1cf5835b1a8de0bd28a42350ab81</hash>
+			<size>45425944</size>
+			<sdkver>24</sdkver>
+			<targetSdkVersion>36</targetSdkVersion>
+			<added>2026-09-11</added>
+			<sig>ed9fd3c459e0b6abcba1896f7beb182e</sig>
+			<permissions>CAMERA,INTERNET,com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION</permissions>
+			<nativecode>arm64-v8a,armeabi-v7a,x86,x86_64</nativecode>
+		</package>
+	</application>
+</fdroid>
