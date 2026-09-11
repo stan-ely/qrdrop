@@ -830,7 +830,15 @@ app/src-tauri/target/msix/stage/AppxManifest.xml`): `tasklist /apps` shows the p
 running as `stan-ely.qrdrop_1.0.0.0_x64__h6gby7b5haf52`, a `qrdrop:` link launches the
 packaged exe with the URI in `argv[1]`, a second link reaches the running window rather
 than starting another process, and Receive opens the live camera once the per-app switch
-(filed under `stan-ely.qrdrop_h6gby7b5haf52`) is on. Publishing from CI with `msstore` needs Partner Center Entra
+(filed under `stan-ely.qrdrop_h6gby7b5haf52`) is on.
+
+The Windows App Certification Kit passes it overall (23 of 24), and **its one failure,
+"Blocked executables", is optional and expected, so do not chase it.** It scans the binary
+for process-launch imports and for executable names as raw substrings. The imports
+(`CreateProcessW`, `ShellExecuteW`) come from Rust's `std` and the webview host, which starts
+its own `msedgewebview2.exe` processes. The "names" (`cmd`, `basH`, `DnX`) are byte runs that
+happen to occur inside compiled code. Nothing in qrdrop launches a shell. `appcert.exe` needs
+an elevated terminal, so it cannot run from an ordinary shell or from CI here. Publishing from CI with `msstore` needs Partner Center Entra
 credentials that do not exist yet, so the first submission is made by hand from the
 `store-msix` artifact.
 
