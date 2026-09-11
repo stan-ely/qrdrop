@@ -61,6 +61,17 @@ jobs:
       - name: The app changelog must have an entry for this version
         run: node scripts/release-notes.mjs --file app/CHANGELOG.md "${{ steps.version.outputs.version }}" > /dev/null
 
+      # The Microsoft Store package's version is the crate version with `.0`
+      # appended and nothing else, and the Store forbids a first part of 0. So a
+      # 0.x crate has no Store package, and this is where that should fail: in
+      # seconds, on a Linux runner, rather than on the Windows leg below after a
+      # cold Rust build. scripts/make-msix.mjs explains why it is refused rather
+      # than mapped onto another number. A prerelease never goes to the Store,
+      # so it is not asked.
+      - name: The crate version must be one the Microsoft Store can carry
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
+        run: node scripts/make-msix.mjs --check
+
   desktop:
     needs: check
     name: desktop (${{ matrix.os }})
@@ -125,6 +136,28 @@ jobs:
           mkdir -p portable
           cp app/src-tauri/target/release/qrdrop.exe portable/
           (cd portable && 7z a "$GITHUB_WORKSPACE/qrdrop-${{ needs.check.outputs.version }}-x86_64-windows.zip" qrdrop.exe)
+
+      # The Microsoft Store package: the same qrdrop.exe again, in an MSIX. An
+      # MSIX and not the NSIS installer because only an MSIX is re-signed by the
+      # Store -- an EXE or MSI submission must arrive signed by a trusted CA,
+      # which this project has no certificate for. See CLAUDE.md, "The
+      # Microsoft Store".
+      #
+      # UNSIGNED, and a WORKFLOW ARTIFACT rather than a Release asset. An
+      # unsigned MSIX will not install from a download, so offering it on the
+      # Release page would be offering a file that cannot be used; it exists to
+      # be uploaded to Partner Center. It stays off that page because the
+      # release job copies files by extension and .msix is not among them.
+      - name: Pack the Microsoft Store MSIX
+        if: matrix.os == 'windows-latest' && !contains(needs.check.outputs.version, '-')
+        run: node scripts/make-msix.mjs --out "qrdrop-${{ needs.check.outputs.version }}-x64.msix"
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows-latest' && !contains(needs.check.outputs.version, '-')
+        with:
+          name: store-msix
+          if-no-files-found: error
+          path: qrdrop-*-x64.msix
 
       - uses: actions/upload-artifact@v4
         with:

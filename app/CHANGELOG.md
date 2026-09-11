@@ -13,6 +13,14 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**Packaged for the Microsoft Store, and 1.0.0 because of it.** This is the first
+release built as an MSIX for the Microsoft Store, where Microsoft signs the copy it
+serves — the only Windows build of qrdrop signed by anyone. The listing appears once
+the Store has certified it. Nothing on this page changes: the installer and the zip
+are still unsigned, and still say so below. The version goes from 0.1.0 straight to
+1.0.0 because the Store will not carry a version beginning with 0, and a listing
+showing a different number from this page would be worse than the jump.
+
 **"They don't match" is a button now.** The verify screen asked whether both devices
 showed the same four symbols and offered only "They match" and Cancel, so a mismatch
 had nothing to press that meant what you were seeing. It now ends the pairing, says

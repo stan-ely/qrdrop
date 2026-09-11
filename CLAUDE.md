@@ -780,6 +780,59 @@ because scoop's autoupdate reads that file to find the hash of the artifact it i
 point at, matching on the basename. A leading `./` is invisible to `sha256sum -c` and
 silently defeats that match.
 
+**The Microsoft Store gets an MSIX, not the NSIS installer, because only an MSIX is signed
+by somebody else.** The Store re-signs an MSIX with Microsoft's certificate after
+certification. An EXE or MSI submission, which is the path Tauri's own docs describe, has to
+arrive Authenticode-signed with a certificate chaining to a trusted CA, and this project has
+none. So `scripts/make-msix.mjs` packs `app/src-tauri/AppxManifest.template.xml` beside the
+release `qrdrop.exe` with the Windows SDK's `makeappx`, **unsigned**, and the `desktop` job
+uploads it as the `store-msix` **workflow artifact**. It is not a Release asset and must not
+become one: an unsigned MSIX does not install from a download, and the release job's
+copy-by-extension is what keeps it off that page. The Store's signature covers Store installs
+and nothing else. The zip, the installer, Scoop and winget are exactly as unsigned as before.
+Individual Store registration has been free since 2025, so that fee is not a reason to go
+back to the EXE path.
+
+**The package version is the crate version with `.0` appended, and a 0.x crate cannot
+produce one.** The Store reserves the fourth part and forbids a first part of 0. Mapping
+`0.1.0` onto some other number was the alternative and was turned down, because the listing
+would then show a version no tag, Release or changelog agrees with. The app went to 1.0.0
+instead, and the `check` job runs `make-msix.mjs --check` so a tag the Store cannot carry
+fails in seconds. `--version` exists only to sideload a 0.x tree locally, and it is refused
+when `CI` is set.
+
+**Three entries in that manifest are load-bearing, and each one is silent when it is
+missing.**
+
+- **`uap3:Protocol` for `qrdrop`.** `register_all()` in `src/lib.rs` writes
+  `HKCU\Software\Classes`. A packaged app's HKCU writes go copy-on-write into a private
+  per-package hive the shell never reads, so the call succeeds and registers nothing.
+  `Parameters="&quot;%1&quot;"` is what puts the URI in `argv[1]`, where the deep-link and
+  single-instance plugins already look; without it a packaged full-trust app is launched with
+  no argument and the link is lost. `test/make-msix.test.mjs` checks that every scheme in
+  `tauri.conf.template.json` is declared.
+- **`DeviceCapability webcam`.** WebView2 inherits the package token, so the per-app switch
+  under Settings, Privacy & security, Camera now gates qrdrop by name, before the
+  `SetPermissionState` grant in `src/lib.rs` is ever consulted.
+- **`TargetDeviceFamily MinVersion="10.0.19044.0"`.** An MSIX cannot run the WebView2
+  bootstrapper the NSIS installer uses. That is the same caveat the portable zip carries, and
+  21H2 is where the runtime ships in the box.
+
+As with `AndroidManifest.xml`, **no `--` inside a comment**. makeappx reports it only as
+`'>' expected` at a line number, and the first pack hit exactly that. The test checks it on
+every platform now, since makeappx only runs on Windows.
+
+The identity values (`stan-ely.qrdrop`, `CN=83DEB6F1-2747-47C0-B94F-38A296EF8C5B`, display
+name `stan-ely`) are copied verbatim from Partner Center. They are public, and an upload that
+disagrees with the reserved product is refused. Verified on a Developer Mode machine by
+registering the loose layout (`Add-AppxPackage -Register
+app/src-tauri/target/msix/stage/AppxManifest.xml`): `tasklist /apps` shows the process
+running as `stan-ely.qrdrop_1.0.0.0_x64__h6gby7b5haf52`, a `qrdrop:` link launches the
+packaged exe with the URI in `argv[1]`, and a second link reaches the running window rather
+than starting another process. Publishing from CI with `msstore` needs Partner Center Entra
+credentials that do not exist yet, so the first submission is made by hand from the
+`store-msix` artifact.
+
 **The Android app also ships from this project's own F-Droid repository, and it is a
 _binary_ repository rather than an f-droid.org listing.** That is the entire design, not a
 shortcut taken to avoid writing build recipes: an app built by F-Droid is signed with
@@ -857,7 +910,9 @@ accurate and the notes give the incantation for each rather than letting someone
 them cold — a tool whose subject is authenticating the other end is the worst possible
 place to teach people to click through a publisher warning. Build provenance
 attestations are on every file, which is a verifiable claim about origin and not a
-code signature; do not describe it as one.
+code signature; do not describe it as one. The Microsoft Store copy is signed by
+Microsoft, but it is not an exception on the Release page: the `.msix` never becomes a
+Release asset, and every Windows file there is still unsigned.
 
 **The Android signing key never enters the repository.** `ANDROID_KEYSTORE_BASE64`
 and its three passwords are repository secrets, written into `RUNNER_TEMP` and a

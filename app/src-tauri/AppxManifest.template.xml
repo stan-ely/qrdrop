@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Microsoft Store package manifest. scripts/make-msix.mjs fills __VERSION__
+  from Cargo.toml and packs it beside release/qrdrop.exe; nothing else here is
+  generated.
+
+  An MSIX and not the NSIS installer, because only an MSIX is re-signed by the
+  Store. An EXE/MSI submission (the path Tauri documents) must arrive
+  Authenticode-signed with a certificate chaining to a trusted CA, which this
+  project does not have. See CLAUDE.md, "The Microsoft Store".
+
+  Identity Name, Publisher and PublisherDisplayName are copied verbatim from
+  Partner Center (Product management, Product identity). They are case- and
+  punctuation-sensitive, and an upload whose identity disagrees with the
+  reserved product is refused. They are public values, not secrets.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 rescap">
+
+  <Identity
+    Name="stan-ely.qrdrop"
+    Publisher="CN=83DEB6F1-2747-47C0-B94F-38A296EF8C5B"
+    Version="__VERSION__"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>qrdrop</DisplayName>
+    <PublisherDisplayName>stan-ely</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <!--
+    21H2 is the floor for the same reason the portable zip documents one: the
+    NSIS installer fetches the Evergreen WebView2 runtime when it is missing and
+    an MSIX cannot run that bootstrapper. Windows 11 and Windows 10 21H2 or
+    later ship the runtime, so a device below this line is refused by the Store
+    rather than handed an app that opens to nothing.
+  -->
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19044.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="qrdrop" Executable="qrdrop.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="qrdrop"
+        Description="Send a file straight from one device to another, end-to-end encrypted"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+
+      <Extensions>
+        <!--
+          The qrdrop: scheme has to be declared here, and the runtime
+          registration in src/lib.rs cannot stand in for it. That call writes
+          HKCU\Software\Classes, and a packaged app's HKCU writes are
+          copy-on-write into a private per-package hive that the shell never
+          reads, so it succeeds and registers nothing.
+
+          Parameters puts the URI in argv[1], quoted, which is exactly where
+          tauri-plugin-deep-link and single-instance already look for it on an
+          unpackaged install. Without it a packaged full-trust app is launched
+          with no argument at all and the link is lost.
+        -->
+        <uap3:Extension Category="windows.protocol">
+          <uap3:Protocol Name="qrdrop" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>qrdrop pairing code</uap:DisplayName>
+          </uap3:Protocol>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!--
+      runFullTrust is what every packaged Win32 app declares, and it is a
+      restricted capability: the first submission has to justify it on the
+      Submission options page. It is also why the two network capabilities
+      below are informational rather than enforced: a full-trust process is
+      not in an AppContainer. They are declared anyway because the Store listing
+      shows them, and a peer connection over the local network is exactly what
+      privateNetworkClientServer tells a reader this app does.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+    <!--
+      Not informational. WebView2 inherits this package's token, so the
+      per-app camera switch in Settings, Privacy & security, Camera now applies
+      to qrdrop by name, and an undeclared webcam is refused there before the
+      SetPermissionState grant in src/lib.rs is ever consulted.
+    -->
+    <DeviceCapability Name="webcam" />
+  </Capabilities>
+</Package>

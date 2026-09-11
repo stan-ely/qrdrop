@@ -202,6 +202,15 @@ depends = ["app:build-site", "app:config"]
 dir = "app"
 run = "npx tauri build"
 
+# The Microsoft Store package, from the release binary app:build just made.
+# Windows only (makeappx is a Windows SDK tool), and unsigned by design -- the
+# Store re-signs it. `mise run app:msix -- --version 1.0.0` packs a 0.x tree
+# for local sideload testing; see scripts/make-msix.mjs.
+[tasks."app:msix"]
+description = "Pack the unsigned Microsoft Store MSIX from the release build (Windows only)"
+depends = ["app:build"]
+run = "node scripts/make-msix.mjs"
+
 # --- mobile (Phase 4) ---
 #
 # ANDROID_HOME and NDK_HOME are handled above. The SDK *packages* are not:
