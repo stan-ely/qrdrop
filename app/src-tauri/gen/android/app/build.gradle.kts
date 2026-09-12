@@ -40,6 +40,39 @@ val crateVersionCode: Int = crateVersion.split('.', limit = 4).let { parts ->
     n(0) * 1_000_000 + n(1) * 1_000 + n(2)
 }
 
+val baseVersionCode: Int = tauriProperties.getProperty("tauri.android.versionCode", crateVersionCode.toString()).toInt()
+
+// One versionCode per ABI flavour: the base above times ten, plus a rank. The
+// release ships an APK per ABI beside the universal one, and Tauri's
+// RustPlugin creates those flavours with nothing to tell them apart but their
+// native libraries, so every one of them used to carry the same code. F-Droid
+// requires a distinct versionCode per APK of one version -- its own builds do
+// this with VercodeOperation -- and its client installs the HIGHEST code a
+// device can run, which is what the ranks encode. An arm64 phone can usually
+// run the armv7 APK too, so arm64 must outrank arm; x86_64 outranks x86 for
+// the same reason; and universal is lowest, so that a phone that installed it
+// from the Release page moves onto its own ABI's smaller APK at the next update
+// rather than being held on the 45 MB one. Every flavour is signed with the
+// same key, which is the other half of what makes that move an ordinary update.
+//
+// Monotonic across the change: 1.0.0 shipped as 1000000 and 1.0.1 is 10000010
+// and up. The ceiling is major version 213, where the code passes Int.MAX_VALUE.
+// An unknown flavour fails the build rather than getting a guessed rank, since a
+// collision is invisible until a client picks the wrong APK.
+androidComponents {
+    onVariants { variant ->
+        val abiRank = when (variant.flavorName) {
+            "universal" -> 0
+            "arm" -> 1
+            "arm64" -> 2
+            "x86" -> 3
+            "x86_64" -> 4
+            else -> error("no versionCode rank for the ${variant.flavorName} flavour")
+        }
+        variant.outputs.forEach { it.versionCode.set(baseVersionCode * 10 + abiRank) }
+    }
+}
+
 // The release signing key, and a hand-edit this committed gen/ tree exists to
 // carry -- like the CAMERA permission in AndroidManifest.xml, and like the
 // version above (see .gitignore for why the tree is source rather than
@@ -68,7 +101,7 @@ android {
         applicationId = "com.stan_ely.qrdrop"
         minSdk = 24
         targetSdk = 36
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", crateVersionCode.toString()).toInt()
+        versionCode = baseVersionCode
         versionName = tauriProperties.getProperty("tauri.android.versionName", crateVersion)
     }
     signingConfigs {

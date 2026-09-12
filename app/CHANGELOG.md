@@ -13,6 +13,11 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**A smaller Android download.** Each release now has an APK per processor type beside the
+universal one, and the F-Droid repository offers a phone only its own: about 14 MB for a
+typical phone instead of 45. The universal APK is still on the Release page for anyone not
+sure which they need. 32-bit x86, which only emulators use, is no longer built.
+
 **Android receives files.** 1.0.0 could send from Android and could not receive at
 all — and it said the wrong thing about why: pressing Save created an empty file and
 then reported that the save dialog had been closed. Two things were wrong, and a phone

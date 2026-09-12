@@ -82,22 +82,12 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v2
 
-      - name: Install Linux webview dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - uses: Swatinem/rust-cache@v2
+      # The same setup app.yml's jobs use; see the action for why it installs
+      # only node and rust and saves no Rust cache from a tag.
+      - uses: ./.github/actions/app-setup
         with:
-          workspaces: app/src-tauri -> target
-
-      - run: npm ci
-      - run: npm ci --prefix app
-      - run: mise run app:build-site
-      - run: mise run app:config
+          webkit: 'true'
 
       # A real bundle, unlike app.yml's `--debug --no-bundle`: this is the
       # artifact people install, so it is release codegen and it goes through
@@ -152,14 +142,14 @@ jobs:
         if: matrix.os == 'windows-latest' && !contains(needs.check.outputs.version, '-')
         run: node scripts/make-msix.mjs --out "qrdrop-${{ needs.check.outputs.version }}-x64.msix"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.os == 'windows-latest' && !contains(needs.check.outputs.version, '-')
         with:
           name: store-msix
           if-no-files-found: error
           path: qrdrop-*-x64.msix
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.os }}
           if-no-files-found: error
@@ -175,23 +165,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v2
+
+      - uses: ./.github/actions/app-setup
+        with:
+          tools: node rust java android-sdk
+
       - run: mise run app:android:sdk
 
-      - uses: Swatinem/rust-cache@v2
+      # Restores what app.yml's Android job saved on main; see that step.
+      - uses: gradle/actions/setup-gradle@v6
         with:
-          workspaces: app/src-tauri -> target
+          cache-provider: basic
 
-      # All four ABIs here, unlike app.yml's single arm64. That job asks "does
-      # it link"; this one produces the file people install, and a universal
-      # APK that refuses to run on a 32-bit or x86 device is a support burden
-      # for a build that costs minutes.
+      # Every Android target mise.toml names, which includes i686 so that a
+      # local `mise run app:android:build` with no --target still links. The
+      # build below asks for three; one unused standard library costs seconds.
       - run: mise run app:android:targets
-
-      - run: npm ci
-      - run: npm ci --prefix app
-      - run: mise run app:build-site
-      - run: mise run app:config
 
       # The signing key, for the length of this job. gen/android's
       # build.gradle.kts reads keystore.properties if it is there and produces
@@ -221,8 +210,42 @@ jobs:
           keyPassword=$KEY_PASSWORD
           PROPS
 
-      - run: npx tauri android build --apk
+      # An APK per ABI, and the universal one beside them. Each ABI's native
+      # library is 8-12 MB stored uncompressed, so the universal APK is 45 MB
+      # where an arm64 phone needs about 14 -- and that phone is nearly every
+      # phone. The universal APK stays for anyone who cannot tell which they
+      # have. 32-bit x86 is gone from both: it runs on emulators and nothing
+      # anybody carries.
+      #
+      # Two invocations rather than a matrix of one job per ABI. The universal
+      # APK needs all three libraries in one Gradle project anyway, so a
+      # matrix would still end in a job that builds them all, and it would buy
+      # no wall-clock time. The second invocation finds cargo's outputs from
+      # the first and mostly just packages.
+      - name: Build the universal APK and one per ABI
         working-directory: app
+        run: |
+          npx tauri android build --apk --target aarch64 armv7 x86_64
+          npx tauri android build --apk --split-per-abi --target aarch64 armv7 x86_64
+
+      # Named for the Release page, where app-arm64-release.apk says neither
+      # what it is nor which version, and for the F-Droid repository, which
+      # keeps several versions in one directory. The Gradle flavour names are
+      # Tauri's; the ABI names are Android's, which is what a person looks up.
+      # A cp of a file that is not there fails the step, so this also asserts
+      # all four exist -- including that none came out as *-unsigned.apk.
+      - name: Name the APKs
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          out=app/src-tauri/gen/android/app/build/outputs/apk
+          mkdir -p apk-out
+          for pair in universal:universal arm64:arm64-v8a arm:armeabi-v7a x86_64:x86_64; do
+            flavor="${pair%%:*}"
+            abi="${pair#*:}"
+            cp "$out/$flavor/release/app-$flavor-release.apk" "apk-out/qrdrop-$VERSION-$abi.apk"
+          done
+          ls -l apk-out
 
       # Prove the signature rather than assume it. The gradle config is
       # conditional on keystore.properties existing, which is what keeps a
@@ -230,18 +253,38 @@ jobs:
       # how an unsigned APK could reach a Release without anything failing.
       # apksigner reports the certificate, so this also puts the fingerprint
       # in the log next to the one in assetlinks.json.
-      - name: Verify the APK is signed, and log its certificate
+      #
+      # And prove each versionCode is the one build.gradle.kts means to give
+      # it: the base times ten plus the ABI's rank. That block is a hand-edit
+      # in gen/, which a `tauri android init` would silently remove, and what
+      # would follow is four APKs sharing one code -- which F-Droid cannot
+      # tell apart, and which no client would report as anything at all.
+      - name: Verify every APK is signed and carries its own versionCode
         run: |
-          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)"
-          apk="$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*-release*.apk' | head -1)"
-          echo "Verifying $apk"
-          "$apksigner" verify --print-certs "$apk"
+          tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          # The same arithmetic as build.gradle.kts: digits only from each of
+          # the first three parts, so a prerelease's "1-rc" counts as 1.
+          base="$(sed -n 's/^version = "\(.*\)"$/\1/p' app/src-tauri/Cargo.toml | head -1 \
+            | awk -F. '{ printf "%d", ($1+0) * 1000000 + ($2+0) * 1000 + ($3+0) }')"
+          for pair in universal:0 armeabi-v7a:1 arm64-v8a:2 x86_64:4; do
+            abi="${pair%%:*}"
+            want=$((base * 10 + ${pair#*:}))
+            apk="$(ls apk-out/*-"$abi".apk)"
+            echo "== $apk"
+            "$tools/apksigner" verify --print-certs "$apk"
+            got="$("$tools/aapt2" dump badging "$apk" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")"
+            if [ "$got" != "$want" ]; then
+              echo "$apk has versionCode $got, expected $want -- the per-ABI block in build.gradle.kts is missing or changed." >&2
+              exit 1
+            fi
+            echo "versionCode $got"
+          done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android
           if-no-files-found: error
-          path: app/src-tauri/gen/android/app/build/outputs/apk/**/*-release*.apk
+          path: apk-out/*.apk
 
   release:
     needs: [check, desktop, android]
@@ -255,7 +298,7 @@ jobs:
         with:
           node-version: '24'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: staging
 
@@ -340,10 +383,14 @@ jobs:
           with Windows 11 and Windows 10 21H2 or later, so this only matters on
           something older.
 
-          The **Android APK** is signed with the project's release key. Its
+          **Android** has one APK per processor type, and a universal one. Pick
+          `arm64-v8a` for practically any phone from the last decade,
+          `armeabi-v7a` for an older 32-bit phone, `x86_64` for a Chromebook or an
+          emulator, or `universal` (about three times the size) if you are not
+          sure. Every one of them is signed with the project's release key, whose
           certificate fingerprint is the one published at
-          `https://share.stan-ely.com/.well-known/assetlinks.json`, which is what
-          lets a scanned pairing code open the app instead of a browser tab.
+          `https://share.stan-ely.com/.well-known/assetlinks.json` -- which is
+          what lets a scanned pairing code open the app instead of a browser tab.
 
           The **desktop installers are not signed.** There is no Windows
           code-signing certificate and no Apple Developer account behind this
@@ -815,34 +862,48 @@ jobs:
           ref: fdroid-repo
           path: published
 
-      - uses: actions/setup-python@v5
+      # fdroidserver at mise.toml's pin, which is the version a local
+      # `mise run app:fdroid` signs with. This used to be setup-python plus a
+      # `pipx install fdroidserver==2.4.5` of its own -- a second copy of that
+      # pin, and the one nothing would have moved. uv is what mise's pipx
+      # backend installs through.
+      - uses: jdx/mise-action@v4
         with:
-          python-version: '3.12'
+          install_args: uv pipx:fdroidserver
+          cache: false
 
       # apksigner is what fdroidserver uses to read an APK's signature. Without
       # it the tool falls back to jarsigner, which cannot see an APK Signature
       # v2 block -- the only scheme our release APK carries -- and concludes the
       # jar is unsigned, then moves the APK to archive/ and publishes an empty
       # repository. That failure is a warning in the log and a green job.
-      - name: Install fdroidserver
+      - name: Install apksigner
         run: |
           sudo apt-get update
           sudo apt-get install -y apksigner
-          pipx install fdroidserver==2.4.5
           fdroid --version
           # `fdroid update` shells out to `jar cf` to build index-v1.jar, so a
           # JRE is not enough. The runner image ships a JDK; assert it rather
           # than discover it as a stack trace.
           command -v jar >/dev/null || { echo "no jar on PATH -- fdroid update cannot build index-v1.jar" >&2; exit 1; }
 
-      # The APK filename is read from SHA256SUMS and never spelled here, for
+      # The APK filenames are read from SHA256SUMS and never spelled here, for
       # the reason the release job globs rather than naming: SHA256SUMS is
       # generated by `sha256sum *` over the very directory that was uploaded,
       # so it cannot disagree with the Release by construction. The sed strips
       # a leading ./ because app-v0.1.0 shipped this file with ./ prefixes and
       # the bare-name change landed after it -- tolerating both costs one sed
       # and means this does not depend on which release it is reading.
-      - name: Fetch and verify the published APK
+      #
+      # One APK per ABI, and exactly one each: picking the first of two would
+      # be a coin toss resolved in favour of whatever sha256sum sorted first.
+      # The universal APK is deliberately left out. Every client would be
+      # offered the one its device runs anyway, and the universal one is three
+      # times the download for nothing.
+      #
+      # The names already carry the version, so they go into fdroid/repo, which
+      # holds several releases at once, exactly as the Release page has them.
+      - name: Fetch and verify the published APKs
         run: |
           for attempt in 1 2 3 4 5 6; do
             curl -fsSL "$BASE/SHA256SUMS" -o SHA256SUMS && break
@@ -850,34 +911,42 @@ jobs:
             sleep 15
           done
           test -s SHA256SUMS || { echo "SHA256SUMS never became fetchable at $BASE" >&2; exit 1; }
-          matches="$(awk '$2 ~ /[.]apk$/ {print $2}' SHA256SUMS | sed 's|^[.]/||')"
-          count="$(printf '%s\n' "$matches" | grep -c .)"
-          if [ "$count" != "1" ]; then
-            echo "Expected exactly one .apk in SHA256SUMS, found $count -- picking one would be a coin toss resolved in favour of whatever sha256sum sorted first:" >&2
-            printf '%s\n' "$matches" >&2
-            exit 1
-          fi
-          curl -fsSL "$BASE/$matches" -o "$matches"
-          # Checked against the published SHA256SUMS, so the bytes going into a
-          # signed index are the bytes the Release page actually serves.
-          sed 's|  [.]/|  |' SHA256SUMS | grep "  $matches\$" > apk.sha256
-          sha256sum -c apk.sha256
+          sed 's|  [.]/|  |' SHA256SUMS > SHA256SUMS.bare
           mkdir -p fdroid/repo
-          # Renamed on the way in: the release asset is app-universal-release.apk
-          # with no version in its name, and this directory holds several
-          # releases at once.
-          mv "$matches" "fdroid/repo/qrdrop-$VERSION.apk"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            matches="$(awk '{print $2}' SHA256SUMS.bare | grep -E -- "-${abi}[.]apk\$" || true)"
+            count="$(printf '%s\n' "$matches" | grep -c . || true)"
+            if [ "$count" != "1" ]; then
+              echo "Expected exactly one $abi .apk in SHA256SUMS, found $count:" >&2
+              printf '%s\n' "$matches" >&2
+              exit 1
+            fi
+            curl -fsSL "$BASE/$matches" -o "$matches"
+            # Checked against the published SHA256SUMS, so the bytes going into
+            # a signed index are the bytes the Release page actually serves.
+            grep "  $matches\$" SHA256SUMS.bare > apk.sha256
+            sha256sum -c apk.sha256
+            mv "$matches" fdroid/repo/
+          done
 
-      # Carry every previous APK forward, then keep the newest three. That is a
-      # size decision about one git branch and not a correctness one -- the
-      # branch is force-pushed as a fresh orphan commit every release, but each
-      # APK is ~43 MB and pages.yml clones this on every single site deploy.
+      # Carry every previous APK forward, then keep the newest three VERSIONS.
+      # That is a size decision about one git branch and not a correctness one
+      # -- the branch is force-pushed as a fresh orphan commit every release,
+      # and pages.yml clones it on every single site deploy.
+      #
+      # Versions and not files, since a release is now three files: pruning to
+      # the newest three files would keep one release and drop two ABIs of it.
+      # The pattern also reads the single-APK names releases before this one
+      # used (qrdrop-1.0.0.apk), so those age out on the same schedule.
       - name: Carry previous releases forward
         run: |
           if [ -d published/repo ]; then
             cp -n published/repo/*.apk fdroid/repo/ 2>/dev/null || true
           fi
-          printf '%s\n' fdroid/repo/*.apk | sort -V | head -n -3 | xargs -r rm -v
+          versions="$(printf '%s\n' fdroid/repo/*.apk | sed -E 's|^.*/qrdrop-([0-9.]*[0-9])(-.*)?[.]apk$|\1|' | sort -V -u)"
+          for old in $(printf '%s\n' "$versions" | head -n -3); do
+            rm -fv "fdroid/repo/qrdrop-$old.apk" fdroid/repo/qrdrop-"$old"-*.apk
+          done
           ls -l fdroid/repo/
 
       # RUNNER_TEMP, never the workspace. The workspace is what gets built into
@@ -919,7 +988,10 @@ jobs:
         run: |
           test -f repo/entry.jar || { echo "no repo/entry.jar -- the index is unsigned and no client will accept the repository." >&2; exit 1; }
           test -f repo/index-v2.json || { echo "no repo/index-v2.json -- clients would show the repository as present and empty, which reads as 'no releases yet'." >&2; exit 1; }
-          grep -q "qrdrop-$VERSION.apk" repo/index-v2.json || { echo "the index does not mention qrdrop-$VERSION.apk -- fdroid update rejected the APK, most likely because it could not read its signature, and this release would be invisible to every client." >&2; exit 1; }
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            apk="qrdrop-$VERSION-$abi.apk"
+            grep -q "$apk" repo/index-v2.json || { echo "the index does not mention $apk -- fdroid update rejected the APK, most likely because it could not read its signature, and this release would be invisible to every $abi client." >&2; exit 1; }
+          done
           ls -l repo/
 
       # push_one from the tap job deliberately does not carry over. Three
