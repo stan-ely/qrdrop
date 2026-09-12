@@ -712,7 +712,13 @@ Four things found on the way, none of them the sink:
   so the CLI's path verdict and manifest -- sent back to back -- could reach the wire in
   either order. Reproduced deterministically by slowing the first seal, and fixed in
   `src/core/control.js`'s `sendControl` (CLAUDE.md, "Control frames in one direction
-  leave in index order").
+  leave in index order"). The same message then appeared **a second way**, live between
+  two CLIs while checking the cancel fixes: `room.js` dropped frames from the paired
+  peer that arrived before `onFrame()` was registered, and the CLI registers only after
+  its SAS prompt, so a peer confirmed first lost its path verdict (index 0). Early
+  frames from the paired peer are now held, bounded. The phone's run was the first
+  cause, not this one — the website's receiver registers its handler straight after
+  pairing.
 
 That last row is worth stating plainly rather than discovering: until
 `assetlinks.json` carries a real signing-certificate fingerprint, a scanned QR

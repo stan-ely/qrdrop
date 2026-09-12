@@ -16,6 +16,15 @@ file description back to back. Numbering, encrypting and sending are now one ste
 taken in order for each direction. Nothing changes on the wire, so an older version on
 the other end is unaffected.
 
+The same message had a second cause, found by running two copies of the command line
+against each other. A device threw away anything the other sent before it was ready to
+listen, and the command line is not ready until its person has confirmed the four
+symbols — while the other device may have been confirmed first and already sent its
+route note. That lost note made the next message look out of turn. Messages from the
+paired device that arrive early are now kept, a bounded few of them, until this side is
+ready. This affected the command line receiving from another command line or from the
+website, and the command line sending to another command line.
+
 For code using the package directly: `sendControl` is now exported, and the ordering
 asks one thing of callers — give `createReceiver`, `sendFile` and `sendPathVerdict` on
 one side the same `nextControlIndex` function, not separate closures over one counter.

@@ -166,6 +166,35 @@ test('frames from a third peer in the room never reach the receiver', async () =
   guest.close()
 })
 
+test('frames the paired peer sends before onFrame is registered are delivered, in order', async () => {
+  // The other device does not wait for this one. The CLI registers its frame
+  // handler only after its own SAS prompt returns, while the peer starts
+  // sending the moment ITS person confirms: a CLI receiver sends its path
+  // verdict at once, and the website's sender sends one before its verify
+  // screen is even drawn. Dropped here, that verdict was control index 0, and
+  // the next frame to arrive -- index 1 -- was fatal: "Out-of-order frame:
+  // expected 0, got 1", seen live between two CLIs on 2026-09-12.
+  const secret = generateSecret()
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  const { strategy } = fakeNetwork()
+  const { host, guest } = await pair(strategy, { topic, password, secret })
+
+  await guest.channel.send(new Uint8Array([0]))
+  await guest.channel.send(new Uint8Array([1]))
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  /** @type {number[]} */
+  const seen = []
+  host.onFrame(bytes => seen.push(bytes[0]))
+  await guest.channel.send(new Uint8Array([2]))
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  assert.deepEqual(seen, [0, 1, 2], 'nothing the paired peer sent early is lost or reordered')
+
+  host.close()
+  guest.close()
+})
+
 /**
  * A flat negative, and it passes trivially today. That is the point.
  *

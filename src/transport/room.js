@@ -57,6 +57,13 @@ import { fromBase64url, toBase64url } from '../core/secret.js'
 const APP_ID = 'qrdrop'
 const DEFAULT_TIMEOUT_MS = 60_000
 
+// How many frames from the paired peer are held while this side has not yet
+// registered onFrame() -- see frameAction.onMessage in joinVia. A legitimate
+// peer sends two at most before it hears back; this is headroom, and the bound
+// on what a paired peer can make a waiting room hold (at most 16 frames of
+// MAX_FRAME_BYTES each).
+const EARLY_FRAME_LIMIT = 16
+
 /**
  * The Nostr relay list. Pinned rather than using Trystero's built-in pool of
  * ~44 relays, so the connect-src allowlist on the page can name every host it
@@ -678,13 +685,13 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
   const keyAction = room.makeAction('ecdh')
   const frameAction = room.makeAction('frame')
 
-  // Annotated rather than inferred: from the no-op initialiser alone the
-  // checker reads this as a zero-argument function, and every later call
-  // through it becomes an arity error at the call site instead of a type error
-  // here. The placeholder exists so frames arriving before onFrame() is
-  // registered are dropped rather than thrown on.
-  /** @type {(bytes: Bytes) => void} */
-  let frameHandler = () => {}
+  // Null until the caller registers onFrame(). Frames the paired peer sends
+  // before then wait in `early` and are handed over, in order, the moment it
+  // does -- see frameAction.onMessage below for why they cannot be dropped.
+  /** @type {((bytes: Bytes) => void) | null} */
+  let frameHandler = null
+  /** @type {Bytes[]} */
+  const early = []
 
   // The peer we committed to, or null until one arrives.
   //
@@ -699,14 +706,33 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
   let pairedPeerId = null
 
   frameAction.onMessage = (data, { peerId: from }) => {
-    // Dropped rather than queued. Nothing legitimate can arrive before
-    // pairing: frames only start once openRoom has resolved and the caller
-    // has registered a handler, and until then frameHandler is the no-op
-    // placeholder that would discard them anyway. Buffering them "just in
-    // case" would mean holding an unpaired stranger's bytes for later replay
-    // into an authenticated session, which is the opposite of the intent.
+    // A stranger's frames are dropped, never held: queueing an unpaired
+    // peer's bytes for later replay into an authenticated session is the
+    // opposite of the intent.
     if (from !== pairedPeerId) return
-    frameHandler(toBytes(data))
+    const bytes = toBytes(data)
+    if (frameHandler) return frameHandler(bytes)
+
+    // The PAIRED peer's frames are held until onFrame() is registered. They
+    // used to be dropped too, on the belief that nothing legitimate could
+    // arrive before this side had registered a handler -- true of this
+    // device's own sends and false of the other device's, which does not wait
+    // for us. The CLI registers its handler only after its own SAS prompt
+    // returns, while the peer starts sending the moment its person confirms:
+    // a CLI receiver sends its path verdict at once, and the website's sender
+    // sends one before its verify screen is drawn. That verdict is control
+    // index 0, so dropping it made the next control frame fatal -- "Out-of-
+    // order frame: expected 0, got 1", live between two CLIs on 2026-09-12.
+    // Nothing here is trusted by being held: every frame is still
+    // authenticated by the receiver, and none is processed before the caller
+    // registers, which for the CLI is after the SAS.
+    //
+    // Bounded, so a paired peer cannot make this hold unbounded bytes while a
+    // person reads a prompt. A legitimate peer sends at most a path verdict
+    // and a manifest before hearing back, so the limit is unreachable by one;
+    // past it frames are dropped, which surfaces as that same out-of-order
+    // failure in the offending session and nowhere else.
+    if (early.length < EARLY_FRAME_LIMIT) early.push(bytes)
   }
 
   return new Promise((resolve, reject) => {
@@ -763,7 +789,12 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
           strategy: strategy.name,
           room,
           frameAction,
-          setFrameHandler: fn => { frameHandler = fn },
+          setFrameHandler: fn => {
+            frameHandler = fn
+            // Synchronously, so no newer message can be delivered between
+            // these and overtake them.
+            for (const bytes of early.splice(0)) fn(bytes)
+          },
           session,
           peerId: id,
         })

@@ -364,6 +364,15 @@ anyone, which made that targeting a courtesy rather than a boundary. Both halves
 `test/room.test.mjs` joins a third member to the topic and asserts it never reaches the
 frame handler.
 
+The paired peer's frames, though, are **held until `onFrame()` is registered, not
+dropped**. The two devices do not wait for each other: the CLI registers its handler
+only after its own SAS prompt, while the peer starts sending when *its* person
+confirms, and the first thing it sends is a path verdict at control index 0. Dropping
+that made the next control frame fatal (`Out-of-order frame: expected 0, got 1`,
+between two CLIs). The hold is bounded (`EARLY_FRAME_LIMIT`) and processes nothing
+before the caller registers, so a stranger still gets nothing held and the SAS still
+comes before any offer.
+
 **The two safety gestures cannot be softened.** The sender confirms the SAS before a
 manifest goes out (the manifest alone leaks filename and size); the receiver's Accept
 click is also the user activation that permits `showSaveFilePicker` to open. Never
