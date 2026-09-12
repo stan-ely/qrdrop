@@ -271,8 +271,10 @@ jobs:
           # hash of the artifact it is about to point at, matching on the
           # filename, and its default pattern expects `<hash>  <basename>` --
           # the conventional shape. A leading ./ is invisible to `sha256sum -c`
-          # and silently defeats that match.
-          (cd dist-release && sha256sum * > SHA256SUMS)
+          # and silently defeats that match. `--` rather than ./* for the same
+          # reason: it stops a name starting with a dash reading as an option
+          # and leaves every name in the output bare.
+          (cd dist-release && sha256sum -- * > SHA256SUMS)
           cat dist-release/SHA256SUMS
 
       # The same posture publish.yml establishes for the npm tarball: a
@@ -875,7 +877,7 @@ jobs:
           if [ -d published/repo ]; then
             cp -n published/repo/*.apk fdroid/repo/ 2>/dev/null || true
           fi
-          ls fdroid/repo/*.apk | sort -V | head -n -3 | xargs -r rm -v
+          printf '%s\n' fdroid/repo/*.apk | sort -V | head -n -3 | xargs -r rm -v
           ls -l fdroid/repo/
 
       # RUNNER_TEMP, never the workspace. The workspace is what gets built into
@@ -955,7 +957,9 @@ jobs:
           # repository and every client declines it in silence. `* -text`
           # disables end-of-line conversion outright, and it lives on the
           # branch rather than in a workflow because the checkout that could
-          # corrupt these bytes is pages.yml's, not this one.
+          # corrupt these bytes is pages.yml's, not this one. The backticks are
+          # literal text for that file, so single quotes are the point.
+          # shellcheck disable=SC2016
           printf '# Every file on this branch is a SIGNED ARTEFACT and must survive a round\n# trip through git byte for byte. `-text` disables end-of-line conversion.\n* -text\n' > .gitattributes
           git init -q -b fdroid-repo
           git config user.name "github-actions[bot]"

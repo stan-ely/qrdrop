@@ -21,6 +21,7 @@ npm run cli -- send report.pdf             # drive the CLI without installing it
 mise run web                               # same as npm run web, under mise (mise run web -- --no-open to pass args)
 mise run cli -- receive --out ~/Downloads
 mise watch build                           # rebuild site/dist/ on every change under src/ or scripts/ (mise run app:dev does not)
+mise run lint:workflows                    # actionlint, with shellcheck on every run: step; after touching a workflow
 
 node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test

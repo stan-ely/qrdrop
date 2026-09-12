@@ -40,6 +40,22 @@ android-sdk = "23.0"
 uv = "latest"
 "pipx:fdroidserver" = "2.4.5"
 
+# Checks for the files that can only really be tested by cutting a release.
+# The release workflows are mostly shell -- 36 multi-line `run:` steps, 21 of
+# them in app-release.yml -- and two of their recorded bugs were shell bugs that
+# produced valid output: an unquoted heredoc emptying scoop's $version and $dir,
+# and `node -e` losing a Windows path's backslashes to quoting (see CLAUDE.md,
+# "Releasing"). A JSON check cannot see either. actionlint parses the workflow
+# files and hands each `run:` body to shellcheck when it finds one on PATH, so
+# the pair is one check rather than two, and `mise run lint:workflows` runs it.
+# yq is here for the YAML that is not a workflow -- fdroid/config.yml and the
+# F-Droid metadata -- which otherwise had no parser on this machine at all.
+# Exact versions, for the reason rust is pinned exactly above: a linter that
+# moves on its own reports new findings against an unchanged tree.
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
+yq = "4.53.6"
+
 # The SDK packages the pin above does NOT carry, named once. NDK_HOME below
 # and the app:android:sdk task both read these, so the version a build links
 # against and the version that gets installed cannot drift apart -- the same
@@ -131,6 +147,14 @@ run = "node e2e/interop.e2e.mjs"
 description = "Open UI in browser with phone-sized viewport (390x844)"
 depends = ["build"]
 run = "node scripts/preview-phone.mjs"
+
+# actionlint over .github/workflows/, with shellcheck on every `run:` body (it
+# finds shellcheck on PATH, which the [tools] pin above puts there). Run it
+# after touching a workflow: publish.yml and app-release.yml only execute on a
+# tag, so a mistake in them otherwise surfaces as a failed release.
+[tasks."lint:workflows"]
+description = "Lint the GitHub workflows, and the shell inside them"
+run = "actionlint"
 
 # --- committed images and the layout check ---
 #
