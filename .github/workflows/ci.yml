@@ -45,7 +45,12 @@ jobs:
       # The app's channel of the same build. app.yml no longer runs on a
       # change under src/ -- the Rust compile never reads it -- so this is
       # now the check that a src/ change has not broken the page the app
-      # ships, in seconds rather than five runners.
+      # ships, in seconds rather than five runners. It needs app/'s own
+      # dependencies: that channel bundles app/src, which imports the Tauri API
+      # and plugins from app/node_modules, and without them esbuild cannot
+      # resolve @tauri-apps/plugin-dialog. The first push of this step failed
+      # on exactly that, having passed on a machine that had them.
+      - run: npm ci --prefix app
       - run: node scripts/build-site.mjs --channel app --out app/dist
 
   # The workflows themselves, and the shell inside them. publish.yml and
