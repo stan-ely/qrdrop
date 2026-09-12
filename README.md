@@ -618,22 +618,26 @@ one published at `.well-known/assetlinks.json` on this domain, so a scanned
 pairing code would open a browser tab instead of the app with nothing anywhere
 to explain why. Check the fingerprint in the URL against the one your client
 shows when it adds the repository; it is what the client pins, and it will never
-change. **Android can send and cannot yet receive** — see the table below.
+change. **Android 1.0.0 can send and cannot receive**; the fix is in the next app
+release — see the table below.
 
 | Platform | Send | Receive | Notes |
 | --- | --- | --- | --- |
 | **Windows** | yes | yes | signed: no |
 | **macOS** | yes | yes | signed: no |
 | **Linux** | Beam only | Beam only | WebKitGTK has no `RTCPeerConnection` |
-| **Android** | yes | **no** | F-Droid, or the APK on the Releases page; its save dialog returns a `content://` URI the sink cannot open |
+| **Android** | yes | **not in 1.0.0** | F-Droid, or the APK on the Releases page; receiving is fixed on `main` for the next release |
 | **iOS** | — | — | compiles on every change; shipping it needs an Apple Developer account |
 
 Two of those are worth stating rather than burying. On Linux the webview ships
 no WebRTC at all, so the network transfer cannot work there — Beam, which moves
 a file as animated QR codes across a camera and needs no network by design, does,
-and so does the CLI. On Android the app can send anything and cannot yet receive:
-the Storage Access Framework hands back a `content://` URI where the native sink
-expects a filesystem path.
+and so does the CLI. On Android, 1.0.0 can send anything and cannot receive, for
+two reasons found in order on a phone: the Storage Access Framework hands back a
+`content://` URI where its native sink expected a filesystem path, and Android's
+app bridge has no raw request body for the file's bytes. Both are fixed on `main`
+and verified on a device — a 64 MiB file received byte-identical — and ship with
+the next app release.
 
 **Only the Android APK is signed.** There is no Windows code-signing certificate
 and no Apple Developer account behind this project, so macOS will quarantine the

@@ -11,6 +11,27 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
+## Unreleased
+
+**Android receives files.** 1.0.0 could send from Android and could not receive at
+all — and it said the wrong thing about why: pressing Save created an empty file and
+then reported that the save dialog had been closed. Two things were wrong, and a phone
+found them one after the other. The save dialog hands back a `content://` address
+rather than a path, which the app could not open; it now opens it through Android's
+own content resolver. And Android's bridge between the app's page and its native half
+cannot carry raw bytes, so the file's blocks now cross it as base64 there, while
+Windows, macOS and Linux keep the faster raw path. Measured on a Realme phone running
+Android 16: a 64 MiB file received at about 3.4 MB/s, byte-identical to the original,
+with the sender and the phone computing the same verification digest.
+
+*Some Android phones may cut the connection while the save dialog is open.* ColorOS
+(Oppo, Realme, OnePlus) closes a background app's network sockets within seconds,
+and choosing where to save puts qrdrop in the background. On that phone one receive
+failed exactly this way, with the connection gone before Save returned. The runs that
+succeeded chose quickly with qrdrop allowed to run in the background, and those two
+were not tested apart, so which one matters is not yet known. If a receive fails
+straight after choosing where to save, try both.
+
 ## 1.0.0 -- 2026-09-11
 
 **Packaged for the Microsoft Store, and 1.0.0 because of it.** This is the first

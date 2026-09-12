@@ -649,6 +649,65 @@ Android's `ContentResolver`, which is what `plugin-fs` does). Choosing between
 them is a real decision about where files land on a phone, and belongs behind
 the existing platform seam either way.
 
+#### Resolved (2026-09-12): Android receives, and it took two fixes, not one
+
+Re-measured first on the F-Droid 1.0.0 build before touching anything, and the
+failure presented worse than recorded above: pressing Save created the document at
+**0 bytes** and the screen said *"The save dialog was closed without choosing a
+location"*. `receiver.js`'s `accept()` turns any `createSink` rejection into `null`,
+and `element.js` reports a `null` sink as a dismissal, so a person who pressed Save
+was told they had cancelled. A 0-byte `qrdrop-test-5MB.bin` already sat in Downloads
+from an earlier attempt that failed the same way.
+
+**Fix one, the content URI.** `sink_open` now opens through `plugin-fs`'s Rust API
+(`app.fs().open()`), which resolves a `content://` URI into a real file descriptor
+through the ContentResolver and is plain `std::fs` on desktop. It is `async`, because
+that open is a round-trip into plugin-fs's Kotlin half. Chosen over the documents
+directory because the file then lands where the person chose. Logcat on the device
+showed `Tauri plugin: pluginId: fs, command: getFileDescriptor` and the receive moved.
+
+**Fix two, which fix one uncovered: Android has no raw request body.** That run got to
+1020 KB of a 2.9 MB file and failed at the first 1 MiB flush with `sink_write expects a
+raw body`. Tauri's IPC script sets `canUseCustomProtocol = osName !== 'android'` (the
+WebView's request interceptor cannot read a POST body), so every invoke arrives through
+`postMessage` as JSON, and `InvokeBody::Raw` says in its own doc comment that it is
+unsupported on Android. `sink_write` now also takes `{ data: <base64> }`, and
+`sink_open` returns which shape this target carries (`!cfg!(target_os = "android")`, the
+same condition Tauri keys on). Desktop keeps the raw path. `base64` 0.22 was already in
+`Cargo.lock` through Tauri; naming it added one line to the lockfile and no crate.
+
+Measured on the Realme RMX3868 (Android 16, WebView 151), debug build, CLI sender on
+the same LAN:
+
+| receive | result |
+| --- | --- |
+| 3 MB | 3,000,000 bytes, SHA-256 identical to the source |
+| 64 MiB | 67,108,864 bytes, SHA-256 identical, 19.6 s from Receiving to done: **~3.4 MB/s** (sending from the same phone was 4.03) |
+| 3 MB under an existing 5 MB name | a new `name (1)` document, byte-identical; the 5 MB original untouched, sender and phone digests equal |
+| cancel at 21% of 64 MiB | no crash, app back on choose, **partial file left at 15,910,050 bytes** (below) |
+| Beam receive | not run: needs a camera physically aimed at an animated QR |
+| Windows regression, debug build (raw body) | 3 MB twice: once to a new file, once saved over an existing 5,000,000-byte file after Windows' replace prompt — 3,000,000 bytes, byte-identical, sender and app digests equal. `truncate` proven where the dialog does overwrite |
+
+Four things found on the way, none of them the sink:
+
+- **ColorOS kills a backgrounded app's sockets while the save dialog is up.**
+  `OAppNetControlService: Close socket:[10372] cause:App bg(IMMEDIATELY)` (10372 is
+  qrdrop's uid) two seconds after the picker opened, and the peer connection was gone
+  before Save returned — the phone logged *"The other device disconnected"* 17 ms before
+  `getFileDescriptor`. One run failed this way. The runs that passed had qrdrop on the
+  `deviceidle` whitelist *and* spent about two seconds in the picker, and those were not
+  varied separately, so which one mattered is unknown. Vendor behaviour outside the
+  WebView; recorded rather than worked around.
+- **The Downloads provider never overwrites from a create-document picker.** Saving under
+  an existing name produced `overwrite-test.bin (1)`. So `truncate` (the `"wt"` mode) is
+  correct and unreachable through this dialog on Android — unverified on a device, not
+  proven.
+- **DocumentsUI showed the received files as 0 B** while `ls` gave their true sizes. The
+  media store's size is not refreshed after a write through a descriptor; the bytes are
+  right, the listing is stale until a rescan.
+- **One pairing failed with `Out-of-order frame: expected 0, got 1`** before any offer
+  appeared, and the next identical attempt did not. Intermittent; not chased.
+
 That last row is worth stating plainly rather than discovering: until
 `assetlinks.json` carries a real signing-certificate fingerprint, a scanned QR
 on Android opens `share.stan-ely.com` in the browser rather than the installed
@@ -1134,12 +1193,26 @@ above. None of it blocks the config gate.
    a qrdrop problem, establish what a bare `RTCDataChannel` does between these
    two devices with no framing, sealing or sink in the path -- Phase 2's
    9.5 MB/s was loopback on one machine and is not that number.
-2. **The `content://` sink**, so Android can receive at all. Two candidate
-   fixes, both behind the existing platform seam; see the section above.
+2. ~~**The `content://` sink**, so Android can receive at all.~~ **Closed
+   2026-09-12.** It took the content-URI open *and* a base64 body for
+   `sink_write`; see "Resolved (2026-09-12)" above for both and the numbers.
 3. **First-error-versus-last-error reporting.** `abortActive` nulls `active` on
    the first failure and the in-flight chunks then overwrite the message the
    user sees with `Chunk arrived with no accepted file`. The real cause showed
-   for four milliseconds. Not addressed.
+   for four milliseconds. Not addressed. Seen again on 2026-09-12: the base64
+   run's real error (`sink_write expects a raw body`) was followed by 119 of
+   them and a closing `Unexpected completion`.
+3b. **Cancelling a network receive never aborts the sink.** `element.js` sets
+   the receive path's `_teardown` to `() => room.close()`, so Cancel closes the
+   room and leaves the sink open: the partial file stays (15,910,050 bytes of a
+   64 MiB receive, measured) and the native handle lingers in `SinkState` until
+   the next `sink_open`. Only Beam's teardown calls `sink.abort()`. Not
+   Android-specific, and older than the sink fixes. Not addressed.
+3c. **A sink failure is reported as the person dismissing the save dialog.**
+   `receiver.js`'s `accept()` catches every `createSink` rejection and returns
+   `null`, which `element.js` words as "the save dialog was closed". That is
+   what hid the Android sink bug behind a cancelled-dialog message. Not
+   addressed.
 4. **The unrun checklist rows**: Beam send, Beam receive at ~10 Hz, and the
    deep-link `qrdrop:<code>` path on Android.
 5. ~~**`app.yml` has never run.**~~ **Closed.** Pushed and green on all five
