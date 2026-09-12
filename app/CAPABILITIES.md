@@ -1075,12 +1075,17 @@ WebCrypto, a live camera behind a real OS permission prompt, and a native
 `BarcodeDetector` that makes decode cheaper than the jsQR budget the 10 Hz
 default was sized against. Nothing here is capped by the webview.
 
-What is *not* yet demonstrated is a completed transfer, and the reason is a
-bug in this project rather than a limit of the platform: the native sink
-cannot open the `content://` URI Android hands back (above). Beam send, Beam
-receive and the deep-link paths are simply not run yet. So the honest status
-is "capability confirmed, end-to-end unproven", and the gap is work, not a
-platform decision like the Linux one.
+What was *not* demonstrated when this was first written was a completed
+receive, and the reason was a bug in this project rather than a limit of the
+platform: the native sink could not open the `content://` URI Android hands
+back (above). **Since closed, 2026-09-12:** a 64 MiB network receive
+byte-identical and a Beam receive through the camera, both on the Realme, with
+the fixes on `main` and not in 1.0.0 (see "Resolved" and "Open work carried
+forward" below). Beam send and the deep-link paths are still not run. So the
+status is "network transfer proven both ways, Beam proven receiving", and
+what is left is work, not a platform decision like the Linux one. The one
+platform-side caveat found on the way is ColorOS freezing the app behind the
+save dialog, which is vendor behaviour and recorded below.
 
 **iOS** inherits Phase 0's macOS finding: WKWebView has WebRTC with an
 immediate host candidate, and the two WebKit-family webviews are not

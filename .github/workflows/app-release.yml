@@ -328,7 +328,6 @@ jobs:
           It serves the same APK this page does, signed with the same key --
           not rebuilt and re-signed by F-Droid. That is what keeps a scanned
           pairing code opening the app instead of a browser tab; see below.
-          **Android can send and cannot yet receive.**
 
           ### About these files
 

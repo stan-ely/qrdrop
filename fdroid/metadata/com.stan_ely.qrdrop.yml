@@ -28,10 +28,13 @@ Description: |-
   There is also Beam, which carries a file as animated QR codes across a camera
   and needs no network at all.
 
-  ON ANDROID, QRDROP CAN SEND AND CANNOT YET RECEIVE. The Storage Access
-  Framework hands back a content:// URI where the app's file sink expects a
-  filesystem path. Point this phone's camera at the code on the other device
-  and send; to receive, use the other device.
+  qrdrop sends and receives on Android from the release after 1.0.0. Version
+  1.0.0 can send and cannot receive, so update if you still have it.
+
+  On ColorOS phones (Oppo, Realme, OnePlus), choose where to save a received
+  file within about 20 seconds, or allow qrdrop to run in the background. The
+  phone freezes an app while the save dialog covers it, and the sending device
+  gives up after 30 seconds without a reply.
 
   This app is built and signed by the project's own release workflow and
   published here as the identical file the GitHub Release carries.
