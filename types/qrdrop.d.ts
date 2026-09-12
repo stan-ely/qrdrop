@@ -268,8 +268,15 @@ interface ControlStream {
     seq?: number,
     options?: { signal?: AbortSignal },
   ): Promise<ControlMessage>
-  /** Rejects the parked waiter, if any. */
+  /**
+   * Fails the stream for good. Rejects the parked waiter, if any, and every
+   * later next() that no already-buffered message satisfies, plus the flow
+   * gate. The first error wins. Sticky because the moment it matters most --
+   * the peer leaving mid-file -- is a moment nothing is waiting.
+   */
   fail(error: unknown): void
+  /** Throws the failure passed to fail(), if there has been one. */
+  throwIfFailed(): void
   /**
    * Records a 'pause' / 'resume' flow-control signal from the peer. Kept off
    * the push()/next() queue on purpose: it is not a reply anything awaits, so

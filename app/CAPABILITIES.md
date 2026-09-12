@@ -1239,13 +1239,23 @@ above. None of it blocks the config gate.
    `Peer refused the transfer: <reason>`. `web/sink.js` maps
    `showSaveFilePicker`'s `AbortError` to `null` to keep that contract, and
    Beam's Accept, which never caught a sink rejection at all, reports it too.
-3d. **A sender whose receiver leaves mid-file hangs.** Found in the 3b device
+3d. ~~**A sender whose receiver leaves mid-file hangs.**~~ **Closed 2026-09-12.**
+   Found in the 3b device
    run: the CLI sender went on to "Sent 64 MB of 64 MB" through 3,012 Trystero
    `no peer with id … found` warnings, and was still running two minutes later.
    `runSend`'s `onPeerLeave` calls `control.fail()`, which rejects only a
    waiter that already exists, and mid-file there is none -- so the leave is
    forgotten and `sendFile` then waits on a `done` that is never coming. The
-   website's sender has the same shape. Not addressed. Also checked on the
+   website's sender had the same shape, worse: its leave handler only opened
+   the error sheet, so the send ran on under it and the room was never closed.
+   Now a control stream's failure is sticky -- every later wait and the flow
+   gate see it, and `sendFile` checks it between chunks -- and the website's
+   sender fails its stream on a leave as well as saying so. Checked live, CLI
+   to CLI on one Windows machine: the receiver process was killed at 11 MB of
+   a 64 MiB send, and the sender stopped at 13 MB, printed "The other device
+   disconnected" and exited 1, with no `no peer` warnings. That took ~21 s,
+   which is the transport noticing a killed process that never closed, not
+   the loop. The website sender is unit-covered and not run live. Also checked on the
    device the same day: the phone sending to a CLI receiver that confirmed its
    SAS 3.2 s after the phone did -- the order `25818cf` fixed -- delivered
    3,000,000 bytes byte-identical with both digests equal.

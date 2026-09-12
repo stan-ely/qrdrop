@@ -42,6 +42,18 @@ created, as a Beam receive already did. The command line deletes the partial fil
 when the sender disconnects mid-transfer or when you press Ctrl-C; its Ctrl-C handler
 had long said it did this, and did not.
 
+**A send whose receiver leaves partway through says so, and stops.** It used to keep
+sending the rest of the file to nobody and then wait forever for a reply that was
+never coming — the command line printed "Sent 64 MB of 64 MB" and was still running
+two minutes later, and the browser showed the disconnect while the send carried on
+underneath it. The send now ends at the next piece of the file with "The other device
+disconnected".
+
+For code using the package directly: a control stream's `fail()` now lasts. Every
+later `next()` and the flow gate reject with it, once no message that had already
+arrived answers the wait, and a new `throwIfFailed()` is what `sendFile` checks
+between chunks.
+
 For code using the package directly: a `createSink` may now resolve `null` to mean
 the person chose not to save, which declines, while a rejection is a failure that
 `accept()` passes back to its caller rather than turning into a decline. The web

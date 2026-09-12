@@ -481,6 +481,11 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
     //
     // Printing a warning here -- which is what this did first -- looked like
     // handling and was not: the message appeared, and the process still hung.
+    // So, for a while, did this very call: fail() rejected a waiter only if
+    // one was already parked, and in the middle of a file nothing is, so a
+    // receiver leaving at 25% had the rest of the file sent into an empty room
+    // and then a 'done' awaited forever. The failure is sticky now, and
+    // sendFile checks it between chunks.
     //
     // Guarded on sessionEnded because both sides close once a transfer
     // completes, so each sees the other go in the ordinary success case. The

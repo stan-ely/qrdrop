@@ -1493,6 +1493,21 @@ export class QRDropElement extends HTMLElement {
 
     const { control, nextControlIndex } = this._attachReceiver({ room })
 
+    // Replaces the handler _establish installed (onPeerLeave assigns, it does
+    // not add), because that one could only open the error sheet: the control
+    // stream did not exist yet. A sheet alone left sendFile streaming the rest
+    // of the file into an empty room and then awaiting a 'done' forever, with
+    // the room never closed. Failing the stream ends the send at its next
+    // chunk, into the catch below, which lands on done/failed and closes the
+    // room. Before Confirm there is no send to end, and the sheet is all there
+    // is to do -- the same as before.
+    room.onPeerLeave(() => {
+      if (this._sessionEnded) return
+      const error = new Error(PEER_DISCONNECTED)
+      control.fail(error)
+      this._fail(error)
+    })
+
     await this._publishPath(room, file.size)
 
     // Verify before anything about the file leaves this device -- the

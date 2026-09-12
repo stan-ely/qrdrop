@@ -643,6 +643,62 @@ test('a save dialog still open when the receive is cancelled does not revive it'
   assert.equal(rx.busy, false)
 })
 
+test('a sender whose receiver leaves mid-file fails there instead of hanging', async () => {
+  // Measured on a phone: the receiver cancelled at 25% of 64 MiB and the CLI
+  // sender streamed the rest into an empty room (3,012 "no peer with id"
+  // warnings), then waited on a 'done' for as long as anyone let it. The leave
+  // is delivered as control.fail() at a moment when nothing is waiting -- here,
+  // from the sender's own progress callback, the middle of the chunk loop.
+  const { host, guest } = await pairedSessions()
+  const [hostCh, guestCh] = channelPair()
+
+  const hostControl = createControlStream()
+  let hostCtl = 0
+  const hostNext = () => hostCtl++
+  const hostRx = createReceiver({
+    channel: hostCh, sendKey: host.sendKey, recvKey: host.recvKey,
+    control: hostControl, nextControlIndex: hostNext,
+    onOffer: () => {},
+    createSink: async () => { throw new Error('the sending peer accepts no files') },
+  })
+  hostCh.onFrame = hostRx.handleFrame
+
+  let guestCtl = 0
+  const guestRx = createReceiver({
+    channel: guestCh, sendKey: guest.sendKey, recvKey: guest.recvKey,
+    control: createControlStream(), nextControlIndex: () => guestCtl++,
+    createSink: async () => memorySink(),
+    onOffer: o => { o.accept().catch(() => {}) },
+  })
+  guestCh.onFrame = guestRx.handleFrame
+
+  const totalChunks = 64
+  let chunksSent = 0
+  const sending = sendFile({
+    channel: hostCh, key: host.sendKey, file: fileOf(randomBytes(CHUNK_SIZE * (totalChunks - 1) + 3)),
+    fileSeq: 0, control: hostControl, nextControlIndex: hostNext,
+    onProgress: p => {
+      chunksSent = p.chunk
+      if (p.chunk !== 2) return
+      // The receiver is gone: nothing it would have said reaches us any more.
+      guestCh.onFrame = async () => {}
+      hostControl.fail(new Error('The other device disconnected'))
+    },
+  })
+
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer
+  const hung = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('the sender hung after its receiver left')), 5000)
+  })
+  try {
+    await assert.rejects(Promise.race([sending, hung]), /The other device disconnected/)
+  } finally {
+    clearTimeout(timer)
+  }
+  assert.equal(chunksSent, 2, `stopped at the next chunk, not after all ${totalChunks}`)
+})
+
 test('filenames from the peer are sanitised before reaching a save dialog', () => {
   assert.equal(safeFilename('../../.bashrc'), 'bashrc')
   assert.equal(safeFilename('a/b/c.txt'), 'c.txt', 'reduces to the basename')

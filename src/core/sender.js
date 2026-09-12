@@ -134,6 +134,11 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
 
   for (let index = 0; index < totalChunks; index++) {
     if (signal?.aborted) throw new Error('Transfer cancelled')
+    // The receiver leaving, or its frames failing, reaches the stream as
+    // control.fail() while this loop is waiting on nothing. Without the check
+    // the rest of the file is sealed and sent into a room with nobody in it
+    // before the 'done' wait below finally notices.
+    control.throwIfFailed()
     await drain(channel)
     await flowControl(control)
 

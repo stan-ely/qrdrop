@@ -54,6 +54,14 @@ Android it is emptied rather than deleted — the save dialog creates that docum
 the app is not allowed to remove it — so a cancelled receive leaves an empty file
 behind.
 
+**A send whose receiver leaves partway through says so, and stops.** When the other
+device cancelled or went away mid-file, the send kept going to nobody and then waited
+forever for a reply: a command-line sender printed "Sent 64 MB of 64 MB" after that
+phone cancelled and was still running two minutes later, and the app showed the
+disconnect while the send carried on underneath it. It now ends at the next piece of
+the file with "The other device disconnected", in the app, the website and the
+command line alike.
+
 ## 1.0.0 -- 2026-09-11
 
 **Packaged for the Microsoft Store, and 1.0.0 because of it.** This is the first

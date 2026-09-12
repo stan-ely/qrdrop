@@ -91,8 +91,29 @@ export function createControlStream() {
   // treatment, same reason, as the 'path' message, which also never touches
   // this queue.
   let flowPaused = false
-  /** @type {(() => void) | null} Resolves the gate promise handed out below. */
-  let releaseFlow = null
+  /**
+   * Settles the gate promise handed out below: resolve on 'resume', reject on fail().
+   * @type {{ resolve: () => void, reject: (error: unknown) => void } | null}
+   */
+  let flowWaiter = null
+
+  // A failure is a state of this stream, not an event only a present listener
+  // hears. fail() used to reject the parked waiter if there was one and forget
+  // the error otherwise -- and in the middle of a file there is none: the send
+  // loop is producing chunks, not awaiting a reply. Measured on a phone that
+  // cancelled at 25% of 64 MiB: the CLI sender took the leave, streamed the
+  // other 48 MiB into an empty room through 3,012 "no peer with id" warnings,
+  // then parked on a 'done' that was never coming, still running two minutes
+  // later. The call to fail() looked like handling and was not, which is the
+  // second time that shape has been mistaken for a fix here (see runSend's
+  // onPeerLeave in cli.js, where a printed warning was the first).
+  //
+  // So the first failure is kept, and every wait after it -- next(), the flow
+  // gate, and throwIfFailed() between chunks -- sees it. The first rather than
+  // the last, because what follows a real failure is usually its echo.
+  let failed = false
+  /** @type {unknown} */
+  let failure
 
   // 'error' matches regardless of seq: a failure means the peer's whole
   // connection state is suspect, not just one file, and the failing side may
@@ -123,6 +144,10 @@ export function createControlStream() {
     next(types, seq, { signal } = {}) {
       const hit = pending.findIndex(m => matches(m, types, seq))
       if (hit !== -1) return Promise.resolve(pending.splice(hit, 1)[0])
+      // After the buffer, not before: a 'done' the peer sent just before
+      // leaving has already finished the transfer, and must not lose a race
+      // to the leave that followed it.
+      if (failed) return Promise.reject(failure)
       if (waiter) return Promise.reject(new Error('Control stream already has a waiter'))
 
       return new Promise((resolve, reject) => {
@@ -135,11 +160,24 @@ export function createControlStream() {
     },
 
     fail(error) {
+      if (!failed) {
+        failed = true
+        failure = error
+      }
       if (waiter) {
         const { reject } = waiter
         waiter = null
-        reject(error)
+        reject(failure)
       }
+      if (flowWaiter) {
+        const { reject } = flowWaiter
+        flowWaiter = null
+        reject(failure)
+      }
+    },
+
+    throwIfFailed() {
+      if (failed) throw failure
     },
 
     /** @param {'pause' | 'resume'} kind */
@@ -152,15 +190,19 @@ export function createControlStream() {
       // A 'resume' that arrives while the sender is parked on the gate promise
       // releases it. One that arrives with nobody waiting just clears the flag,
       // and the next flowGate() call returns null.
-      releaseFlow?.()
-      releaseFlow = null
+      flowWaiter?.resolve()
+      flowWaiter = null
     },
 
     flowGate() {
+      // Checked before the pause flag: a paused sender whose receiver has left
+      // would otherwise sit out the whole of sender.js's PAUSE_TIMEOUT_MS and
+      // then blame the pause rather than the leave.
+      if (failed) return Promise.reject(failure)
       if (!flowPaused) return null
-      // The executor runs synchronously, so releaseFlow is set before this
+      // The executor runs synchronously, so flowWaiter is set before this
       // returns -- a 'resume' racing in on the next tick cannot miss it.
-      return new Promise(resolve => { releaseFlow = resolve })
+      return new Promise((resolve, reject) => { flowWaiter = { resolve, reject } })
     },
   }
 }
