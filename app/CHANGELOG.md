@@ -24,13 +24,21 @@ Windows, macOS and Linux keep the faster raw path. Measured on a Realme phone ru
 Android 16: a 64 MiB file received at about 3.4 MB/s, byte-identical to the original,
 with the sender and the phone computing the same verification digest.
 
-*Some Android phones may cut the connection while the save dialog is open.* ColorOS
-(Oppo, Realme, OnePlus) closes a background app's network sockets within seconds,
-and choosing where to save puts qrdrop in the background. On that phone one receive
-failed exactly this way, with the connection gone before Save returned. The runs that
-succeeded chose quickly with qrdrop allowed to run in the background, and those two
-were not tested apart, so which one matters is not yet known. If a receive fails
-straight after choosing where to save, try both.
+*On some Android phones, take less than about 20 seconds to choose where to save.*
+ColorOS (Oppo, Realme, OnePlus) freezes an app about 11 seconds after it leaves the
+screen, and the save dialog counts as leaving it. A frozen phone cannot answer the
+sender, and a sender that hears nothing for 30 seconds gives up. Measured on that
+phone: saving after 2 or 20 seconds received the file whole, and saving after 45
+seconds lost the sender. Taking 45 seconds with qrdrop allowed to run in the background
+also received the file whole, because Android then wakes qrdrop briefly each time data
+arrives.
+
+**A receive whose sender has gone now says so.** If the sender left while the save
+dialog was open, the app went on to show "Receiving, 0%" once a location was chosen,
+and stayed there with nothing but Cancel. It now lands on "Transfer failed", says the
+other device disconnected, and empties the file it had just created. On phones that
+freeze apps in the background this was the usual way a slow choice showed up; the fix
+is in the code the app shares with the website, so both get it.
 
 **A file received on Android shows its real size in the Files app.** Every received
 file was listed as 0 B there, and by anything else that asks Android's media index,

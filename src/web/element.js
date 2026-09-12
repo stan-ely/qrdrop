@@ -1579,7 +1579,7 @@ export class QRDropElement extends HTMLElement {
 
     // Handlers go on before anything is drawn, so a manifest arriving the
     // instant the sender is ready has somewhere to land.
-    this._attachReceiver({
+    const { receiver } = this._attachReceiver({
       room,
 
       onOffer: ({ manifest, accept, decline }) => {
@@ -1622,6 +1622,14 @@ export class QRDropElement extends HTMLElement {
               this._setState({ busy: false })
               return this._failTransfer(error)
             }
+            // The sender left while the dialog was up, and the leave handler
+            // below has already landed on done/failed and cancelled the
+            // receiver -- so a null here is a file accept() released, not a
+            // dismissal, and reading it as one would replace the real reason
+            // with the wrong one. A sink that did come back is already being
+            // aborted by that cancel; drawing the transfer screen over it
+            // would be the stuck "Receiving, 0%" described below.
+            if (this._sessionEnded) return
             // The save dialog was dismissed. This is a full teardown of a
             // transfer the user had already accepted, so it says so rather
             // than dropping them on a blank choose screen.
@@ -1652,6 +1660,32 @@ export class QRDropElement extends HTMLElement {
         })
         room.close()
       },
+    })
+
+    // Replaces _establish's handler, as _startSend does, and for the receive
+    // side's version of the same reason: that one only opens the error sheet,
+    // and nothing else ends a receive whose sender has gone. Found on a phone.
+    // ColorOS freezes a backgrounded app about 11 s after it leaves the screen,
+    // and the save dialog is what puts qrdrop there. A sender whose person took
+    // 45 s to choose a location was gone, by ICE consent timeout, before the
+    // phone thawed. On the thaw the sheet opened, accept() came back with the
+    // file, the transfer screen replaced the sheet, since a screen change
+    // clears a modal, and "Receiving, 0%" stood there with the sink open and
+    // nothing left that could ever end it. Failing the transfer instead closes
+    // the room and cancels the receiver, which releases that file whichever
+    // side of accept() it is on.
+    //
+    // Behind receiver.settled(), so an error or a decline the sender sent just
+    // before leaving is reported as itself first, as runSend in cli.js does
+    // for the mirror case. And only on the two screens this session can still
+    // be on: a Decline resets to choose without setting _sessionEnded, and a
+    // late leave must not fail a session that has already ended there.
+    room.onPeerLeave(() => {
+      receiver.settled().then(() => {
+        if (this._sessionEnded) return
+        if (this._state.screen !== 'verify' && this._state.screen !== 'transfer') return
+        this._failTransfer(new Error(PEER_DISCONNECTED))
+      })
     })
 
     this._setState({ screen: 'verify', sas: room.session.sas, sasWords: room.session.sasWords })

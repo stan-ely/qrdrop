@@ -64,6 +64,12 @@ later `next()` and the flow gate reject with it, once no message that had alread
 arrived answers the wait, and a new `throwIfFailed()` is what `sendFile` checks
 between chunks.
 
+**A receive in the browser whose sender leaves says so, and stops.** The receiving
+side had the same gap as the send above, most visibly when the sender left while the
+save dialog was open: choosing a location then drew "Receiving, 0%" over the error,
+and it stayed there. The receive now ends on "Transfer failed" with "The other device
+disconnected" and gives up the file it had opened. The command line was not affected.
+
 **A finished send is no longer reported as "The other device disconnected".** The
 file arrived whole and both ends computed its digest, and then the sender said the
 other device had gone and the command line exited 1. The receiving side sends "done"

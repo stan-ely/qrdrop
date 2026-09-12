@@ -691,14 +691,51 @@ the same LAN:
 
 Four things found on the way, none of them the sink:
 
-- **ColorOS kills a backgrounded app's sockets while the save dialog is up.**
-  `OAppNetControlService: Close socket:[10372] cause:App bg(IMMEDIATELY)` (10372 is
-  qrdrop's uid) two seconds after the picker opened, and the peer connection was gone
-  before Save returned — the phone logged *"The other device disconnected"* 17 ms before
-  `getFileDescriptor`. One run failed this way. The runs that passed had qrdrop on the
-  `deviceidle` whitelist *and* spent about two seconds in the picker, and those were not
-  varied separately, so which one mattered is unknown. Vendor behaviour outside the
-  WebView; recorded rather than worked around.
+- **ColorOS freezes a backgrounded app while the save dialog is up, and a slow choice
+  loses the sender.** First seen as `OAppNetControlService: Close socket:[10372]
+  cause:App bg(IMMEDIATELY)` two seconds after the picker opened, with the peer gone
+  before Save returned. Separated on 2026-09-12 with four timed runs, CLI sender to the
+  phone on one LAN, Save tapped by `adb input tap` at a fixed time after DocumentsUI came
+  to the front, and `OplusHansManager` logged throughout. The save dialog is its own task,
+  so opening it is qrdrop leaving the screen, and Hans walks it through a fixed schedule:
+  `R` for 6 s, `M` for 5 s, then `F` -- `freeze uid: 10376 pids: [...]` and the socket
+  close in the same millisecond, about 11 s after the dialog opened, every run.
+
+  | whitelist | time in dialog | what Hans did | result |
+  | --- | --- | --- | --- |
+  | off | 2.2 s | `R` for 2 s, never frozen | received, byte-identical |
+  | off | 20.2 s | frozen 9 s, sockets closed | **received**, byte-identical |
+  | off | 45.2 s | frozen 34 s, sockets closed | **failed**: sender gave up at 24 s |
+  | on (`deviceidle`) | 45.1 s | `F` every 5 s, thawed each time within ~1 s by `reason=Packet`, no socket close | received, byte-identical |
+
+  So neither variable alone is the answer. The socket close is not what breaks the
+  transfer -- it takes the relay WebSockets (`ERR_CONNECTION_ABORTED` on all four at the
+  thaw) and leaves a direct UDP peer connection alone. What breaks it is a freeze longer
+  than the sender's ICE consent timeout: libdatachannel v0.24.3 pins libjuice at
+  `22145ec`, where `CONSENT_TIMEOUT` is 30,000 ms with checks every 4-6 s, and the sender
+  printed *"The other device disconnected"* 24.3 s into the freeze, about ten seconds
+  before the phone thawed. The whitelist works because a whitelisted app is thawed by
+  its incoming packets, so it answers consent checks, not because the freeze is skipped.
+  The first failure, closed at two seconds, is consistent with an app that had already
+  spent its `R` and `M` time in the background before the picker. A relayed (TCP)
+  connection would be cut by the socket close itself; not measured. Vendor behaviour
+  outside the WebView; not worked around. The failure it exposed on our side is
+  recorded below.
+- ~~**A receive whose sender left during the save dialog stood on "Receiving, 0%"
+  forever.**~~ **Fixed 2026-09-12.** The 45 s run above never showed a failure. On the
+  thaw the phone logged *"The other device disconnected"*, opened the error sheet, and
+  400 ms later drew the transfer screen over it -- `accept()` had come back with the
+  file, and a screen change clears a modal -- then sat at 0% with an empty status and
+  only Cancel, with `item4-3mb.bin (2)` open at 0 bytes, until the harness gave up
+  120 s later. The web receiver kept `_establish`'s leave handler, which only opens the
+  sheet; the sender had the same flaw until `e8aaf50`, and the command-line receiver
+  never had it. `_startReceive` now replaces that handler, as `_startSend` does: after
+  `receiver.settled()`, on `verify` or `transfer` only, it fails the transfer, which
+  closes the room and cancels the receiver, and Accept stops if the session ended while
+  the dialog was up rather than reading the released file's `null` as a dismissal.
+  Rerun on a debug build with the fix, same 45 s and no whitelist: 1.1 s after the
+  thaw the phone was on "Transfer failed" with *"The other device disconnected"* in the
+  sheet, and the saved document was emptied to 0 bytes.
 - **The Downloads provider never overwrites from a create-document picker.** Saving under
   an existing name produced `overwrite-test.bin (1)`. So `truncate` (the `"wt"` mode) is
   correct and unreachable through this dialog on Android — unverified on a device, not
