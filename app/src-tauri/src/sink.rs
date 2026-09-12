@@ -121,13 +121,60 @@ pub fn sink_write(
     open.file.write_all(bytes).map_err(|e| e.to_string())
 }
 
-/// Flushes and drops the handle. After this the file on disk is complete.
+/// Flushes and drops the handle. After this the file on disk is complete --
+/// and on Android, the second half is what makes the rest of the phone agree.
+///
+/// Every file the app received on Android was listed as 0 B by the Files app
+/// and anything else reading the media index, while `ls` gave its true size and
+/// its bytes were whole. The cause is in how the descriptor is handed over.
+/// plugin-fs's Kotlin half opens the `content://` URI and calls `detachFd()`,
+/// so Rust can own an ordinary `File`. MediaProvider wraps every write open in
+/// a close listener that rescans the file, and `ParcelFileDescriptor` reports a
+/// detach to that listener exactly as it reports a close: immediately. So the
+/// scan ran at `sink_open`, on a file `"wt"` had just emptied, and when Rust
+/// closed the real descriptor there was nobody left listening. Measured on the
+/// Realme RMX3868: the index row's `date_modified` was the very second of the
+/// open, `W/ParcelFileDescriptor: Peer expected signal when closed; unable to
+/// deliver after detach` was logged by this process in that same second, and
+/// the row still said 0 bytes ten minutes later.
+///
+/// So once the bytes are written and the descriptor closed, a content URI is
+/// opened again and dropped. The mode is `"wa"`, and both letters are load-
+/// bearing: MediaProvider attaches its listener only to a *write* open, so a
+/// harmless `"r"` rescans nothing, and without append the mode is the one that
+/// is allowed to truncate -- which would reproduce the bug by wiping the file
+/// the index is being asked to look at. Fixing it from the Kotlin side instead,
+/// closing rather than detaching, would mean a Tauri plugin of our own or a
+/// patched plugin-fs, for what one open achieves.
+///
+/// `async` now, for `sink_open`'s reason: that open is a round-trip into
+/// Kotlin. Best effort, too. The file is complete before the reopen is tried,
+/// and failing a finished transfer because a listing is stale would report the
+/// wrong thing about the one part that worked.
 #[tauri::command]
-pub fn sink_close(state: tauri::State<'_, SinkState>) -> Result<(), String> {
-    if let Some(mut open) = state.0.lock().unwrap().take() {
-        open.file.flush().map_err(|e| e.to_string())?;
+pub async fn sink_close(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SinkState>,
+) -> Result<(), String> {
+    let Some(Open { path, mut file }) = state.0.lock().unwrap().take() else {
+        return Ok(());
+    };
+    file.flush().map_err(|e| e.to_string())?;
+    drop(file);
+    if needs_media_rescan(&path) {
+        let mut options = OpenOptions::new();
+        options.write(true).append(true);
+        let _ = app.fs().open(path, options);
     }
     Ok(())
+}
+
+/// Whether closing `path` leaves Android's media index stale -- a `content://`
+/// URI, and nothing else. Keyed on the scheme rather than `target_os`, so it is
+/// testable on a desktop host, and a `file://` URL, which plugin-fs opens as a
+/// plain path, is not reopened for nothing.
+fn needs_media_rescan(path: &FilePath) -> bool {
+    matches!(path, FilePath::Url(url) if url.scheme() == "content")
 }
 
 /// Drops the handle and discards the partial file -- the native equivalent of
@@ -156,4 +203,25 @@ pub fn sink_abort(state: tauri::State<'_, SinkState>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(s: &str) -> FilePath {
+        let Ok(path) = s.parse::<FilePath>();
+        path
+    }
+
+    #[test]
+    fn only_a_content_uri_is_reopened_for_the_media_index() {
+        // The shape plugin-dialog's save() returned on the device.
+        assert!(needs_media_rescan(&parsed(
+            "content://com.android.providers.downloads.documents/document/1512"
+        )));
+        assert!(!needs_media_rescan(&parsed("file:///tmp/report.pdf")));
+        assert!(!needs_media_rescan(&parsed("/tmp/report.pdf")));
+        assert!(!needs_media_rescan(&parsed(r"C:\Users\someone\report.pdf")));
+    }
 }

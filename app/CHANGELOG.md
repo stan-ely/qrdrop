@@ -32,6 +32,13 @@ succeeded chose quickly with qrdrop allowed to run in the background, and those 
 were not tested apart, so which one matters is not yet known. If a receive fails
 straight after choosing where to save, try both.
 
+**A file received on Android shows its real size in the Files app.** Every received
+file was listed as 0 B there, and by anything else that asks Android's media index,
+while the file itself was complete. Android indexed it at the moment the app opened it
+for writing, before a byte had arrived, and was never asked to look again. The app now
+asks, once the file is closed. This applies to files received over the network and by
+Beam alike.
+
 **A transfer could fail before it started, with "Out-of-order frame: expected 0, got
 1".** Seen once on that phone receiving from the command line, and gone on the retry.
 Two short messages that set a transfer up could leave in the wrong order when they

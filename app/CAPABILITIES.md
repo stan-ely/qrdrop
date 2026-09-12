@@ -686,7 +686,7 @@ the same LAN:
 | 64 MiB | 67,108,864 bytes, SHA-256 identical, 19.6 s from Receiving to done: **~3.4 MB/s** (sending from the same phone was 4.03) |
 | 3 MB under an existing 5 MB name | a new `name (1)` document, byte-identical; the 5 MB original untouched, sender and phone digests equal |
 | cancel at 21% of 64 MiB | no crash, app back on choose, **partial file left at 15,910,050 bytes** (open work #3b; re-run on `a4f986c`: emptied to 0 bytes, no error sheet) |
-| Beam receive | re-run 2026-09-12 on a fresh install of debug `d1a5d19`, beaming a 60,000-byte random file from `/edge/` in a desktop browser on the Windows machine: the OS camera prompt appeared on first use, the offer sheet opened, Accept went straight to the save dialog, and the file landed in `Download/` at 60,000 bytes with SHA-256 identical to the source. MediaStore listed that same document at `_size=0` afterwards -- open work's DocumentsUI 0 B listing, reproduced here without a network in the path |
+| Beam receive | re-run 2026-09-12 on a fresh install of debug `d1a5d19`, beaming a 60,000-byte random file from `/edge/` in a desktop browser on the Windows machine: the OS camera prompt appeared on first use, the offer sheet opened, Accept went straight to the save dialog, and the file landed in `Download/` at 60,000 bytes with SHA-256 identical to the source. MediaStore listed that same document at `_size=0` afterwards -- the DocumentsUI 0 B listing below, reproduced here without a network in the path, and fixed the same evening |
 | Windows regression, debug build (raw body) | 3 MB twice: once to a new file, once saved over an existing 5,000,000-byte file after Windows' replace prompt — 3,000,000 bytes, byte-identical, sender and app digests equal. `truncate` proven where the dialog does overwrite |
 
 Four things found on the way, none of them the sink:
@@ -703,13 +703,23 @@ Four things found on the way, none of them the sink:
   an existing name produced `overwrite-test.bin (1)`. So `truncate` (the `"wt"` mode) is
   correct and unreachable through this dialog on Android — unverified on a device, not
   proven.
-- **DocumentsUI showed the received files as 0 B** while `ls` gave their true sizes. The
-  media store's size is not refreshed after a write through a descriptor; the bytes are
-  right, the listing is stale until a rescan. The Beam receive run showed the same thing
-  from the other side: `content query --uri content://media/external/file` returned the
-  new `Download/beam-60k.bin` with `_size=0` while the file on disk was 60,000 bytes and
-  byte-identical. So it is the save path's, not the network receive's, and a rescan
-  being what clears it is still an assumption rather than a measurement.
+- ~~**DocumentsUI showed the received files as 0 B**~~ **Fixed 2026-09-12.** `ls` gave
+  their true sizes the whole time. The Beam receive run showed it from the other side:
+  `content query --uri content://media/external/file` returned the new
+  `Download/beam-60k.bin` with `_size=0` while the file on disk was 60,000 bytes and
+  byte-identical, so it is the save path's and not the network receive's. The cause is
+  the handover, not a slow index: plugin-fs's Kotlin half opens the URI and calls
+  `detachFd()`, MediaProvider wraps every write open in a close listener that rescans,
+  and `ParcelFileDescriptor` reports a detach to that listener immediately, as if it
+  were a close. So the scan ran at `sink_open` on a file `"wt"` had just emptied. The
+  row's `date_modified` was the second of the open, this process logged
+  `Peer expected signal when closed; unable to deliver after detach` in that same second,
+  and the row still said 0 ten minutes later. `sink_close` now reopens a content URI in
+  `"wa"` and drops it -- write, because MediaProvider only listens on write opens, and
+  append, because the mode without it may truncate. Measured on a debug build: a
+  3,000,000-byte file saved through the same four invokes a receive makes was indexed at
+  `_size=3000000`, `date_modified` the second of the close, SHA-256 identical, and the
+  close including the reopen took 34 ms.
 - **One pairing failed with `Out-of-order frame: expected 0, got 1`** before any offer
   appeared, and the next identical attempt did not. Chased the same day, and **not a
   device problem**: every control message took its index, awaited the seal, then sent,
