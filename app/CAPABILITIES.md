@@ -1224,7 +1224,11 @@ above. None of it blocks the config gate.
    before closing the room. On Android `sink_abort` can empty a `content://`
    document and cannot delete it, so a cancelled receive there leaves an empty
    file under the chosen name. The CLI got the same treatment: a sender leaving
-   mid-file, or Ctrl-C, now deletes the partial file.
+   mid-file, or Ctrl-C, now deletes the partial file. The first of those is
+   checked live, CLI to CLI on one Windows machine: the sender was killed with
+   41,170,314 bytes of a 64 MiB file on disk, the receiver reported the
+   disconnect, and the output directory was empty afterwards. Ctrl-C has not
+   been pressed by hand.
 3c. ~~**A sink failure is reported as the person dismissing the save dialog.**~~
    **Closed 2026-09-12.** `accept()` caught every `createSink` rejection as a
    dismissal. Now a sink resolves `null` for a dismissed dialog and rejects only
