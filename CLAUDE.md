@@ -750,7 +750,11 @@ build-tools, which is why pinning it is cheap. Those come from
 takes the NDK with it. `sdkmanager` is deprecated in favour of that `android` CLI,
 whose package separator is `/` and not the `;` older instructions use, and the NDK
 pin is the newest *stable* one: every 30.x build is still a release candidate, and
-only the version field's `-rc.N` says so — the package path does not.
+only the version field's `-rc.N` says so — the package path does not. The build-tools
+pin is the opposite of newest: it is **AGP's default** (35.0.0 for AGP 8.11), because
+AGP never asks what is installed and downloads its own default when it is missing. At
+37.0.0 the pin installed a version nothing used while every CI build fetched 35 behind
+its back. It moves when AGP does.
 
 **`NDK_HOME` is built from `xdg_data_home`, and that is not a stylistic choice.**
 `{{env.ANDROID_HOME}}` fails outright — a tool's own exports are not in scope while
@@ -764,6 +768,24 @@ the SDK version appears twice in `mise.toml`; those two lines move together.
 tag trigger on purpose: `v*` belongs to `publish.yml` and `pages.yml`, and releasing
 the app is `app-release.yml`'s job (below). Before this workflow, nothing compiled
 the Rust crate on a pull request at all.
+
+**It does not run on a change under `src/`, and `ci.yml` builds the app channel
+instead.** The crate never reads `src/`; it embeds `app/dist` whole, so no change there
+can break a compile or a link, and the one way it breaks the app — its channel of the
+site build — is a seconds-long step in `ci.yml`'s `check` job. Listing `src/**` cost five
+runners and four and a half minutes on nearly every commit.
+
+**Every app job sets up through `.github/actions/app-setup`**, in this workflow and in
+`app-release.yml`, and it installs only the tools that job names. A bare `mise-action`
+installs all of `mise.toml` — a JDK, the Android SDK and fdroidserver in a Windows compile
+check — and its cache is keyed on that file's hash alone, so it stored ~450 MB per OS again
+on every edit. Those copies are what pushed the repository past the 10 GB Actions cache
+quota, where eviction throws out the Rust caches that actually save minutes, so the action
+runs with `cache: false`. It also sets `MISE_TASK_RUN_AUTO_INSTALL=false`: `mise run` would
+otherwise reinstall every missing tool before its first task and undo the narrowing. The
+Rust cache saves from `main` only, because a tag can restore `main`'s cache but never
+another tag's. Android's Gradle cache is `gradle/actions/setup-gradle` with
+`cache-provider: basic`, the MIT-licensed provider rather than the proprietary default.
 
 **The iOS job runs `cargo build --lib --target aarch64-apple-ios-sim`, and both of
 the more ambitious things it tried first are dead ends.** `tauri ios build` archives

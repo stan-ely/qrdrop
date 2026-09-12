@@ -1,6 +1,6 @@
 # Compiles the Tauri shell on every platform it targets. Build-only: nothing
-# here is signed, uploaded, or released -- that is Phase 5's job and it will
-# live in its own file on an `app-v*` tag.
+# here is signed, uploaded, or released -- that is app-release.yml's job, on an
+# `app-v*` tag.
 #
 # There is no tag trigger on purpose. `v*` belongs to npm (publish.yml, whose
 # FILENAME is a contract with npm trusted publishing) and to pages.yml; adding
@@ -18,23 +18,30 @@ name: app
 # GitHub's workflow parser does not support anchors, and a file that is valid
 # YAML but not a valid workflow fails at dispatch time with a message that does
 # not mention aliases.
+#
+# src/ is NOT in them, and that is not an oversight. The crate never reads
+# src/: what reaches it is app/dist, which is embedded whole, so no change
+# there can break a compile or a link. The one way src/ breaks the app is by
+# breaking its channel of the site build, and ci.yml builds that channel on
+# every push. Listing src/ here spent five runners and four and a half minutes
+# on nearly every commit to prove what that one step proves in seconds.
 on:
   push:
     branches: [main]
     paths:
       - 'app/**'
-      - 'src/**'
       - 'scripts/build-site.mjs'
       - 'scripts/generate-tauri-config.mjs'
       - 'mise.toml'
+      - '.github/actions/app-setup/**'
       - '.github/workflows/app.yml'
   pull_request:
     paths:
       - 'app/**'
-      - 'src/**'
       - 'scripts/build-site.mjs'
       - 'scripts/generate-tauri-config.mjs'
       - 'mise.toml'
+      - '.github/actions/app-setup/**'
       - '.github/workflows/app.yml'
   workflow_dispatch:
 
@@ -66,25 +73,9 @@ jobs:
       # already pins node, rust and the JDK, and a second copy of those
       # versions in this file is precisely the drift the rest of the repo goes
       # out of its way to avoid (see tokens.js, buildCSP, tauri.conf.template).
-      - uses: jdx/mise-action@v2
-
-      - name: Install Linux webview dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/app-setup
         with:
-          workspaces: app/src-tauri -> target
-
-      - run: npm ci
-      - run: npm ci --prefix app
-
-      # app/dist and the CSP in tauri.conf.json are inputs to the Rust build
-      # (frontendDist, generate_context!), so they have to exist first.
-      - run: mise run app:build-site
-      - run: mise run app:config
+          webkit: 'true'
 
       # --debug because this is a compile check and release codegen roughly
       # doubles it for no extra signal.
@@ -97,20 +88,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v2
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app/src-tauri -> target
+      - uses: ./.github/actions/app-setup
 
       # The simulator target, not the device one: the device slice cannot link
       # without a signing identity, and this job deliberately has none.
       - run: rustup target add aarch64-apple-ios-sim
-
-      - run: npm ci
-      - run: npm ci --prefix app
-      - run: mise run app:build-site
-      - run: mise run app:config
 
       # gen/apple is committed once it exists (see .gitignore). Until then, and
       # on any future Tauri CLI bump that needs a re-scaffold, init fills it in
@@ -170,7 +152,9 @@ jobs:
       # mise installs the pinned command-line tools and exports ANDROID_HOME
       # and NDK_HOME, so this needs no setup-android action -- the runner gets
       # the same SDK root a developer has, from the same pin.
-      - uses: jdx/mise-action@v2
+      - uses: ./.github/actions/app-setup
+        with:
+          tools: node rust java android-sdk
 
       # The packages the pin does not carry. Deliberately a mise task rather
       # than the install line spelled out here: mise.toml's [vars] is the one
@@ -178,19 +162,20 @@ jobs:
       # so a runner cannot end up linking against a version it did not fetch.
       - run: mise run app:android:sdk
 
-      - uses: Swatinem/rust-cache@v2
+      # Gradle's own distribution and every Maven dependency, which this job
+      # otherwise downloads from nothing on every run -- about 95 s of a four
+      # minute job. `basic` is the MIT-licensed cache provider; the default
+      # one is a proprietary component, free for a public repository but not
+      # something this project needs to depend on for a directory cache. It
+      # writes only from main, as the Rust cache does.
+      - uses: gradle/actions/setup-gradle@v6
         with:
-          workspaces: app/src-tauri -> target
+          cache-provider: basic
 
-      # One ABI. Building all four quadruples the job for a check that is
+      # One ABI. Building all of them multiplies the job for a check that is
       # about "does it compile and link at all", and arm64 is what every phone
       # this decade actually runs.
       - run: rustup target add aarch64-linux-android
-
-      - run: npm ci
-      - run: npm ci --prefix app
-      - run: mise run app:build-site
-      - run: mise run app:config
 
       - name: Scaffold gen/android if absent
         run: '[ -d src-tauri/gen/android ] || npx tauri android init --ci'

@@ -1,0 +1,72 @@
+# The setup every Tauri job shares, in app.yml and app-release.yml alike: the
+# pinned toolchain, the Rust cache, both npm installs, and the two generated
+# inputs to the Rust build. It used to be spelled out in five jobs across two
+# files, and the one time a copy differs is the time nobody notices which.
+#
+# The caller checks the repository out first. A local action is a file in the
+# checkout, so it cannot be read before one exists.
+name: app setup
+description: Install the app's toolchain from mise.toml, restore the Rust cache, and generate app/dist and tauri.conf.json
+
+inputs:
+  tools:
+    description: >
+      What `mise install` installs, from mise.toml's pins. Desktop and iOS
+      jobs need node and rust; Android adds java and android-sdk.
+    default: node rust
+  webkit:
+    description: Install the Linux webview development packages (desktop builds on Linux only)
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # install_args, because a bare mise-action installs the whole of mise.toml:
+    # rust, a 207 MB JDK, the Android command-line tools and fdroidserver, in a
+    # job that compiles for Windows. That cost 52 s on a 37 s compile.
+    #
+    # cache: false, and that was measured rather than guessed. mise-action keys
+    # its cache on a hash of mise.toml alone, not on what was installed, so it
+    # stored the full toolset again -- ~450 MB per OS -- every time that file
+    # changed, and those copies were what pushed this repository past the 10 GB
+    # Actions cache quota, where eviction starts throwing away the Rust caches
+    # that actually save minutes. Restoring one took 38 s on Windows, barely
+    # quicker than the install it replaced.
+    - uses: jdx/mise-action@v4
+      with:
+        install_args: ${{ inputs.tools }}
+        cache: false
+
+    # `mise run` installs every tool mise.toml pins that is missing before it
+    # runs a task, which here is exactly the install the step above narrowed.
+    # Every `mise run` after this -- in this action and in the calling job --
+    # would otherwise quietly put the JDK and the Android SDK back.
+    - shell: bash
+      run: echo "MISE_TASK_RUN_AUTO_INSTALL=false" >> "$GITHUB_ENV"
+
+    - name: Install Linux webview dependencies
+      if: inputs.webkit == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+    # Saved from main only. A tag can restore main's cache but never another
+    # tag's, so a cache an app-v* run saves is ~500 MB of quota that nothing
+    # will ever read.
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: app/src-tauri -> target
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - shell: bash
+      run: |
+        npm ci
+        npm ci --prefix app
+
+    # app/dist and the CSP in tauri.conf.json are inputs to the Rust build
+    # (frontendDist, generate_context!), so they have to exist first.
+    - shell: bash
+      run: |
+        mise run app:build-site
+        mise run app:config

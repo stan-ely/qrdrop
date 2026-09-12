@@ -62,10 +62,17 @@ yq = "4.53.6"
 # reasoning that keeps design tokens in one file and derives the CSP from
 # SIGNALING_URLS. `android_sdk` repeats the tool version above because the
 # install path has to be reconstructed by hand; see NDK_HOME.
+#
+# build-tools is the version the Android Gradle plugin packages with, and not
+# the newest one, because AGP never asks which build-tools are installed: it
+# uses its own default and downloads that if it is missing. At 37.0.0 this pin
+# installed a version nothing used, and every CI build then fetched 35.0.0
+# behind its back ("Install Android SDK Build-Tools 35" in the Gradle log).
+# AGP 8.11 is gen/android/build.gradle.kts's; this line moves when that does.
 [vars]
 android_sdk = "23.0"
 android_ndk = "29.0.14206865"
-android_build_tools = "37.0.0"
+android_build_tools = "35.0.0"
 android_platform = "android-36"
 
 # npm puts node_modules/.bin on PATH for the scripts it runs; mise does not, so

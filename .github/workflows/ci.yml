@@ -42,6 +42,12 @@ jobs:
       # SIGNALING_URLS, which is what keeps the allowlist honest.
       - run: npm run build
 
+      # The app's channel of the same build. app.yml no longer runs on a
+      # change under src/ -- the Rust compile never reads it -- so this is
+      # now the check that a src/ change has not broken the page the app
+      # ships, in seconds rather than five runners.
+      - run: node scripts/build-site.mjs --channel app --out app/dist
+
   # The workflows themselves, and the shell inside them. publish.yml and
   # app-release.yml execute only on a tag, so without this a mistake in either
   # is found by a failed release -- after an npm publish that cannot be
@@ -55,7 +61,7 @@ jobs:
       # narrows the install to these two: a bare mise-action installs the whole
       # file, which is rust, a JDK, the Android command-line tools and
       # fdroidserver for a job that reads text.
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@v4
         with:
           install_args: actionlint shellcheck
 
