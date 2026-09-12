@@ -685,7 +685,7 @@ the same LAN:
 | 3 MB | 3,000,000 bytes, SHA-256 identical to the source |
 | 64 MiB | 67,108,864 bytes, SHA-256 identical, 19.6 s from Receiving to done: **~3.4 MB/s** (sending from the same phone was 4.03) |
 | 3 MB under an existing 5 MB name | a new `name (1)` document, byte-identical; the 5 MB original untouched, sender and phone digests equal |
-| cancel at 21% of 64 MiB | no crash, app back on choose, **partial file left at 15,910,050 bytes** (open work #3b; Cancel aborts the sink on main since, not re-run on the device) |
+| cancel at 21% of 64 MiB | no crash, app back on choose, **partial file left at 15,910,050 bytes** (open work #3b; re-run on `a4f986c`: emptied to 0 bytes, no error sheet) |
 | Beam receive | not run: needs a camera physically aimed at an animated QR |
 | Windows regression, debug build (raw body) | 3 MB twice: once to a new file, once saved over an existing 5,000,000-byte file after Windows' replace prompt — 3,000,000 bytes, byte-identical, sender and app digests equal. `truncate` proven where the dialog does overwrite |
 
@@ -1217,7 +1217,10 @@ above. None of it blocks the config gate.
    queued behind it. A unit test drives a sink that cannot write through a
    nine-chunk transfer and counted ten reports before the change, one after.
 3b. ~~**Cancelling a network receive never aborts the sink.**~~ **Closed
-   2026-09-12, in unit tests and not yet on a device.** `_teardown` on that path
+   2026-09-12, and checked on the device** (debug build of `a4f986c`, same
+   Realme): Cancel at 25% of a 64 MiB receive took the document from
+   14,849,380 bytes to 0 within five seconds, and the app went straight back to
+   choose with no error sheet. `_teardown` on that path
    was `room.close()` alone, which left 15,910,050 bytes of a cancelled 64 MiB
    receive and the native handle in `SinkState`. `createReceiver` now has a
    `cancel()` that aborts the open sink, and `element.js`'s teardown runs it
@@ -1236,6 +1239,16 @@ above. None of it blocks the config gate.
    `Peer refused the transfer: <reason>`. `web/sink.js` maps
    `showSaveFilePicker`'s `AbortError` to `null` to keep that contract, and
    Beam's Accept, which never caught a sink rejection at all, reports it too.
+3d. **A sender whose receiver leaves mid-file hangs.** Found in the 3b device
+   run: the CLI sender went on to "Sent 64 MB of 64 MB" through 3,012 Trystero
+   `no peer with id … found` warnings, and was still running two minutes later.
+   `runSend`'s `onPeerLeave` calls `control.fail()`, which rejects only a
+   waiter that already exists, and mid-file there is none -- so the leave is
+   forgotten and `sendFile` then waits on a `done` that is never coming. The
+   website's sender has the same shape. Not addressed. Also checked on the
+   device the same day: the phone sending to a CLI receiver that confirmed its
+   SAS 3.2 s after the phone did -- the order `25818cf` fixed -- delivered
+   3,000,000 bytes byte-identical with both digests equal.
 4. **The unrun checklist rows**: Beam send, Beam receive at ~10 Hz, and the
    deep-link `qrdrop:<code>` path on Android.
 5. ~~**`app.yml` has never run.**~~ **Closed.** Pushed and green on all five
