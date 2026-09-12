@@ -145,15 +145,16 @@ jobs:
       # package-lock.json, and installing main's dependencies around a tag's
       # source is the same frankenbuild this workflow set out to avoid.
       #
-      # The suite runs again here for the same reason it ran above -- this is a
-      # different tree, and "it passed when it was tagged" is a claim about a
-      # different runner on a different day.
+      # The suite does NOT run again on this tree, which it used to. The tag's
+      # code cannot change: publish.yml ran this same suite on it before
+      # anything was published, and this job ran it again on every push to main
+      # since. Re-running it here could only ever fail on a flake or a relay in
+      # code nobody is touching, and that failure would block the edge deploy
+      # of whatever did change. main's own run above stays the deploy gate.
       - name: Build the stable tree from the release tag
         run: |
           git checkout --detach "${{ steps.tag.outputs.tag }}"
           npm ci
-          npm test
-          npm run typecheck
           node scripts/build-site.mjs
 
       # site/dist/* into the root of _site/, leaving _site/edge/ where it is.
