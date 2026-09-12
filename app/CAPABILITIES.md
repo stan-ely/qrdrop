@@ -1234,10 +1234,14 @@ above. None of it blocks the config gate.
    pressed by hand, in a real terminal on the same machine: a 2 GiB receive
    interrupted at 336 MB printed "Cancelled." and left the output directory
    empty. The sender went on to "Sent 340 MB" and then reported "The other
-   device disconnected" and exited 1, about 11 s later. That delay is the
-   connection timing out rather than being told: the SIGINT handler runs the
-   interrupt hooks and exits without closing the room, so no leave message
-   goes out.
+   device disconnected" and exited 1, about 11 s later. That delay was the
+   connection timing out rather than being told: the SIGINT handler ran the
+   interrupt hooks and exited without closing the room, so no leave message
+   went out. Both commands now put `room.close()` among those hooks, and
+   `close()` returns Trystero's `leave()`, which sends the leave message and
+   waits 99 ms for it to go out. Pressed by hand again: interrupted at 167 MB,
+   output directory empty, and the sender reported the disconnect 89 ms after
+   its last progress line.
 3c. ~~**A sink failure is reported as the person dismissing the save dialog.**~~
    **Closed 2026-09-12.** `accept()` caught every `createSink` rejection as a
    dismissal. Now a sink resolves `null` for a dismissed dialog and rejects only

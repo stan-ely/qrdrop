@@ -170,7 +170,13 @@ interface PairedRoom {
    * RELAYED_MAX_BYTES, which callers gate on this.
    */
   isRelayed(): Promise<boolean>
-  close(): void
+  /**
+   * Leaves the room, telling the peer. Settles once the leave message has had
+   * its chance to go out, and never rejects. A caller that keeps running may
+   * ignore it; a process about to exit must await it, or the peer learns of
+   * the leave only when the connection times out.
+   */
+  close(): Promise<void>
 }
 
 /**

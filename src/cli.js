@@ -339,6 +339,13 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, cre
  * not. The SIGINT handler in main() promised exactly that for a long time
  * while calling nothing but process.exit().
  *
+ * Both commands also put their room's close() here once paired, so the other
+ * device is told rather than left to time out. Measured before that, by hand:
+ * Ctrl-C on a receive at 336 MB of 2 GiB, and the sender went on printing
+ * "Sent 340 MB" for 11 s before it noticed. Ctrl-C was the one exit that never
+ * closed the room at all -- the `finally` blocks below never run on it, since
+ * process.exit() lands while the transfer is still being awaited.
+ *
  * @type {Set<() => Promise<void>>}
  */
 const interruptHooks = new Set()
@@ -443,6 +450,8 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
   const source = await fromPath(filePath)
   const style = styleFor(process.stdout)
   let room
+  /** @type {(() => Promise<void>) | undefined} */
+  let leaveRoom
 
   try {
     const secret = generateSecret()
@@ -460,6 +469,8 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
 
     const sessionEnded = { done: false }
     room = await establish({ secret, role: 'host', relays, strategy, prompter })
+    leaveRoom = room.close
+    interruptHooks.add(leaveRoom)
 
     // Free TURN is metered; a large file over it will be throttled or cut.
     // Refuse before the manifest goes out rather than fail partway through.
@@ -533,6 +544,7 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
     process.stdout.write(`${style.ok('Sent.')} digest=${result.digest}\n`)
     return 0
   } finally {
+    if (leaveRoom) interruptHooks.delete(leaveRoom)
     room?.close()
     await source.close?.()
   }
@@ -562,6 +574,8 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
   let room
   /** @type {(() => Promise<void>) | undefined} */
   let cancelReceive
+  /** @type {(() => Promise<void>) | undefined} */
+  let leaveRoom
 
   try {
     // Bound to a const because the checker cannot carry the narrowing of a
@@ -570,6 +584,8 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
     const sessionEnded = { done: false }
     const paired = await establish({ secret, role: 'guest', relays, strategy, prompter })
     room = paired
+    leaveRoom = paired.close
+    interruptHooks.add(leaveRoom)
 
     process.stdout.write(`\nSaving into ${outDirAbs}\n`)
     process.stdout.write('Waiting for the sender to offer a file…\n')
@@ -667,6 +683,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
       interruptHooks.delete(cancelReceive)
       await cancelReceive()
     }
+    if (leaveRoom) interruptHooks.delete(leaveRoom)
     room?.close()
   }
 }

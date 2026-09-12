@@ -42,6 +42,16 @@ created, as a Beam receive already did. The command line deletes the partial fil
 when the sender disconnects mid-transfer or when you press Ctrl-C; its Ctrl-C handler
 had long said it did this, and did not.
 
+**Ctrl-C on the command line tells the other device.** It used to exit without
+leaving the connection, so the other side carried on until the connection timed
+out: a sender went on showing "Sent 340 MB" for 11 seconds after its receiver had
+been interrupted. Measured again with the fix, the sender reported the disconnect
+within a tenth of a second.
+
+For code using the package directly: a paired room's `close()` now returns a promise
+that settles once the peer has been told, and never rejects. A process about to exit
+should await it.
+
 **A send whose receiver leaves partway through says so, and stops.** It used to keep
 sending the rest of the file to nobody and then wait forever for a reply that was
 never coming — the command line printed "Sent 64 MB of 64 MB" and was still running

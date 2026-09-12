@@ -111,6 +111,37 @@ test('a second pairing on the same secret cannot open the first one', async () =
   )
 })
 
+test('close() settles only once the peer has been told', async () => {
+  // Trystero's leave() sends a leave message and waits 99 ms for it to go out.
+  // close() used to drop that promise, and the CLI's Ctrl-C handler exited
+  // straight after: a sender went on for 11 s before the connection timed out.
+  // The slow leave here stands in for that wait.
+  const secret = generateSecret()
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  const { strategy: fast } = fakeNetwork()
+  /** @type {SignalingStrategy} */
+  const strategy = {
+    ...fast,
+    join: /** @type {SignalingStrategy['join']} */ ((config, joinTopic) => {
+      const room = fast.join(config, joinTopic)
+      const leave = room.leave.bind(room)
+      room.leave = async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        await leave()
+      }
+      return room
+    }),
+  }
+
+  const { host, guest } = await pair(strategy, { topic, password, secret })
+  let told = false
+  guest.onPeerLeave(() => { told = true })
+
+  await host.close()
+  assert.equal(told, true, 'the guest heard the leave before close() settled')
+  await guest.close()
+})
+
 test('every pairing announces a public key it has never announced before', async () => {
   const secret = generateSecret()
   const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])

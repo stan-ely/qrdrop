@@ -190,10 +190,22 @@ const toBytes = data => {
   return new Uint8Array(0)
 }
 
-/** @param {{ leave: () => unknown }} room */
-const tryLeave = room => {
+/**
+ * Settles once Trystero's leave() has, and never rejects.
+ *
+ * Returned rather than fired and forgotten because leave() is where the peer
+ * is told: it sends a leave message, waits 99 ms for that to go out, and only
+ * then destroys the connections. A process that exits straight after calling
+ * it -- the CLI's Ctrl-C handler did exactly that -- kills the message with it,
+ * and the other device learns only when the connection times out: 11 s of
+ * "Sent 340 MB" on a sender whose receiver had already gone.
+ *
+ * @param {{ leave: () => unknown }} room
+ * @returns {Promise<void>}
+ */
+const tryLeave = async room => {
   try {
-    room.leave()
+    await room.leave()
   } catch {
     // Already gone.
   }
@@ -970,8 +982,12 @@ export async function openRoom({
       return (await resolvePath()) === 'relay'
     },
 
+    /**
+     * Callers that stay alive afterwards may ignore the promise. One about to
+     * exit must await it, or the peer is never told -- see tryLeave.
+     */
     close() {
-      tryLeave(room)
+      return tryLeave(room)
     },
   }
 }
