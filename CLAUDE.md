@@ -1314,12 +1314,20 @@ out.
 
 ## Known-flaky and known-broken
 
-`npm run test:e2e:interop` fails on most runs, and did so before the UI work — verified
-against a clean worktree at `87fb583` (4/4 failures). The file transfers fully and both
-sides compute a digest, then the sender reports `The other device disconnected` instead
-of receiving the final `done` control frame. It looks like the receiver's `room.close()`
-racing the flush of its own control frame, in `src/core/receiver.js` /
-`src/transport/room.js`. Do not chase it as a regression from unrelated work.
+`npm run test:e2e:interop` used to fail on most runs (4/4 at `87fb583`, 3/5 at `e8aaf50`):
+the file transferred whole, both sides computed the digest, and the sender then reported
+`The other device disconnected` and exited 1. This section blamed the receiver's
+`room.close()` racing the flush of its `done`, and that was wrong. Trystero's `leave()`
+sends its leave message *behind* the `done` on the same ordered channel, and both reach
+the sender in order, one microtask apart — but `room.onFrame`'s callback does not await
+`handleFrame`, so the `done` was still in AES-GCM decryption when the leave handler
+failed the control stream. **A leave handler that fails a control stream must wait on
+`receiver.settled()` first**, as `runSend` in `src/cli.js` and `_startSend` in
+`src/web/element.js` now do; failing straight away also turns a decline, or an error the
+receiver sent before closing, into a disconnect. `test/transfer.test.mjs` reproduces it
+deterministically (both leave-right-behind tests fail without the wait), and after the
+fix the interop suite passed 5/5 against 3/5 failures from the unfixed tree on the same
+network in the same half hour.
 
 Both e2e suites also fail for ordinary reasons — a relay being unreachable is expected
 weather, not a bug in this code.

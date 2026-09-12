@@ -467,7 +467,7 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
       throw new Error(relayCapMessage({ name: source.name, size: source.size, limit: RELAYED_MAX_BYTES }))
     }
     const exchange = createPathExchange(room)
-    const { control, nextControlIndex } = attachReceiver({
+    const { control, nextControlIndex, receiver } = attachReceiver({
       room,
       onPeerPath: exchange.onPeerPath,
       createSink: async () => { throw new Error('Peer tried to send us a file mid-send') },
@@ -491,8 +491,19 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
     // completes, so each sees the other go in the ordinary success case. The
     // interop e2e caught that as 'The other device disconnected.' printed
     // immediately before 'Sent.'
+    //
+    // And deferred behind receiver.settled(), because the guard alone could
+    // not close the race it was written for. The receiver's close follows its
+    // 'done' on the wire, but that 'done' is still being decrypted when this
+    // runs, so sessionEnded was still false and a whole transfer ended in
+    // "The other device disconnected" and exit 1 -- the interop e2e's flake,
+    // and first try between two local CLIs. Once settled, a 'done' that
+    // arrived has already reached sendFile's wait, and the fail finds nothing
+    // left to reject.
     room.onPeerLeave(() => {
-      if (!sessionEnded.done) control.fail(new Error(PEER_DISCONNECTED))
+      receiver.settled().then(() => {
+        if (!sessionEnded.done) control.fail(new Error(PEER_DISCONNECTED))
+      })
     })
 
     await reportPath(room, { name: source.name, size: source.size }, exchange)

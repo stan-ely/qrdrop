@@ -78,6 +78,7 @@ const RESUME_AT = 1 * 1024 * 1024
  * @returns {{
  *   handleFrame: (bytes: Bytes) => Promise<void>,
  *   cancel: () => Promise<void>,
+ *   settled: () => Promise<void>,
  *   readonly busy: boolean,
  *   readonly dropped: number,
  *   readonly pending: number,
@@ -473,9 +474,35 @@ export function createReceiver({
     if (sink) await sink.abort().catch(() => {})
   }
 
+  /**
+   * Resolves once every frame already handed to handleFrame() has been through
+   * processFrame, whatever became of it.
+   *
+   * For a caller about to act on the peer leaving. The transport delivers a
+   * peer's last frame and its departure in order, but hands the frame over
+   * un-awaited, so the leave handler runs while that frame is still in AES-GCM
+   * decryption -- and a sender that fails its control stream there loses a
+   * 'done' it had in fact been sent. That was the interop e2e's long-standing
+   * flake, blamed for a while on the receiver's room.close() racing the flush
+   * of its own reply. It was never the flush: Trystero sends its leave message
+   * behind that reply on the same ordered channel. Reproduced first try between
+   * two local CLIs as a whole 64 MB transfer reported as a disconnect, and it
+   * turns a decline, or an error the receiver sent before closing, into the
+   * same wrong message.
+   *
+   * `queue` is read at the call, so a frame arriving after it is not waited
+   * for; a peer that has left sends none.
+   *
+   * @returns {Promise<void>}
+   */
+  function settled() {
+    return queue
+  }
+
   return {
     handleFrame,
     cancel,
+    settled,
     get busy() { return active !== null },
     get dropped() { return dropped },
     get pending() { return pending },

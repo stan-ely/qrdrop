@@ -699,6 +699,70 @@ test('a sender whose receiver leaves mid-file fails there instead of hanging', a
   assert.equal(chunksSent, 2, `stopped at the next chunk, not after all ${totalChunks}`)
 })
 
+/**
+ * Wires a sender to a receiver the way the transport does at the moment the
+ * receiver's session ends: its last reply, and then its leave, in that order
+ * on one ordered channel, with the frame handed to the sender's receiver and
+ * NOT awaited -- room.onFrame's callback returns nothing, and Trystero calls
+ * the leave handler one microtask after the frame's, not after the frame has
+ * been decrypted.
+ *
+ * @param {{ decide: 'accept' | 'decline' }} options
+ */
+async function leaveRightBehindTheLastReply({ decide }) {
+  const { host, guest } = await pairedSessions()
+  const [hostCh, guestCh] = channelPair()
+
+  const hostControl = createControlStream()
+  let hostCtl = 0
+  const hostNext = () => hostCtl++
+  const hostRx = createReceiver({
+    channel: hostCh, sendKey: host.sendKey, recvKey: host.recvKey,
+    control: hostControl, nextControlIndex: hostNext,
+    onOffer: () => {},
+    createSink: async () => { throw new Error('the sending peer accepts no files') },
+  })
+  hostCh.onFrame = async bytes => { hostRx.handleFrame(bytes).catch(() => {}) }
+
+  const onPeerLeave = () => hostRx.settled().then(() => hostControl.fail(new Error('The other device disconnected')))
+  // Queued on the channel's own tail, so it is delivered after every frame the
+  // guest has already sent -- exactly where Trystero's leave message sits.
+  const leave = () => { guestCh.tail = guestCh.tail.then(onPeerLeave) }
+
+  let guestCtl = 0
+  const guestRx = createReceiver({
+    channel: guestCh, sendKey: guest.sendKey, recvKey: guest.recvKey,
+    control: createControlStream(), nextControlIndex: () => guestCtl++,
+    createSink: async () => memorySink(),
+    onOffer: o => {
+      if (decide === 'accept') return void o.accept().catch(() => {})
+      o.decline().then(leave, () => {})
+    },
+    onFileDone: leave,
+  })
+  guestCh.onFrame = guestRx.handleFrame
+
+  return sendFile({
+    channel: hostCh, key: host.sendKey, file: fileOf(randomBytes(CHUNK_SIZE * 4 + 3)),
+    fileSeq: 0, control: hostControl, nextControlIndex: hostNext,
+  })
+}
+
+test('a receiver that leaves right after its done does not fail a finished send', async () => {
+  // The interop e2e's long-standing flake, and reproduced first try between two
+  // local CLIs: 64 MB arrived whole, both sides computed the digest, and the
+  // sender printed "The other device disconnected" and exited 1. The receiver
+  // sends 'done' and closes; Trystero delivers both in order, but the 'done'
+  // still has an AES-GCM decrypt ahead of it when the leave handler runs.
+  const result = await leaveRightBehindTheLastReply({ decide: 'accept' })
+  assert.equal(result.declined, false)
+})
+
+test('a receiver that declines and leaves is reported as declining, not as gone', async () => {
+  const result = await leaveRightBehindTheLastReply({ decide: 'decline' })
+  assert.equal(result.declined, true)
+})
+
 test('filenames from the peer are sanitised before reaching a save dialog', () => {
   assert.equal(safeFilename('../../.bashrc'), 'bashrc')
   assert.equal(safeFilename('a/b/c.txt'), 'c.txt', 'reduces to the basename')

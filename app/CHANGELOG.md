@@ -62,6 +62,14 @@ disconnect while the send carried on underneath it. It now ends at the next piec
 the file with "The other device disconnected", in the app, the website and the
 command line alike.
 
+**A finished send is no longer reported as a disconnect.** The receiving device sends
+"done" and closes the connection, and both arrive in that order — but the "done"
+still had to be decrypted when the close was handled, so a file that had arrived
+whole could end on the sender with "The other device disconnected". Between two
+command lines on one machine it happened on the first try. The sender now finishes
+reading what has already arrived first, which also means a decline, or an error the
+receiver reported just before closing, is shown as what it was.
+
 ## 1.0.0 -- 2026-09-11
 
 **Packaged for the Microsoft Store, and 1.0.0 because of it.** This is the first

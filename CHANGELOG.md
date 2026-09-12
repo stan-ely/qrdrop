@@ -54,6 +54,21 @@ later `next()` and the flow gate reject with it, once no message that had alread
 arrived answers the wait, and a new `throwIfFailed()` is what `sendFile` checks
 between chunks.
 
+**A finished send is no longer reported as "The other device disconnected".** The
+file arrived whole and both ends computed its digest, and then the sender said the
+other device had gone and the command line exited 1. The receiving side sends "done"
+and closes, and both reach the sender in that order — but "done" still has to be
+decrypted when the news of the close is handled, so the close won. The sender now
+finishes reading what had already arrived before it treats the other side as gone.
+A decline, or an error the receiver reported just before closing, had the same
+problem and now reaches the sender as what it was. This is the intermittent failure
+of the command-line interop test, which had been blamed on the receiver closing
+before its reply was sent.
+
+For code using the package directly: `createReceiver` returns a `settled()` that
+resolves once every frame already handed to it has been processed. Wait on it before
+failing a control stream because the peer left.
+
 For code using the package directly: a `createSink` may now resolve `null` to mean
 the person chose not to save, which declines, while a rejection is a failure that
 `accept()` passes back to its caller rather than turning into a decline. The web

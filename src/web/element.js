@@ -1213,9 +1213,11 @@ export class QRDropElement extends HTMLElement {
   _failTransfer(error) {
     // Safe to close here and not a moment earlier: createReceiver's onError
     // fires at the END of abortActive, after sendControl({ t: 'error' }) has
-    // been awaited, so the peer's notification is already flushed. Closing
-    // before that await is the flush race CLAUDE.md lists under
-    // known-flaky -- do not move this up.
+    // been awaited, so the peer's notification is already on the wire. Closing
+    // before that await would close the room with the error not yet sent --
+    // do not move this up. (The flake CLAUDE.md once blamed on such a flush
+    // was the sender acting on the leave before decrypting what preceded it;
+    // see receiver.settled().)
     this._endSession()
     this._setState({ screen: 'done', outcome: 'failed', file: null, digest: '', message: null })
     this._fail(error)
@@ -1410,7 +1412,7 @@ export class QRDropElement extends HTMLElement {
       closeRoom?.()
     }
 
-    return { control, nextControlIndex }
+    return { control, nextControlIndex, receiver }
   }
 
   /**
@@ -1491,7 +1493,12 @@ export class QRDropElement extends HTMLElement {
       throw new Error(relayCapMessage({ name: file.name, size: file.size, limit: RELAYED_MAX_BYTES }))
     }
 
-    const { control, nextControlIndex } = this._attachReceiver({ room })
+    const { control, nextControlIndex, receiver } = this._attachReceiver({ room })
+
+    // Set on Confirm. From then on sendFile's catch below is what reports a
+    // failure, so the leave handler must not report it a second time -- nor at
+    // all, when the send turns out to have finished.
+    let sending = false
 
     // Replaces the handler _establish installed (onPeerLeave assigns, it does
     // not add), because that one could only open the error sheet: the control
@@ -1501,11 +1508,22 @@ export class QRDropElement extends HTMLElement {
     // chunk, into the catch below, which lands on done/failed and closes the
     // room. Before Confirm there is no send to end, and the sheet is all there
     // is to do -- the same as before.
+    //
+    // Deferred behind receiver.settled() for the reason runSend in cli.js
+    // gives: a receiver's close arrives right behind its 'done' (or its
+    // decline), while that frame is still being decrypted, and failing first
+    // reported a finished transfer as a disconnect. Once settled, a 'done' has
+    // reached sendFile's wait and the fail rejects nothing -- and because the
+    // sheet is left to the catch after Confirm, a finished send is not
+    // contradicted by one either, however the microtasks fall between that
+    // wait resolving and _sessionEnded being set.
     room.onPeerLeave(() => {
-      if (this._sessionEnded) return
-      const error = new Error(PEER_DISCONNECTED)
-      control.fail(error)
-      this._fail(error)
+      receiver.settled().then(() => {
+        if (this._sessionEnded) return
+        const error = new Error(PEER_DISCONNECTED)
+        control.fail(error)
+        if (!sending) this._fail(error)
+      })
     })
 
     await this._publishPath(room, file.size)
@@ -1521,6 +1539,7 @@ export class QRDropElement extends HTMLElement {
       // is the sender's half of the two safety gestures, and it must not be
       // re-triggerable while the send it just started is in flight.
       this._onVerifyConfirm = null
+      sending = true
 
       this._setState({ screen: 'transfer', status: '', progress: { moved: 0, total: file.size } })
 
