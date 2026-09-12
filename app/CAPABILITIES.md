@@ -554,7 +554,7 @@ Tauri debug build exposes; the same CDP technique used on Windows in Phase 3.
 | `plugin-dialog` `save()` | returns a `content://` URI | **confirmed** -- `content://com.android.providers.downloads.documents/document/1512` |
 | native sink accepts that path (Android as *receiver*) | suspected failure | **FAIL** -- `sink_open` -> `No such file or directory (os error 2)` |
 | full LAN transfer, Android as *sender* -> Windows | pass | **pass** -- 3.0 MB, digest `cf7dc838...380747`, identical to the Phase 3 value for the same file. Direct LAN path: TURN never allocated once (every request 400'd), so nothing was relayed. |
-| Beam send / Beam receive at ~10 Hz | pass | **not run** |
+| Beam send / Beam receive at ~10 Hz | pass | Beam receive **pass** (2026-09-12, 60 KB byte-identical; see "Resolved" below). Beam send **not run** |
 | deep link `qrdrop:<code>` -> verify screen | record | **not run** |
 | `https://share.stan-ely.com/#qrdrop:<code>` opens the app | no, needs signing | **not run** -- association still inert |
 
@@ -686,7 +686,7 @@ the same LAN:
 | 64 MiB | 67,108,864 bytes, SHA-256 identical, 19.6 s from Receiving to done: **~3.4 MB/s** (sending from the same phone was 4.03) |
 | 3 MB under an existing 5 MB name | a new `name (1)` document, byte-identical; the 5 MB original untouched, sender and phone digests equal |
 | cancel at 21% of 64 MiB | no crash, app back on choose, **partial file left at 15,910,050 bytes** (open work #3b; re-run on `a4f986c`: emptied to 0 bytes, no error sheet) |
-| Beam receive | not run: needs a camera physically aimed at an animated QR |
+| Beam receive | re-run 2026-09-12 on a fresh install of debug `d1a5d19`, beaming a 60,000-byte random file from `/edge/` in a desktop browser on the Windows machine: the OS camera prompt appeared on first use, the offer sheet opened, Accept went straight to the save dialog, and the file landed in `Download/` at 60,000 bytes with SHA-256 identical to the source. MediaStore listed that same document at `_size=0` afterwards -- open work's DocumentsUI 0 B listing, reproduced here without a network in the path |
 | Windows regression, debug build (raw body) | 3 MB twice: once to a new file, once saved over an existing 5,000,000-byte file after Windows' replace prompt — 3,000,000 bytes, byte-identical, sender and app digests equal. `truncate` proven where the dialog does overwrite |
 
 Four things found on the way, none of them the sink:
@@ -705,7 +705,11 @@ Four things found on the way, none of them the sink:
   proven.
 - **DocumentsUI showed the received files as 0 B** while `ls` gave their true sizes. The
   media store's size is not refreshed after a write through a descriptor; the bytes are
-  right, the listing is stale until a rescan.
+  right, the listing is stale until a rescan. The Beam receive run showed the same thing
+  from the other side: `content query --uri content://media/external/file` returned the
+  new `Download/beam-60k.bin` with `_size=0` while the file on disk was 60,000 bytes and
+  byte-identical. So it is the save path's, not the network receive's, and a rescan
+  being what clears it is still an assumption rather than a measurement.
 - **One pairing failed with `Out-of-order frame: expected 0, got 1`** before any offer
   appeared, and the next identical attempt did not. Chased the same day, and **not a
   device problem**: every control message took its index, awaited the seal, then sent,
@@ -1269,8 +1273,9 @@ above. None of it blocks the config gate.
    device the same day: the phone sending to a CLI receiver that confirmed its
    SAS 3.2 s after the phone did -- the order `25818cf` fixed -- delivered
    3,000,000 bytes byte-identical with both digests equal.
-4. **The unrun checklist rows**: Beam send, Beam receive at ~10 Hz, and the
-   deep-link `qrdrop:<code>` path on Android.
+4. **The unrun checklist rows**: Beam send and the deep-link `qrdrop:<code>`
+   path on Android. Beam receive was run on 2026-09-12 and passed: a 60 KB
+   file beamed from a desktop browser's screen landed byte-identical.
 5. ~~**`app.yml` has never run.**~~ **Closed.** Pushed and green on all five
    jobs (run `34038984977`): three desktop bundles, the Android APK with its
    camera-permission assertion, and iOS. It took three runs to get there and
