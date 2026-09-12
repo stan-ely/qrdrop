@@ -41,3 +41,26 @@ jobs:
       # source failure. It also proves the CSP generator can still import
       # SIGNALING_URLS, which is what keeps the allowlist honest.
       - run: npm run build
+
+  # The workflows themselves, and the shell inside them. publish.yml and
+  # app-release.yml execute only on a tag, so without this a mistake in either
+  # is found by a failed release -- after an npm publish that cannot be
+  # repeated, or halfway through pushing to two package indexes.
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Versions come from mise.toml, like every other tool here. install_args
+      # narrows the install to these two: a bare mise-action installs the whole
+      # file, which is rust, a JDK, the Android command-line tools and
+      # fdroidserver for a job that reads text.
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: actionlint shellcheck
+
+      # actionlint directly, not `mise run lint:workflows`: `mise run` installs
+      # whatever tools in mise.toml are missing before it runs a task, which is
+      # the full install the step above just avoided. The task is the same one
+      # word, so nothing can drift.
+      - run: actionlint
