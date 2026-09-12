@@ -1230,8 +1230,14 @@ above. None of it blocks the config gate.
    mid-file, or Ctrl-C, now deletes the partial file. The first of those is
    checked live, CLI to CLI on one Windows machine: the sender was killed with
    41,170,314 bytes of a 64 MiB file on disk, the receiver reported the
-   disconnect, and the output directory was empty afterwards. Ctrl-C has not
-   been pressed by hand.
+   disconnect, and the output directory was empty afterwards. Ctrl-C was then
+   pressed by hand, in a real terminal on the same machine: a 2 GiB receive
+   interrupted at 336 MB printed "Cancelled." and left the output directory
+   empty. The sender went on to "Sent 340 MB" and then reported "The other
+   device disconnected" and exited 1, about 11 s later. That delay is the
+   connection timing out rather than being told: the SIGINT handler runs the
+   interrupt hooks and exits without closing the room, so no leave message
+   goes out.
 3c. ~~**A sink failure is reported as the person dismissing the save dialog.**~~
    **Closed 2026-09-12.** `accept()` caught every `createSink` rejection as a
    dismissal. Now a sink resolves `null` for a dismissed dialog and rejects only
