@@ -510,6 +510,32 @@ over the same counter — that gets a queue of its own and races again. Do not a
 control send that calls `sealControl` and `channel.send` directly.
 `test/control-order.test.mjs` slows the first seal and asserts both shapes stay in order.
 
+**A control stream's `fail()` is sticky, and the first error wins.** It used to reject the
+waiter parked in `next()` if there was one and forget the error otherwise — and in the
+middle of a file there is none, because the send loop is producing chunks rather than
+awaiting a reply. Measured on a phone that cancelled at 25% of 64 MiB: the CLI sender took
+the leave, streamed the other 48 MiB into an empty room through 3,012 `no peer with id`
+warnings, printed "Sent 64 MB of 64 MB", and was still parked on a `done` two minutes
+later. A `fail()` that only reaches a present listener looks exactly like handling, which
+is why it survived. `src/core/control.js` now records the failure, and every wait after it
+sees it: `next()`, `flowGate()` (checked before the pause flag, or a paused sender sits out
+`PAUSE_TIMEOUT_MS` and then blames the pause), and `throwIfFailed()`, which `sendFile`
+calls between chunks. `next()` checks the **buffered messages first** and the failure
+second, and that order is load-bearing: a `done` that arrived before the leave has already
+finished the transfer and must not lose to it. The first error rather than the last,
+because what follows a real failure is usually its echo. `test/control-stream.test.mjs`.
+
+**Every path that ends a paired session closes the room, and an exit awaits it.** A room's
+`close()` returns Trystero's `leave()` promise, which sends the leave message and never
+rejects. The CLI's SIGINT handler used to run its interrupt hooks and exit with the room
+still open, so no leave message went out and the other device learned about a Ctrl-C only
+when the connection timed out: measured by hand, a sender went on to "Sent 340 MB" and
+reported the disconnect about 11 s later. `runSend` and `runReceive` now put `room.close`
+among `interruptHooks`, and the handler waits for them, bounded at 2 s so a hook that
+hangs cannot stop Ctrl-C exiting; pressed by hand again, the sender
+reported the disconnect 89 ms after its last progress line. A new command that pairs a
+room must add it too.
+
 **No new runtime dependencies.** Four, plus one optional. The stated position
 (`src/cli.js` header) is that every dependency is one more thing between `npm install`
 and a working transfer. The virtual DOM in `src/web/vdom.js` is hand-rolled for this
@@ -1156,6 +1182,24 @@ which the force-dark transform turned into a grey slab filling most of the
 landing screen. That is fixed, so the darkened render is now merely not-our-
 palette rather than broken.
 
+**ColorOS freezes the app while the save dialog is open, and a slow choice loses the
+sender.** Also vendor behaviour outside the WebView, also not worked around, and recorded
+so the next device session does not re-derive it. The dialog is its own task, so opening
+it is qrdrop leaving the screen, and `OplusHansManager` walks it through `R` for 6 s, `M`
+for 5 s, then `F`: the process frozen and `OAppNetControlService: Close socket ...
+App bg(IMMEDIATELY)` in the same millisecond, about 11 s after the dialog opened, every
+run. The socket close is **not** what breaks a transfer — it takes the relay WebSockets
+and leaves a direct UDP peer connection alone (a TCP-relayed one would presumably be cut;
+not measured). What breaks it is a freeze longer than the sender's ICE consent timeout,
+libjuice's `CONSENT_TIMEOUT` of 30 s: in the dialog 2 s and 20 s received, 45 s lost the
+sender. Two things about testing it. **A run with the app on the `deviceidle` whitelist
+passes for a different reason and proves nothing about a default install**: the freeze
+still happens, but a whitelisted app is thawed by each incoming packet and so answers the
+consent checks — the first passing Android receives had that whitelist on, which is why
+this took a second session to find. And DocumentsUI cannot be read by `uiautomator dump`
+("null root node"), so a timed Save is an `adb shell input tap` at coordinates taken from
+a screenshot. The full table is in `app/CAPABILITIES.md`.
+
 **Comments in `AndroidManifest.xml` must not contain a double hyphen.** XML
 forbids it inside a comment and this repository's prose style uses it as an em
 dash. Gradle reports the result only as `Error parsing AndroidManifest.xml`.
@@ -1193,6 +1237,23 @@ content URI through the ContentResolver into a real file descriptor and is plain
 `std::fs` on desktop, so what `sink_write` holds is an ordinary `File` everywhere.
 `sink_open` is `async` because on Android that open is a round-trip into plugin-fs's
 Kotlin half, and a synchronous command would block the main thread on it.
+
+**`sink_close` opens a `content://` URI a second time, in `"wa"`, and that is not
+redundant.** Every file the app received on Android was listed as 0 B by the Files app
+and by anything else reading the media index, while its bytes were whole. plugin-fs's
+Kotlin half calls `detachFd()` so Rust can own an ordinary `File`; MediaProvider wraps
+every *write* open in a close listener that rescans the file, and `ParcelFileDescriptor`
+reports a detach to that listener exactly as it reports a close — immediately. So the
+scan ran at `sink_open`, on a file `"wt"` had just emptied, and when Rust closed the real
+descriptor nobody was listening. Measured on the Realme: the index row's `date_modified`
+was the second of the open, and it still said 0 bytes ten minutes later. Reopening after
+close fires the listener on the finished file (`_size=3000000`, hash equal). Both letters
+of the mode are load-bearing: `"r"` gets no listener and rescans nothing, and a write mode
+without append is allowed to truncate, which would wipe the file the index is being asked
+to look at. Closing instead of detaching on the Kotlin side was the alternative, and it
+means a Tauri plugin of our own or a patched plugin-fs for what one open achieves. The
+reopen is best effort: the file is complete before it is tried, and failing a finished
+transfer over a stale listing would report the wrong thing about the part that worked.
 
 **Android has no raw body, so the sink's blocks go there as base64.** Tauri's IPC
 script never uses the custom-protocol transport on Android (the WebView's request
@@ -1322,9 +1383,21 @@ sends its leave message *behind* the `done` on the same ordered channel, and bot
 the sender in order, one microtask apart — but `room.onFrame`'s callback does not await
 `handleFrame`, so the `done` was still in AES-GCM decryption when the leave handler
 failed the control stream. **A leave handler that fails a control stream must wait on
-`receiver.settled()` first**, as `runSend` in `src/cli.js` and `_startSend` in
-`src/web/element.js` now do; failing straight away also turns a decline, or an error the
-receiver sent before closing, into a disconnect. `test/transfer.test.mjs` reproduces it
+`receiver.settled()` first**, as `runSend` in `src/cli.js` and both `_startSend` and
+`_startReceive` in `src/web/element.js` now do; failing straight away also turns a decline,
+or an error the receiver sent before closing, into a disconnect.
+
+The receive side came last (`18a4acc`) and carries two guards the send side does not. Its
+leave handler fails the transfer only on `verify` or `transfer`, because a Decline resets
+to choose **without** setting `_sessionEnded`, and a late leave must not fail a session
+that already ended there. And the Accept handler (`_onOfferAccept`) checks `_sessionEnded` *before* reading a
+`null` sink as a dismissed dialog: when the sender left while the dialog was up, the leave
+handler has already cancelled the receiver, `accept()` hands back `null` for a file it
+released, and reading that as "the save dialog was closed" replaces the real reason with
+the wrong one. Without both, the phone opened the error sheet on the thaw, `accept()`
+returned 400 ms later, the transfer screen replaced the sheet (a screen change clears a
+modal), and "Receiving, 0%" stood there with the file open and nothing left that could
+end it. `test/transfer.test.mjs` reproduces it
 deterministically (both leave-right-behind tests fail without the wait), and after the
 fix the interop suite passed 5/5 against 3/5 failures from the unfixed tree on the same
 network in the same half hour.

@@ -578,6 +578,20 @@ defaulted one. Defaulting it to the browser implementation is what quietly made
 the protocol layer depend on the DOM in the first place, and making every call
 site answer the question out loud is what stopped it.
 
+A sink's `createSink` has two ways not to hand back a sink, and they mean
+different things. It **resolves `null`** when the person chose not to save — a
+dismissed dialog — which declines the file. It **rejects** only when saving
+failed, and that error is shown on the receiving screen and sent to the sender as
+itself. They used to be one path, every rejection read as a dismissal, and that is
+how the Android app spent a release unable to receive while telling people they had
+closed the save dialog. `createReceiver` also returns `cancel()`, which aborts the
+open sink so an abandoned receive does not keep a partial file, and `settled()`,
+which resolves once every frame already handed to the receiver has been processed —
+wait on it before treating the other side's departure as a failure, or a `done`
+still being decrypted loses the race to the leave behind it. A paired room's
+`close()` returns a promise that settles once the peer has been told and never
+rejects; a process about to exit should await it.
+
 ## The app
 
 A desktop and mobile shell around exactly the code the website runs. `src/` is
@@ -636,8 +650,24 @@ and so does the CLI. On Android, 1.0.0 can send anything and cannot receive, for
 two reasons found in order on a phone: the Storage Access Framework hands back a
 `content://` URI where its native sink expected a filesystem path, and Android's
 app bridge has no raw request body for the file's bytes. Both are fixed on `main`
-and verified on a device — a 64 MiB file received byte-identical — and ship with
-the next app release.
+and verified on a device — a 64 MiB file received byte-identical, and a Beam
+receive through the camera on the same phone — and ship with the next app release.
+So does a third fix found on the way: every received file was listed as 0 B by the
+Files app, because Android indexed it the moment it was opened for writing, before
+a byte had arrived, and was never asked to look again. A cancelled receive on
+Android leaves an empty file behind rather than none, because the app is not
+allowed to delete a document the save dialog created.
+
+**On ColorOS (Oppo, Realme, OnePlus), choose where to save within about 20
+seconds**, or allow qrdrop to run in the background. The save dialog counts as
+leaving the app, ColorOS freezes an app about 11 seconds after it leaves, and a
+sender that hears nothing from a frozen phone for 30 seconds gives up. Measured on
+a Realme phone: saving after 2 or 20 seconds received the file whole, saving after
+45 lost the sender, and 45 seconds with background running allowed received it,
+because a phone allowed that is woken briefly by each packet that arrives. This is
+the vendor's scheduler, outside anything the app controls, and it is not worked
+around. When it does happen the receive now ends on "Transfer failed" and says the
+other device disconnected, instead of standing on "Receiving, 0%".
 
 **Only the Android APK is signed.** There is no Windows code-signing certificate
 and no Apple Developer account behind this project, so macOS will quarantine the
