@@ -2,13 +2,22 @@
  * Tauri's answer to src/web/sink.js: where received bytes land inside the
  * desktop/mobile shell.
  *
- * Neither of sink.js's two implementations exist here. showSaveFilePicker is
- * File System Access, a Chromium-only web API absent from every webview Tauri
- * embeds -- WebView2, WebKitGTK, WKWebView, per app/CAPABILITIES.md -- and the
- * Blob-download fallback needs a browser's own download manager behind the
- * `<a download>` click, which a Tauri window does not have.
+ * Neither of sink.js's two implementations is used here, and not because both
+ * are missing. showSaveFilePicker is File System Access: WebKitGTK and
+ * WKWebView lack it, but WebView2 and the Android WebView both expose it (see
+ * app/CAPABILITIES.md), so "absent from every webview Tauri embeds" -- which
+ * this comment used to say -- was never true. Present is not the same as the
+ * right answer: one native sink on every platform, with one set of measured
+ * byte paths below, beats a per-platform choice of sink. The Blob-download
+ * fallback needs a browser's own download manager behind the `<a download>`
+ * click, which a Tauri window does not have.
  *
- * The destination is picked by @tauri-apps/plugin-dialog's save(). The bytes,
+ * The destination is picked by @tauri-apps/plugin-dialog's save(), which
+ * returns a filesystem path on desktop and a `content://` URI on Android.
+ * Both reach sink_open as an opaque string and are resolved Rust-side, where
+ * plugin-fs's open() knows what to do with each -- nothing here may parse or
+ * rewrite it, because a URI mangled into a path fails as "the save dialog
+ * was closed" (receiver.js treats any createSink failure as a dismissal). The bytes,
  * though, go through this crate's own sink_open / sink_write / sink_close
  * commands (app/src-tauri/src/sink.rs), NOT plugin-fs's write(): on WebView2
  * plugin-fs moves bytes across the IPC boundary at ~2 MB/s whatever the block
@@ -18,6 +27,11 @@
  * over Tauri's binary IPC path, not JSON") was true on paper and false on
  * WebView2, which is exactly the kind of trap CLAUDE.md's invariants section
  * is for.
+ *
+ * Android has no raw body at all -- Tauri's IPC goes through postMessage there
+ * and every invoke arrives as JSON -- so on Android the same coalesced block
+ * travels as base64 instead. sink_open's result says which of the two to send;
+ * see sink.rs's module comment for how that was found on a device.
  *
  * This module is NOT part of src/web/ and never reaches the deployed
  * website's bundle: it imports @tauri-apps/* packages that exist only under
@@ -59,6 +73,26 @@ function joinChunks(parts, total) {
 }
 
 /**
+ * Base64 for the one platform whose IPC cannot carry bytes. The native
+ * `Uint8Array.prototype.toBase64` where the webview has it (Chromium 140+, so
+ * any Android device whose WebView has updated this year); otherwise btoa over
+ * a binary string built in 32 KiB slices, because `String.fromCharCode` with a
+ * whole megabyte spread into its arguments overflows the call stack.
+ *
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+function toBase64(bytes) {
+  const native = /** @type {any} */ (bytes).toBase64
+  if (typeof native === 'function') return native.call(bytes)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, /** @type {any} */ (bytes.subarray(i, i + 0x8000)))
+  }
+  return btoa(binary)
+}
+
+/**
  * @param {{ name: unknown, mime?: string }} manifest
  * @returns {Promise<Sink | null>}
  */
@@ -72,7 +106,9 @@ export async function createTauriSink(manifest) {
   const path = await save({ defaultPath: name })
   if (!path) return null
 
-  await invoke('sink_open', { path })
+  // true where the IPC carries a raw request body, false on Android -- asked
+  // of the Rust side, which knows its own target, rather than guessed here.
+  const rawBody = await invoke('sink_open', { path })
   let closed = false
 
   /** @type {Bytes[]} */
@@ -85,8 +121,12 @@ export async function createTauriSink(manifest) {
     pending = []
     pendingBytes = 0
     // The Uint8Array as the sole argument is what puts it in the raw request
-    // body -- see sink_write in src-tauri/src/sink.rs.
-    await invoke('sink_write', block)
+    // body -- see sink_write in src-tauri/src/sink.rs. Where there is no raw
+    // body, the same block as base64 under `data`, never as the bare array,
+    // which the JSON path would spell out one number at a time.
+    await (rawBody
+      ? invoke('sink_write', block)
+      : invoke('sink_write', { data: toBase64(block) }))
   }
 
   return {

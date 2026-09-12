@@ -29,11 +29,12 @@ pub fn run() {
 
     builder
         // plugin-dialog's save() picks the destination for the native sink
-        // (app/src/tauri-sink.js). The bytes go through this crate's own
-        // sink_* commands instead of plugin-fs -- see src/sink.rs for the
-        // measured reason. plugin-fs is still registered because the
-        // throwaway app/bench/ harness uses it; the sink itself no longer
-        // touches it.
+        // (app/src/tauri-sink.js), and plugin-fs's Rust API opens it. That
+        // registration is load-bearing, not left over: on Android the
+        // destination is a content:// URI that only plugin-fs can resolve,
+        // so without it the app cannot receive there. The bytes still go
+        // through this crate's own sink_* commands rather than plugin-fs's
+        // JS write() -- see src/sink.rs for both halves of that.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         // The `qrdrop` custom scheme and the share.stan-ely.com app-link

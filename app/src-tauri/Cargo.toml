@@ -33,13 +33,19 @@ tauri-build = { version = "2.6.3", features = [] }
 # ~2 MB/s. The feature and the config field are checked against each other by
 # tauri's build script, which is what caught their being out of step here.
 tauri = { version = "2.11.5", features = ["protocol-asset"] }
-# The native sink: plugin-dialog's save() picks the destination, and this
-# crate's own sink_* commands (src/sink.rs) move the bytes -- NOT plugin-fs,
-# whose write() is bandwidth-bound at ~2 MB/s on WebView2 (app/CAPABILITIES.md
-# has the measurements). plugin-fs stays registered only for the throwaway
-# bench harness's sake.
+# The native sink: plugin-dialog's save() picks the destination, plugin-fs's
+# Rust API opens it (on Android that is a content:// URI, which std::fs cannot
+# open), and this crate's own sink_* commands (src/sink.rs) move the bytes --
+# NOT plugin-fs's JS write(), which is bandwidth-bound at ~2 MB/s on WebView2
+# (app/CAPABILITIES.md has the measurements).
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+# sink_write's second shape. Android's IPC has no raw request body, so the
+# sink's blocks travel as base64 there (src/sink.rs has the device finding).
+# Already in Cargo.lock at this version through Tauri itself, so naming it
+# here adds no new crate to the build -- and the "no new runtime
+# dependencies" rule in CLAUDE.md is the root npm package's, not this crate's.
+base64 = "0.22"
 # Phase 3: the pairing QR now encodes a universal / app link
 # (https://share.stan-ely.com/#qrdrop:<code>). This plugin registers the
 # `qrdrop` custom scheme and the share.stan-ely.com app-link domain so the OS

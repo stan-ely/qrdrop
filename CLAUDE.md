@@ -1151,14 +1151,41 @@ Do not add a second external entry that reaches past it into `_startSend`.
 else — never `site/main.js` — so the deployed site cannot regress from a change made
 for the app. `platform.js` imports only `sink.js`; it ships in `qrdrop/web`.
 
-**The native sink does not use `plugin-fs`, and must not be "simplified" back to it.**
-On WebView2 `@tauri-apps/plugin-fs`'s `write()` moves bytes at ~2 MB/s regardless of
-block size — its argument is not travelling the raw IPC path, whatever the docs
-imply. `app/src-tauri/src/sink.rs`'s `sink_write` takes the bytes in the invoke
-request's raw body (`tauri::ipc::InvokeBody::Raw`) instead and does ~40 MB/s. The
-plugin is still registered for the throwaway harness's sake, but the sink's byte path
-is the custom command. A JSON-array `invoke('save_chunk', { data: [...] })` is the
-*other* wrong answer — a megabyte becomes a million stringified numbers.
+**The native sink's byte path does not use `plugin-fs`, and must not be "simplified"
+back to it.** On WebView2 `@tauri-apps/plugin-fs`'s `write()` moves bytes at ~2 MB/s
+regardless of block size — its argument is not travelling the raw IPC path, whatever
+the docs imply. `app/src-tauri/src/sink.rs`'s `sink_write` takes the bytes in the
+invoke request's raw body (`tauri::ipc::InvokeBody::Raw`) instead and does ~40 MB/s.
+A JSON-array `invoke('save_chunk', { data: [...] })` is the *other* wrong answer — a
+megabyte becomes a million stringified numbers.
+
+**Opening the destination does use `plugin-fs` — its Rust API — and must not be
+"simplified" back to `File::create`.** On Android, `plugin-dialog`'s `save()` returns
+a `content://` URI from the Storage Access Framework, not a path. `File::create` on
+that string fails with `os error 2`, and that is why the Android app shipped unable
+to receive. `sink_open` hands the string to `app.fs().open()`, which resolves a
+content URI through the ContentResolver into a real file descriptor and is plain
+`std::fs` on desktop, so what `sink_write` holds is an ordinary `File` everywhere.
+`sink_open` is `async` because on Android that open is a round-trip into plugin-fs's
+Kotlin half, and a synchronous command would block the main thread on it.
+
+**Android has no raw body, so the sink's blocks go there as base64.** Tauri's IPC
+script never uses the custom-protocol transport on Android (the WebView's request
+interceptor cannot read a POST body), so every invoke arrives through `postMessage`
+as JSON and `InvokeBody::Raw` never appears. Fixing `sink_open` alone got a device
+to 1020 KB of a 2.9 MB receive and then `sink_write expects a raw body` at the first
+1 MiB flush. `sink_write` now takes the raw body or `{ data: <base64> }`, and
+`sink_open` returns which one this target can carry — `!cfg!(target_os = "android")`,
+the same condition Tauri's script keys on — so `tauri-sink.js` never sniffs a user
+agent. Desktop keeps the raw path unchanged. Do not "unify" the two by sending
+base64 everywhere: that throws away the measured desktop rate for a platform that
+was never going to have it. Nor by sending the bare `Uint8Array` on Android, which
+the JSON path spells out one number at a time.
+
+It also failed *invisibly*: `receiver.js`'s `accept()` turns any `createSink` rejection
+into `null`, and `element.js` reports a `null` sink as "The save dialog was closed
+without choosing a location". The person had pressed Save, the document existed at
+0 bytes, and the screen said they had cancelled.
 
 **`tauri-sink.js` coalesces frames to 1 MiB before each `invoke`, and that buffer is
 load-bearing.** `element.js` calls the sink once per 16 KiB transfer frame; at that

@@ -2706,6 +2706,7 @@ dependencies = [
 name = "qrdrop"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "tauri",
