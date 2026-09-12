@@ -32,6 +32,13 @@ succeeded chose quickly with qrdrop allowed to run in the background, and those 
 were not tested apart, so which one matters is not yet known. If a receive fails
 straight after choosing where to save, try both.
 
+**A transfer could fail before it started, with "Out-of-order frame: expected 0, got
+1".** Seen once on that phone receiving from the command line, and gone on the retry.
+Two short messages that set a transfer up could leave in the wrong order when they
+were sent at the same moment, and the receiving side rightly refuses that. They now
+always leave in order. The fault was in the transfer code the app shares with the
+website and the command line, so all three get the fix.
+
 ## 1.0.0 -- 2026-09-11
 
 **Packaged for the Microsoft Store, and 1.0.0 because of it.** This is the first

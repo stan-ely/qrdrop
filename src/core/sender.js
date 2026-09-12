@@ -16,7 +16,8 @@
  * to disk instead of accumulating in memory.
  */
 
-import { CHUNK_SIZE, TYPE_CHUNK, seal, sealControl } from './frame.js'
+import { CHUNK_SIZE, TYPE_CHUNK, seal } from './frame.js'
+import { sendControl } from './control.js'
 import { EMPTY_CHAIN, chainHash, hex } from './digest.js'
 
 // Pause above HIGH_WATER, resume once the channel drains to LOW_WATER. Without
@@ -102,23 +103,27 @@ async function flowControl(control) {
  *   is what keeps this file runnable in Node, and so what makes the CLI possible.
  * @param {number} args.fileSeq uint32, and the AEAD nonce prefix for every chunk.
  * @param {ControlStream} args.control
- * @param {() => number} args.nextControlIndex
+ * @param {() => number} args.nextControlIndex The very function this side's
+ *   receiver and path verdict were given, not a second closure over the same
+ *   counter: control.js's sendControl keeps one direction's control frames in
+ *   index order by queueing on that function.
  * @param {(p: SendProgress) => void} [args.onProgress]
  * @param {AbortSignal} [args.signal]
  * @returns {Promise<{ declined: true } | { declined: false, digest: string }>}
  */
 export async function sendFile({ channel, key, file, fileSeq, control, nextControlIndex, onProgress, signal }) {
   channel.bufferedAmountLowThreshold = LOW_WATER
+  const out = { channel, key, nextControlIndex }
 
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
-  await channel.send(await sealControl(key, nextControlIndex(), {
+  await sendControl(out, {
     t: 'manifest',
     seq: fileSeq,
     name: file.name,
     size: file.size,
     mime: file.mime || 'application/octet-stream',
     chunks: totalChunks,
-  }))
+  })
 
   const reply = await control.next(['accept', 'decline', 'error'], fileSeq)
   if (reply.t === 'error') throw new Error('Peer refused the transfer: ' + reply.message)
@@ -150,9 +155,9 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
     onProgress?.({ sent, total: file.size, chunk: index + 1, chunks: totalChunks })
   }
 
-  await channel.send(await sealControl(key, nextControlIndex(), {
+  await sendControl(out, {
     t: 'complete', seq: fileSeq, chunks: totalChunks, digest: hex(digest),
-  }))
+  })
 
   const finish = await control.next(['done', 'error'], fileSeq)
   if (finish.t === 'error') throw new Error('Peer could not complete the transfer: ' + finish.message)

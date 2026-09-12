@@ -1373,7 +1373,11 @@ export class QRDropElement extends HTMLElement {
     const control = createControlStream()
     let controlOut = 0
     const nextControlIndex = () => controlOut++
-    // Shared with _publishPath, which sends on this same counted stream.
+    // Shared with _publishPath and sendFile as this one function object, not a
+    // copy: control.js's sendControl keeps this side's control frames in index
+    // order by queueing on it, and a second closure over controlOut would get a
+    // queue of its own and race the manifest again (CLAUDE.md, "Control frames
+    // in one direction leave in index order").
     this._nextControlIndex = nextControlIndex
 
     const receiver = createReceiver({

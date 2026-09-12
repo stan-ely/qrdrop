@@ -23,8 +23,9 @@
 
 import {
   HEADER_BYTES, TYPE_CHUNK, TYPE_CONTROL, UnauthenticatedFrame,
-  decodeHeader, open, openControl, sealControl,
+  decodeHeader, open, openControl,
 } from './frame.js'
+import { sendControl as sendControlFrame } from './control.js'
 import { EMPTY_CHAIN, chainHash, hex, equalHex } from './digest.js'
 
 // Replies to our sender, versus offers addressed to us.
@@ -110,25 +111,25 @@ export function createReceiver({
    */
   let active = null
 
+  // Every reply this side originates goes through control.js's sendControl,
+  // which queues on nextControlIndex so that replies reach the wire in index
+  // order however they overlap.
   /** @type {(obj: ControlMessage) => Promise<void>} */
-  const sendControl = async obj => channel.send(await sealControl(sendKey, nextControlIndex(), obj))
+  const sendControl = obj => sendControlFrame({ channel, key: sendKey, nextControlIndex }, obj)
 
-  // pause/resume sends are serialised through this chain rather than fired
-  // straight at sendControl(). sendControl() takes its control index
-  // synchronously but then awaits sealing before it reaches channel.send(), so
-  // two overlapping calls could hand the channel their frames out of index
-  // order -- and a control frame that arrives out of order is fatal, not merely
-  // dropped (see open() in frame.js). Every other sendControl() call site here
-  // is driven from the serialised frame queue and so is already ordered; these
-  // two run from handleFrame() and its settle handler, which are not.
-  let flowSends = Promise.resolve()
+  // pause/resume fire from handleFrame() and its settle handler, so nothing
+  // awaits them. This used to keep a promise chain of its own, on the belief
+  // that these two were the only sends not already ordered by the inbound frame
+  // queue. They were not the only ones: the path verdict goes out beside them,
+  // and accept()/decline() run from a click. Ordering moved into sendControl,
+  // one queue per direction, which is what covers all of them.
   /** @param {'pause' | 'resume'} t */
   const signalFlow = t => {
-    flowSends = flowSends.then(() => sendControl({ t }).catch(() => {
+    sendControl({ t }).catch(() => {
       // The channel is gone. The transfer surfaces that on its next frame; a
       // rejection here must not escape the transport's unawaited handleFrame()
       // call and become an unhandledRejection.
-    }))
+    })
   }
 
   // Re-checked after `pending` grows (considerPause) and after it shrinks
@@ -417,5 +418,11 @@ export function createReceiver({
  * @returns {Promise<void>}
  */
 export async function sendPathVerdict({ channel, key, nextControlIndex, path }) {
-  await channel.send(await sealControl(key, nextControlIndex(), { t: 'path', path }))
+  // Through sendControl like every other control frame -- and this is the
+  // message that showed why that has to be true of all of them. It is fired
+  // beside the manifest on a sender and beside Accept on a receiver, so with a
+  // take-index-then-seal-then-send of its own it could reach the wire behind a
+  // frame holding a higher index. `nextControlIndex` must be the same function
+  // the rest of this side's control frames are sent with.
+  await sendControlFrame({ channel, key, nextControlIndex }, { t: 'path', path })
 }

@@ -187,12 +187,15 @@ function startTransfer({ payload, sink, sessions, filter }) {
 
   const hostControl = createControlStream()
   let hostCtl = 0
+  // One function for the host's side, shared by its receiver and sendFile:
+  // control.js keeps control frames in order by queueing on it.
+  const hostNext = () => hostCtl++
   const hostRx = createReceiver({
     channel: hostCh,
     sendKey: host.sendKey,
     recvKey: host.recvKey,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
     onOffer: () => {},
     onError: e => errors.push(e),
     createSink: async () => { throw new Error('the sending peer accepts no files') },
@@ -220,7 +223,7 @@ function startTransfer({ payload, sink, sessions, filter }) {
     file: fromBytes({ bytes: payload, name: 'payload.bin', mime: 'application/octet-stream' }),
     fileSeq: 0,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
     onProgress: p => { if ('sent' in p) lastSent = p.sent },
   })
   // The suite always resolves it before the test ends; this keeps a transient

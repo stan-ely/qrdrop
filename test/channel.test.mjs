@@ -172,12 +172,15 @@ test('a full transfer runs over a channel implementing only the contract', async
 
   const hostControl = createControlStream()
   let hostCtl = 0
+  // One function for the host's side, shared by its receiver and sendFile:
+  // control.js keeps control frames in order by queueing on it.
+  const hostNext = () => hostCtl++
   const hostRx = createReceiver({
     channel: hostCh,
     sendKey: host.sendKey,
     recvKey: host.recvKey,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
     onOffer: () => {},
     onError: e => errors.push(e),
     // The sending peer runs a receiver only to read its own accept/done
@@ -216,7 +219,7 @@ test('a full transfer runs over a channel implementing only the contract', async
     file: fromBytes({ bytes: payload, name: 'conformance.bin' }),
     fileSeq: 0,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
   })
 
   assert.deepEqual(errors, [])

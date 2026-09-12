@@ -485,6 +485,22 @@ bare-names change landed in `f4bf3d2` after it — and it requires **exactly one
 because picking the first of two would be a coin toss resolved in favour of whatever
 `sha256sum` happened to sort first.
 
+**Control frames in one direction leave in index order, and there is one
+`nextControlIndex` function per direction.** A control frame's index is its nonce, so it
+has to be fixed before the seal, and a frame arriving out of index order is fatal by
+design (above: our own peer contradicting itself). Every call site used to take its
+index, await the seal, then send — so two control messages started together went out
+in whichever order WebCrypto finished. It reached a phone as `Out-of-order frame:
+expected 0, got 1`, because the CLI fires its path verdict and its manifest back to
+back. `receiver.js` had serialised pause/resume alone, believing everything else was
+ordered by the inbound frame queue; the path verdict and the Accept click never were.
+`sendControl` in `src/core/control.js` now makes take-index, seal and send one queued
+step, keyed on the `nextControlIndex` function. So pass the **same function** to
+`createReceiver`, `sendFile` and `sendPathVerdict` on one side, never a second closure
+over the same counter — that gets a queue of its own and races again. Do not add a
+control send that calls `sealControl` and `channel.send` directly.
+`test/control-order.test.mjs` slows the first seal and asserts both shapes stay in order.
+
 **No new runtime dependencies.** Four, plus one optional. The stated position
 (`src/cli.js` header) is that every dependency is one more thing between `npm install`
 and a working transfer. The virtual DOM in `src/web/vdom.js` is hand-rolled for this

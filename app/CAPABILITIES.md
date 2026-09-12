@@ -706,7 +706,12 @@ Four things found on the way, none of them the sink:
   media store's size is not refreshed after a write through a descriptor; the bytes are
   right, the listing is stale until a rescan.
 - **One pairing failed with `Out-of-order frame: expected 0, got 1`** before any offer
-  appeared, and the next identical attempt did not. Intermittent; not chased.
+  appeared, and the next identical attempt did not. Chased the same day, and **not a
+  device problem**: every control message took its index, awaited the seal, then sent,
+  so the CLI's path verdict and manifest -- sent back to back -- could reach the wire in
+  either order. Reproduced deterministically by slowing the first seal, and fixed in
+  `src/core/control.js`'s `sendControl` (CLAUDE.md, "Control frames in one direction
+  leave in index order").
 
 That last row is worth stating plainly rather than discovering: until
 `assetlinks.json` carries a real signing-certificate fingerprint, a scanned QR

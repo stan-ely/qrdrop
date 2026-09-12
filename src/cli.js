@@ -302,6 +302,10 @@ function makeProgressReporter({ verb }) {
 function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, createSink }) {
   const control = createControlStream()
   let controlOut = 0
+  // One function for this whole side, returned to the caller and handed to
+  // sendFile and the path exchange as it is: control.js's sendControl keeps
+  // control frames in index order by queueing on this exact function, so every
+  // sender here has to share it rather than wrap the counter again.
   const nextControlIndex = () => controlOut++
 
   const receiver = createReceiver({

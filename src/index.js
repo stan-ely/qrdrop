@@ -47,7 +47,7 @@ export {
   openControl,
 } from './core/frame.js'
 
-export { createControlStream } from './core/control.js'
+export { createControlStream, sendControl } from './core/control.js'
 export { EMPTY_CHAIN, chainHash, hex, equalHex } from './core/digest.js'
 export { fromBytes } from './core/source.js'
 export { sendFile } from './core/sender.js'

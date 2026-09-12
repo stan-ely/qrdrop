@@ -136,12 +136,15 @@ async function transfer(file, {
   // The sending peer also runs a receiver, to pick up accept/done replies.
   const hostControl = createControlStream()
   let hostCtl = 0
+  // One function for the host's side, shared by its receiver and sendFile:
+  // control.js keeps control frames in order by queueing on it.
+  const hostNext = () => hostCtl++
   const hostRx = createReceiver({
     channel: hostCh,
     sendKey: host.sendKey,
     recvKey: host.recvKey,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
     onOffer: () => {},
     onError: e => events.errors.push(e),
     createSink: async () => sink,
@@ -178,7 +181,7 @@ async function transfer(file, {
     file,
     fileSeq: 0,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
     onProgress,
   })
 
@@ -325,12 +328,15 @@ test('a corrupted chunk is rejected and the partial file is abandoned', async ()
 
   const hostControl = createControlStream()
   let hostCtl = 0
+  // One function for the host's side, shared by its receiver and sendFile:
+  // control.js keeps control frames in order by queueing on it.
+  const hostNext = () => hostCtl++
   const hostRx = createReceiver({
     channel: hostCh,
     sendKey: host.sendKey,
     recvKey: host.recvKey,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
     onOffer: () => {},
     onError: () => {},
     createSink: async () => memorySink(),
@@ -343,7 +349,7 @@ test('a corrupted chunk is rejected and the partial file is abandoned', async ()
     file: fileOf(randomBytes(100)),
     fileSeq: 0,
     control: hostControl,
-    nextControlIndex: () => hostCtl++,
+    nextControlIndex: hostNext,
   }))
 
   // Caught one step later than it used to be, and deliberately. The flipped

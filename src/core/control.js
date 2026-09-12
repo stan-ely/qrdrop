@@ -1,3 +1,61 @@
+import { sealControl } from './frame.js'
+
+/**
+ * Per-direction send queues, keyed on the nextControlIndex function itself
+ * rather than on a channel or a key -- because that function IS the direction:
+ * every control message one side originates (the manifest and completion from
+ * sender.js, every reply from receiver.js, the path verdict) takes its nonce
+ * index from it.
+ *
+ * @type {WeakMap<() => number, Promise<void>>}
+ */
+const outbound = new WeakMap()
+
+/**
+ * The outbound half of the control stream: seals one message at the next
+ * control index and hands it to the channel, strictly in index order.
+ *
+ * Taking the index, sealing and sending are one queued step, and that is the
+ * point of this function. They used to be three steps at every call site: take
+ * the index synchronously, await the seal, then send. Two messages started
+ * together could therefore reach the wire in whichever order WebCrypto
+ * finished encrypting them, and a control frame that arrives out of index order
+ * is fatal by design -- open() in frame.js reads it as our own peer
+ * contradicting itself. It surfaced on a device as "Out-of-order frame:
+ * expected 0, got 1" on a phone receiving from the CLI, whose path verdict and
+ * manifest go out back to back, and reproduced deterministically once the
+ * first seal was merely slower than the second. receiver.js had already
+ * serialised pause/resume for exactly this reason, believing every other send
+ * was ordered by the inbound frame queue; the path verdict and the Accept click
+ * never were. One queue per direction fixes all of them, including senders
+ * added later that nobody thinks to serialise.
+ *
+ * The contract this puts on callers: pass the SAME nextControlIndex function
+ * to every sender in one direction, never several closures over one counter.
+ * Order is queued per function, so copies would each get a queue of their own
+ * and race each other exactly as before.
+ *
+ * A failed send does not stall the messages behind it -- the queue carries on
+ * past a rejection -- and the rejection still reaches this call's own caller.
+ *
+ * @param {object} args
+ * @param {Channel} args.channel
+ * @param {CryptoKey} args.key This side's send key. Never the receive key.
+ * @param {() => number} args.nextControlIndex One function per direction; see above.
+ * @param {ControlMessage} msg
+ * @returns {Promise<void>}
+ */
+export function sendControl({ channel, key, nextControlIndex }, msg) {
+  const tail = outbound.get(nextControlIndex) ?? Promise.resolve()
+  const sent = tail.then(async () => {
+    // Inside the queued step, so the index is taken only once every message
+    // queued before this one has been handed to the channel.
+    await channel.send(await sealControl(key, nextControlIndex(), msg))
+  })
+  outbound.set(nextControlIndex, sent.catch(() => {}))
+  return sent
+}
+
 /**
  * An awaitable queue for inbound control messages.
  *

@@ -3,6 +3,23 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
+## Unreleased
+
+**A transfer could die before it started, with "Out-of-order frame: expected 0, got
+1".** Intermittently, and most often from the command line. Every control message —
+the file's description, the replies to it, and the note each side sends about the
+network route — carries a number that becomes part of its encryption, and the
+receiving side refuses one that arrives out of turn. Each was numbered, then encrypted,
+then sent, so two sent at the same moment could reach the other device in whichever
+order they finished encrypting — and the command line sends its route note and the
+file description back to back. Numbering, encrypting and sending are now one step,
+taken in order for each direction. Nothing changes on the wire, so an older version on
+the other end is unaffected.
+
+For code using the package directly: `sendControl` is now exported, and the ordering
+asks one thing of callers — give `createReceiver`, `sendFile` and `sendPathVerdict` on
+one side the same `nextControlIndex` function, not separate closures over one counter.
+
 ## 0.5.0 — 2026-09-11
 
 **A mismatch on the verify screen now has a button, and it ends the session.** The
