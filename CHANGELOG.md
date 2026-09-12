@@ -20,6 +20,25 @@ For code using the package directly: `sendControl` is now exported, and the orde
 asks one thing of callers — give `createReceiver`, `sendFile` and `sendPathVerdict` on
 one side the same `nextControlIndex` function, not separate closures over one counter.
 
+**A receive that fails says why.** Any failure to open the place a file was being
+saved used to be reported as the save dialog having been closed, and the sender was
+told the file had been declined. The real error now reaches both screens. And when a
+receive failed partway, every piece of the file still in flight failed again and
+replaced the message, so the one on screen was almost never the cause; the first
+failure now ends the receive and is the one shown.
+
+**A cancelled or interrupted receive does not leave a partial file.** Cancel in the
+browser now abandons what was written, leaving the empty file the save dialog
+created, as a Beam receive already did. The command line deletes the partial file
+when the sender disconnects mid-transfer or when you press Ctrl-C; its Ctrl-C handler
+had long said it did this, and did not.
+
+For code using the package directly: a `createSink` may now resolve `null` to mean
+the person chose not to save, which declines, while a rejection is a failure that
+`accept()` passes back to its caller rather than turning into a decline. The web
+`createSink` resolves `null` on a dismissed picker instead of rejecting with
+`AbortError`. `createReceiver` returns a `cancel()` that aborts the open sink.
+
 ## 0.5.0 — 2026-09-11
 
 **A mismatch on the verify screen now has a button, and it ends the session.** The

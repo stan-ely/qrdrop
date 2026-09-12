@@ -67,14 +67,17 @@ const RESUME_AT = 1 * 1024 * 1024
  * @param {(path: NetworkPath) => void} [args.onPeerPath] The peer's own view of
  *   the network route. Advisory: nothing waits for it, and a peer that never
  *   sends one is not an error.
- * @param {(manifest: Manifest) => Promise<Sink>} args.createSink Where received
+ * @param {(manifest: Manifest) => Promise<Sink | null>} args.createSink Where received
  *   bytes land. Required, and deliberately not defaulted: this module is the
  *   runtime-agnostic core, and a default would have to name either the browser
  *   sink (File System Access) or the Node one (fs), dragging one runtime's
  *   globals into a file that must run in both. src/web/ and src/node/ each
- *   supply their own; the tests supply a third.
+ *   supply their own; the tests supply a third. Resolving null means the
+ *   person chose not to save -- a dismissed dialog -- and is a decline.
+ *   Rejecting means saving failed, and is not one: see accept().
  * @returns {{
  *   handleFrame: (bytes: Bytes) => Promise<void>,
+ *   cancel: () => Promise<void>,
  *   readonly busy: boolean,
  *   readonly dropped: number,
  *   readonly pending: number,
@@ -99,6 +102,17 @@ export function createReceiver({
   // than inferred from a heap that keeps climbing.
   let pending = 0
   let flowPaused = false
+
+  // Set by the first fatal failure and by cancel(), and never cleared: this
+  // receiver's session is over either way. Every frame already queued behind
+  // that point is skipped rather than processed against a transfer that no
+  // longer exists -- which is what the error storm was. abortActive nulled
+  // `active`, each chunk still in flight threw "Chunk arrived with no accepted
+  // file" and reported itself, and on a device the real cause was on screen
+  // for four milliseconds under 119 of them (app/CAPABILITIES.md). Only an
+  // authenticated failure or the person cancelling sets it, so it gives a
+  // stranger nothing the drop arm in processFrame takes away.
+  let halted = false
 
   /**
    * @type {{
@@ -158,13 +172,26 @@ export function createReceiver({
    * @param {unknown} reason
    */
   async function abortActive(reason) {
+    halted = true
     const seq = active?.manifest?.seq
-    if (active?.sink) await active.sink.abort()
+    const sink = active?.sink
     active = null
+    // Swallowed: the thing being reported is `reason`, and an abort that fails
+    // as well must not become the message that replaces it.
+    if (sink) await sink.abort().catch(() => {})
+    await tellPeer(seq ?? 0, reason)
+    onError?.(reason)
+  }
+
+  /**
+   * @param {number} seq
+   * @param {unknown} reason
+   */
+  async function tellPeer(seq, reason) {
     try {
       await sendControl({
         t: 'error',
-        seq: seq ?? 0,
+        seq,
         message: String(
           reason instanceof Error ? reason.message : reason,
         ).slice(0, 200),
@@ -172,7 +199,6 @@ export function createReceiver({
     } catch {
       // The channel itself may already be gone; the local error still reports.
     }
-    onError?.(reason)
   }
 
   /** @param {Manifest} manifest */
@@ -187,11 +213,31 @@ export function createReceiver({
     // accept() must run inside a user gesture: opening the destination uses
     // showSaveFilePicker, which browsers refuse outside one.
     const accept = async () => {
+      if (halted) return null
+      /** @type {Sink | null} */
       let sink
       try {
         sink = await createSink(manifest)
-      } catch {
-        // Includes the user dismissing the save dialog.
+      } catch (error) {
+        // A failure, not a choice, and it must not be worded as one. This
+        // used to catch everything as the person dismissing the save dialog,
+        // which is how the Android app's sink_open failure reached the screen
+        // as "The save dialog was closed" after the person had pressed Save.
+        // So the peer hears why, this side stops, and the error goes back to
+        // whoever clicked Accept -- the one caller with a screen to put it
+        // on. Not through onError as well, which would report it twice.
+        halted = true
+        await tellPeer(manifest.seq, error)
+        throw error
+      }
+      // The dialog can still be open when the receive is cancelled under it.
+      // The file it has just created is released rather than written into.
+      if (halted) {
+        await sink?.abort().catch(() => {})
+        return null
+      }
+      if (!sink) {
+        // The person closed the dialog without choosing a location.
         await decline()
         return null
       }
@@ -227,29 +273,34 @@ export function createReceiver({
       throw new Error('Chunk arrived with no accepted file')
     }
 
+    // Held locally across the awaits below: cancel() can null `active` while
+    // this frame is still being written, and everything after that write is
+    // then about a file nobody is receiving any more.
+    const current = active
     const { plaintext, last } = await open(recvKey, frame, {
       type: TYPE_CHUNK,
-      fileSeq: active.manifest.seq,
-      index: active.expected,
+      fileSeq: current.manifest.seq,
+      index: current.expected,
     })
 
-    await active.sink.write(plaintext)
-    active.digest = await chainHash(active.digest, plaintext)
-    active.expected += 1
-    active.received += plaintext.length
+    await current.sink.write(plaintext)
+    if (current !== active) return
+    current.digest = await chainHash(current.digest, plaintext)
+    current.expected += 1
+    current.received += plaintext.length
 
-    if (active.received > active.manifest.size) {
+    if (current.received > current.manifest.size) {
       throw new Error('Peer sent more data than the manifest declared')
     }
-    if (last && active.expected !== active.manifest.chunks) {
+    if (last && current.expected !== current.manifest.chunks) {
       throw new Error('End-of-file flag arrived at the wrong chunk')
     }
 
     onProgress?.({
-      received: active.received,
-      total: active.manifest.size,
-      chunk: active.expected,
-      chunks: active.manifest.chunks,
+      received: current.received,
+      total: current.manifest.size,
+      chunk: current.expected,
+      chunks: current.manifest.chunks,
     })
   }
 
@@ -262,8 +313,13 @@ export function createReceiver({
     if (active.received !== active.manifest.size) throw new Error('Size mismatch')
     if (!equalHex(hex(active.digest), msg.digest)) throw new Error('Digest mismatch')
 
-    await active.sink.close()
-    const finished = { name: active.sink.name, size: active.received, digest: msg.digest }
+    const current = active
+    await current.sink.close()
+    // Cancelled while the close was in flight. The file may well be whole on
+    // disk by now, but the person has already been told it was abandoned, and
+    // a "received" landing after that would contradict the screen they chose.
+    if (current !== active) return
+    const finished = { name: current.sink.name, size: current.received, digest: msg.digest }
     active = null
     await sendControl({ t: 'done', seq: msg.seq })
     onFileDone?.(finished)
@@ -271,6 +327,7 @@ export function createReceiver({
 
   /** @param {Bytes} bytes */
   async function processFrame(bytes) {
+    if (halted) return
     try {
       if (bytes.length < HEADER_BYTES) throw new Error('Runt frame')
 
@@ -335,6 +392,11 @@ export function createReceiver({
       // Deliberately NOT a threshold that gives up after N drops. That reads
       // like prudence and is a two-line denial of service: a stranger who can
       // send N frames gets the abort back that this change just took away.
+      //
+      // And a frame that was already mid-flight when the receiver stopped --
+      // a write into a sink cancel() has just aborted -- is not a second
+      // failure to report. The first one, or the cancel, has already said it.
+      if (halted) return
       if (error instanceof UnauthenticatedFrame) {
         dropped += 1
         return
@@ -388,8 +450,32 @@ export function createReceiver({
     })
   }
 
+  /**
+   * Ends this side's part without calling it a failure: the person pressed
+   * Cancel. Aborts the file being received, if there is one, so the partial
+   * file and whatever handle is behind it go with the session. The network
+   * receive path used to close the room and nothing else, and a phone kept
+   * 15,910,050 bytes of a cancelled 64 MiB receive under the name it was
+   * given. Tells the peer nothing and reports nothing -- the peer learns from
+   * the room closing, which is what the caller does next.
+   *
+   * Not queued behind the inbound frames, because a cancel waits for nothing.
+   * A frame mid-write when it lands finds `active` gone and stops there
+   * (handleChunk), and every frame after it is skipped. Idempotent, and a
+   * no-op on a receiver that has already stopped, so it is safe to run on
+   * every teardown.
+   */
+  async function cancel() {
+    if (halted) return
+    halted = true
+    const sink = active?.sink
+    active = null
+    if (sink) await sink.abort().catch(() => {})
+  }
+
   return {
     handleFrame,
+    cancel,
     get busy() { return active !== null },
     get dropped() { return dropped },
     get pending() { return pending },

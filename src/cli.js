@@ -328,8 +328,20 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, cre
   // frames arriving together cannot race each other here.
   room.onFrame(frame => { receiver.handleFrame(frame).catch(err => console.error(err)) })
 
-  return { control, nextControlIndex }
+  return { control, nextControlIndex, receiver }
 }
+
+/**
+ * What a Ctrl-C has to undo before the process exits. A receive puts its
+ * receiver's cancel() here for as long as it runs, so an interrupted transfer
+ * deletes its partial file -- src/node/sink.js's abort() unlinks it -- instead
+ * of leaving something under the sender's filename that looks complete and is
+ * not. The SIGINT handler in main() promised exactly that for a long time
+ * while calling nothing but process.exit().
+ *
+ * @type {Set<() => Promise<void>>}
+ */
+const interruptHooks = new Set()
 
 /**
  * Resolves the --strategy / --relay flags to the strategy list openRoom should
@@ -532,6 +544,8 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
 
   /** @type {PairedRoom | undefined} */
   let room
+  /** @type {(() => Promise<void>) | undefined} */
+  let cancelReceive
 
   try {
     // Bound to a const because the checker cannot carry the narrowing of a
@@ -568,7 +582,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
       })
 
       const exchange = createPathExchange(paired)
-      const { nextControlIndex } = attachReceiver({
+      const { nextControlIndex, receiver } = attachReceiver({
         room: paired,
         createSink,
         onProgress,
@@ -607,6 +621,9 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
         },
       })
 
+      cancelReceive = receiver.cancel
+      interruptHooks.add(cancelReceive)
+
       // Sent as soon as this side has classified, without waiting for an
       // offer: the peer wants it for its own badge whether or not a file ever
       // moves.
@@ -626,6 +643,14 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
     )
     return 0
   } finally {
+    // A no-op after a finished or declined transfer, and after a failure the
+    // receiver has already aborted. What it catches is the rest: the sender
+    // leaving mid-file rejects the wait above with the partial file still
+    // open, and this is what deletes it.
+    if (cancelReceive) {
+      interruptHooks.delete(cancelReceive)
+      await cancelReceive()
+    }
     room?.close()
   }
 }
@@ -854,10 +879,15 @@ async function main() {
   // connection or a half-written file behind; readline's own 'SIGINT'
   // event fires on Ctrl-C while a question() is pending, and this closes
   // the interface (which restores the terminal) before the process exits.
+  // The half-written file is interruptHooks' job: this used to exit straight
+  // away, and the partial file stayed. Bounded, so an abort that hangs cannot
+  // turn Ctrl-C into a process that will not exit.
   rl.on('SIGINT', () => {
     rl.close()
     process.stderr.write('\nCancelled.\n')
-    process.exit(130)
+    const undone = Promise.allSettled([...interruptHooks].map(hook => hook()))
+    const bound = new Promise(done => setTimeout(done, 2000))
+    void Promise.race([undone, bound]).then(() => process.exit(130))
   })
 
   try {

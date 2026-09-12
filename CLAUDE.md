@@ -1198,10 +1198,15 @@ base64 everywhere: that throws away the measured desktop rate for a platform tha
 was never going to have it. Nor by sending the bare `Uint8Array` on Android, which
 the JSON path spells out one number at a time.
 
-It also failed *invisibly*: `receiver.js`'s `accept()` turns any `createSink` rejection
-into `null`, and `element.js` reports a `null` sink as "The save dialog was closed
-without choosing a location". The person had pressed Save, the document existed at
-0 bytes, and the screen said they had cancelled.
+It also failed *invisibly*: `receiver.js`'s `accept()` used to turn any `createSink`
+rejection into `null`, and `element.js` reports a `null` sink as "The save dialog was
+closed without choosing a location". The person had pressed Save, the document existed
+at 0 bytes, and the screen said they had cancelled. The contract is now two-valued: a
+sink **resolves `null`** when the person dismissed the dialog, and **rejects** only
+when saving failed, which `accept()` tells the peer and hands back to its caller. That
+is why `web/sink.js` turns `showSaveFilePicker`'s `AbortError` into `null` itself. Do
+not catch a sink rejection into `null` anywhere again — it is the one move that makes a
+failure and a choice indistinguishable.
 
 **`tauri-sink.js` coalesces frames to 1 MiB before each `invoke`, and that buffer is
 load-bearing.** `element.js` calls the sink once per 16 KiB transfer frame; at that

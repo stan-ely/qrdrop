@@ -16,8 +16,10 @@
  * returns a filesystem path on desktop and a `content://` URI on Android.
  * Both reach sink_open as an opaque string and are resolved Rust-side, where
  * plugin-fs's open() knows what to do with each -- nothing here may parse or
- * rewrite it, because a URI mangled into a path fails as "the save dialog
- * was closed" (receiver.js treats any createSink failure as a dismissal). The bytes,
+ * rewrite it, because a URI mangled into a path fails at sink_open. That
+ * failure now reaches the screen as itself; until 2026-09-12 receiver.js read
+ * every createSink rejection as a dismissed dialog, and this module's null is
+ * still the only way to say one. The bytes,
  * though, go through this crate's own sink_open / sink_write / sink_close
  * commands (app/src-tauri/src/sink.rs), NOT plugin-fs's write(): on WebView2
  * plugin-fs moves bytes across the IPC boundary at ~2 MB/s whatever the block

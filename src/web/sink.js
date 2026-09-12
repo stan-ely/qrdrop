@@ -62,8 +62,16 @@ export function safeFilename(name, fallback = 'received.bin') {
 /**
  * Must be called from a user gesture: showSaveFilePicker requires one.
  *
+ * Resolves null when the person closes the picker without choosing, and
+ * rejects only when saving actually failed -- the contract app/src/tauri-sink.js
+ * already kept and core/receiver.js's accept() reads. showSaveFilePicker
+ * reports a dismissal as an AbortError, and passing that through as a
+ * rejection is what forced accept() to read every rejection as a dismissal:
+ * a picker refused for want of a user activation said "the save dialog was
+ * closed" exactly as a cancelled one did.
+ *
  * @param {Manifest} manifest
- * @returns {Promise<Sink>}
+ * @returns {Promise<Sink | null>}
  */
 export async function createSink(manifest) {
   const name = safeFilename(manifest.name)
@@ -73,7 +81,14 @@ export async function createSink(manifest) {
     // -- it is Chromium-only and not on a standards track every engine has
     // signed up to. canStreamToDisk() above is the real guard; this cast is
     // only telling the checker what that guard already established.
-    const handle = await /** @type {any} */ (window).showSaveFilePicker({ suggestedName: name })
+    /** @type {any} */
+    let handle
+    try {
+      handle = await /** @type {any} */ (window).showSaveFilePicker({ suggestedName: name })
+    } catch (error) {
+      if (/** @type {any} */ (error)?.name === 'AbortError') return null
+      throw error
+    }
     const writable = await handle.createWritable()
     return {
       streaming: true,

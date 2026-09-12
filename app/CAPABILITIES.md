@@ -619,7 +619,8 @@ element's `_fail` over CDP and reading the whole ordered sequence.
 
 `receiver.js` already anticipated the storm -- its comment names it -- but the
 fix made stray frames non-fatal without making the *first* error the one the
-user sees. That reporting gap is a real finding and is not addressed here.
+user sees. That reporting gap is a real finding and was not addressed here; it
+was closed on 2026-09-12 (open work #3 below).
 
 Throughput measured on the same debug binary, writing 32 MiB per block size:
 4.0 MB/s at 16 KiB, 20.7 at 256 KiB, 24.1 at 1 MiB. The shape matches the
@@ -684,7 +685,7 @@ the same LAN:
 | 3 MB | 3,000,000 bytes, SHA-256 identical to the source |
 | 64 MiB | 67,108,864 bytes, SHA-256 identical, 19.6 s from Receiving to done: **~3.4 MB/s** (sending from the same phone was 4.03) |
 | 3 MB under an existing 5 MB name | a new `name (1)` document, byte-identical; the 5 MB original untouched, sender and phone digests equal |
-| cancel at 21% of 64 MiB | no crash, app back on choose, **partial file left at 15,910,050 bytes** (below) |
+| cancel at 21% of 64 MiB | no crash, app back on choose, **partial file left at 15,910,050 bytes** (open work #3b; Cancel aborts the sink on main since, not re-run on the device) |
 | Beam receive | not run: needs a camera physically aimed at an animated QR |
 | Windows regression, debug build (raw body) | 3 MB twice: once to a new file, once saved over an existing 5,000,000-byte file after Windows' replace prompt — 3,000,000 bytes, byte-identical, sender and app digests equal. `truncate` proven where the dialog does overwrite |
 
@@ -1201,23 +1202,30 @@ above. None of it blocks the config gate.
 2. ~~**The `content://` sink**, so Android can receive at all.~~ **Closed
    2026-09-12.** It took the content-URI open *and* a base64 body for
    `sink_write`; see "Resolved (2026-09-12)" above for both and the numbers.
-3. **First-error-versus-last-error reporting.** `abortActive` nulls `active` on
-   the first failure and the in-flight chunks then overwrite the message the
-   user sees with `Chunk arrived with no accepted file`. The real cause showed
-   for four milliseconds. Not addressed. Seen again on 2026-09-12: the base64
-   run's real error (`sink_write expects a raw body`) was followed by 119 of
-   them and a closing `Unexpected completion`.
-3b. **Cancelling a network receive never aborts the sink.** `element.js` sets
-   the receive path's `_teardown` to `() => room.close()`, so Cancel closes the
-   room and leaves the sink open: the partial file stays (15,910,050 bytes of a
-   64 MiB receive, measured) and the native handle lingers in `SinkState` until
-   the next `sink_open`. Only Beam's teardown calls `sink.abort()`. Not
-   Android-specific, and older than the sink fixes. Not addressed.
-3c. **A sink failure is reported as the person dismissing the save dialog.**
-   `receiver.js`'s `accept()` catches every `createSink` rejection and returns
-   `null`, which `element.js` words as "the save dialog was closed". That is
-   what hid the Android sink bug behind a cancelled-dialog message. Not
-   addressed.
+3. ~~**First-error-versus-last-error reporting.**~~ **Closed 2026-09-12.**
+   `abortActive` nulled `active` on the first failure and the in-flight chunks
+   then overwrote the message the user sees with `Chunk arrived with no
+   accepted file`; the base64 run's real error (`sink_write expects a raw
+   body`) was followed by 119 of them and a closing `Unexpected completion`.
+   The receiver now stops at its first fatal failure and skips every frame
+   queued behind it. A unit test drives a sink that cannot write through a
+   nine-chunk transfer and counted ten reports before the change, one after.
+3b. ~~**Cancelling a network receive never aborts the sink.**~~ **Closed
+   2026-09-12, in unit tests and not yet on a device.** `_teardown` on that path
+   was `room.close()` alone, which left 15,910,050 bytes of a cancelled 64 MiB
+   receive and the native handle in `SinkState`. `createReceiver` now has a
+   `cancel()` that aborts the open sink, and `element.js`'s teardown runs it
+   before closing the room. On Android `sink_abort` can empty a `content://`
+   document and cannot delete it, so a cancelled receive there leaves an empty
+   file under the chosen name. The CLI got the same treatment: a sender leaving
+   mid-file, or Ctrl-C, now deletes the partial file.
+3c. ~~**A sink failure is reported as the person dismissing the save dialog.**~~
+   **Closed 2026-09-12.** `accept()` caught every `createSink` rejection as a
+   dismissal. Now a sink resolves `null` for a dismissed dialog and rejects only
+   for a failure, which reaches the screen as itself and the sender as
+   `Peer refused the transfer: <reason>`. `web/sink.js` maps
+   `showSaveFilePicker`'s `AbortError` to `null` to keep that contract, and
+   Beam's Accept, which never caught a sink rejection at all, reports it too.
 4. **The unrun checklist rows**: Beam send, Beam receive at ~10 Hz, and the
    deep-link `qrdrop:<code>` path on Android.
 5. ~~**`app.yml` has never run.**~~ **Closed.** Pushed and green on all five

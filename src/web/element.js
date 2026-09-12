@@ -1397,6 +1397,19 @@ export class QRDropElement extends HTMLElement {
     // handleFrame serialises internally, so a burst of frames cannot race.
     room.onFrame(frame => { receiver.handleFrame(frame).catch(e => this._fail(e)) })
 
+    // Cancel, a failure and a finished transfer all end in _teardown, which
+    // on this path used to be _establish's room.close() alone. The sink stayed
+    // open, so a cancelled receive left its partial file on disk -- 15,910,050
+    // bytes of a 64 MiB receive on a phone -- and the app's native handle open
+    // until the next one. Beam's teardown has always aborted its sink; this is
+    // the network path catching up. cancel() is a no-op on a receiver that has
+    // already stopped, so running it on every teardown is safe.
+    const closeRoom = this._teardown
+    this._teardown = () => {
+      receiver.cancel().catch(() => {})
+      closeRoom?.()
+    }
+
     return { control, nextControlIndex }
   }
 
@@ -1564,7 +1577,17 @@ export class QRDropElement extends HTMLElement {
             this._onOfferDecline = null
             this._setState({ busy: true })
 
-            const sink = await accept()
+            let sink
+            try {
+              sink = await accept()
+            } catch (error) {
+              // Saving failed -- a destination the native sink could not
+              // open, a picker that refused to -- which is not the person
+              // closing the dialog and must not be worded as though it were.
+              // accept() has already told the peer why.
+              this._setState({ busy: false })
+              return this._failTransfer(error)
+            }
             // The save dialog was dismissed. This is a full teardown of a
             // transfer the user had already accepted, so it says so rather
             // than dropping them on a blank choose screen.
@@ -1792,10 +1815,18 @@ export class QRDropElement extends HTMLElement {
 
           this._setState({ busy: true })
 
-          sink = await getPlatform().createSink({
-            t: 'manifest', seq: 0, chunks: incoming.blocks,
-            name: incoming.name, size: incoming.size, mime: incoming.mime,
-          })
+          try {
+            sink = await getPlatform().createSink({
+              t: 'manifest', seq: 0, chunks: incoming.blocks,
+              name: incoming.name, size: incoming.size, mime: incoming.mime,
+            })
+          } catch (error) {
+            // Nothing caught this before, so a sink that failed to open left
+            // the sheet's buttons disabled and the failure in the console.
+            // Same wording rule as the network path's accept.
+            this._setState({ busy: false })
+            return this._failTransfer(error)
+          }
           if (!sink) return this._reset('The save dialog was closed without choosing a location, so nothing was saved.')
 
           // modal: null explicitly, not as a consequence of offer going null.

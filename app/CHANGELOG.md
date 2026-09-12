@@ -39,6 +39,21 @@ were sent at the same moment, and the receiving side rightly refuses that. They 
 always leave in order. The fault was in the transfer code the app shares with the
 website and the command line, so all three get the fix.
 
+**A receive that fails says why.** If the app could not write to the place you chose,
+it said the save dialog had been closed without choosing a location — which is how
+Android's receive bug above stayed hidden. It now shows the real error, and the
+sending device is told the transfer failed and why, rather than that it was declined.
+And when something went wrong partway through, every piece of the file still on its
+way failed again and replaced the message, so the reason on screen was almost never
+the reason. The first failure now ends the receive, and it is the one you see.
+
+**Cancel abandons the partial file.** Cancelling a receive used to close the
+connection and keep what had arrived under the name you saved it as: 15.9 MB of a
+64 MiB file, on the phone above. On Windows, macOS and Linux it is now deleted. On
+Android it is emptied rather than deleted — the save dialog creates that document and
+the app is not allowed to remove it — so a cancelled receive leaves an empty file
+behind.
+
 ## 1.0.0 -- 2026-09-11
 
 **Packaged for the Microsoft Store, and 1.0.0 because of it.** This is the first

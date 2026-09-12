@@ -7,7 +7,7 @@ import { createControlStream } from '../src/core/control.js'
 import { createReceiver } from '../src/core/receiver.js'
 import { sendFile } from '../src/core/sender.js'
 import { fromBytes } from '../src/core/source.js'
-import { CHUNK_SIZE, TYPE_CHUNK, seal } from '../src/core/frame.js'
+import { CHUNK_SIZE, TYPE_CHUNK, seal, sealControl as sealControlFrame } from '../src/core/frame.js'
 import { safeFilename } from '../src/web/sink.js'
 
 /**
@@ -111,15 +111,17 @@ async function pairedSessions() {
  * @param {{
  *   decide?: 'accept' | 'decline',
  *   sink?: MemorySink,
+ *   createSink?: (manifest: Manifest) => Promise<Sink | null>,
  *   onProgress?: (p: TransferProgress) => void,
  *   serialize?: boolean,
  *   inject?: () => Promise<Bytes> | Bytes,
  * }} [options] `inject`, when given, is called before every frame the guest
  *   receives and its result is fed to the guest first -- the stand-in for
- *   someone else's bytes arriving mid-transfer.
+ *   someone else's bytes arriving mid-transfer. `createSink` replaces the
+ *   default of handing back `sink`, for the tests about a sink that fails.
  */
 async function transfer(file, {
-  decide = 'accept', sink = memorySink(), onProgress, serialize = true, inject,
+  decide = 'accept', sink = memorySink(), createSink = async () => sink, onProgress, serialize = true, inject,
 } = {}) {
   const { host, guest } = await pairedSessions()
   const [hostCh, guestCh] = channelPair({ serialize })
@@ -129,9 +131,10 @@ async function transfer(file, {
    *   offers: Manifest[],
    *   done: { name: string, size: number, digest: string }[],
    *   errors: unknown[],
+   *   acceptErrors: unknown[],
    * }}
    */
-  const events = { offers: [], done: [], errors: [] }
+  const events = { offers: [], done: [], errors: [], acceptErrors: [] }
 
   // The sending peer also runs a receiver, to pick up accept/done replies.
   const hostControl = createControlStream()
@@ -159,10 +162,16 @@ async function transfer(file, {
     recvKey: guest.recvKey,
     control: guestControl,
     nextControlIndex: () => guestCtl++,
-    createSink: async () => sink,
+    createSink,
     onOffer: async o => {
       events.offers.push(o.manifest)
-      await (decide === 'accept' ? o.accept() : o.decline())
+      // Caught, because nothing awaits onOffer: a rejecting accept() would
+      // otherwise surface as an unhandled rejection rather than an assertion.
+      try {
+        await (decide === 'accept' ? o.accept() : o.decline())
+      } catch (error) {
+        events.acceptErrors.push(error)
+      }
     },
     onProgress,
     onFileDone: f => events.done.push(f),
@@ -445,6 +454,193 @@ test('our own peer contradicting itself is still fatal', async () => {
   assert.equal(errors.length, 1)
   assert.match(String(errors[0]), /Chunk arrived with no accepted file/)
   assert.equal(rx.dropped, 0, 'an authenticated frame is never a drop')
+})
+
+test('a sink that cannot be opened fails with its own reason, not as a dismissal', async () => {
+  // How the Android app hid its receive bug: sink_open failed with os error 2,
+  // accept() caught it as though the person had closed the save dialog, and
+  // the screen said so. The person had pressed Save.
+  // The sending half: told the transfer failed and why, not that it was
+  // declined. The receiving half is the next test.
+  await assert.rejects(
+    transfer(fileOf(randomBytes(100)), {
+      createSink: async () => { throw new Error('No such file or directory (os error 2)') },
+    }),
+    /Peer refused the transfer: No such file or directory \(os error 2\)/,
+  )
+})
+
+test('accept() rejects with the sink failure, and only a null sink means dismissed', async () => {
+  const { guest } = await pairedSessions()
+  const [, guestCh] = channelPair()
+  const failure = new Error('sink_open: permission denied')
+  /** @type {(manifest: Manifest) => Promise<Sink | null>} */
+  let createSink = async () => { throw failure }
+  /** @type {{ accept: () => Promise<Sink | null> }[]} */
+  const offers = []
+  /** @type {unknown[]} */
+  const errors = []
+
+  const makeRx = () => createReceiver({
+    channel: guestCh,
+    sendKey: guest.sendKey,
+    recvKey: guest.recvKey,
+    control: createControlStream(),
+    nextControlIndex: (() => { let n = 0; return () => n++ })(),
+    createSink: m => createSink(m),
+    onOffer: o => { offers.push(o) },
+    onError: e => errors.push(e),
+  })
+
+  // guest.recvKey is what the host seals with, so these manifests are genuinely ours.
+  const manifest = () => sealControlFrame(guest.recvKey, 0, {
+    t: 'manifest', seq: 0, name: 'x.bin', size: 1, mime: 'application/octet-stream', chunks: 1,
+  })
+
+  const failing = makeRx()
+  await failing.handleFrame(await manifest())
+  await assert.rejects(offers[0].accept(), failure, 'the real reason reaches whoever clicked Accept')
+  assert.deepEqual(errors, [], 'reported once, by the caller of accept(), not a second time through onError')
+
+  createSink = async () => null
+  const dismissed = makeRx()
+  await dismissed.handleFrame(await manifest())
+  assert.equal(await offers[1].accept(), null, 'a sink that resolves null is the person choosing not to save')
+})
+
+test('after the first failure, the frames still queued behind it report nothing', async () => {
+  // The storm, seen twice on a device: abortActive nulled `active`, every chunk
+  // still in flight then threw "Chunk arrived with no accepted file", and each
+  // one replaced the message on screen. The real cause -- here a sink that
+  // cannot write, as Android's first base64-less build could not -- showed for
+  // four milliseconds, under 119 of them and a closing "Unexpected completion".
+  const { host, guest } = await pairedSessions()
+  const [hostCh, guestCh] = channelPair()
+  const sink = memorySink()
+  sink.write = async () => { throw new Error('sink_write expects a raw body') }
+  /** @type {unknown[]} */
+  const errors = []
+
+  const hostControl = createControlStream()
+  let hostCtl = 0
+  const hostNext = () => hostCtl++
+  const hostRx = createReceiver({
+    channel: hostCh, sendKey: host.sendKey, recvKey: host.recvKey,
+    control: hostControl, nextControlIndex: hostNext,
+    onOffer: () => {},
+    createSink: async () => { throw new Error('the sending peer accepts no files') },
+  })
+  hostCh.onFrame = hostRx.handleFrame
+
+  let guestCtl = 0
+  const guestRx = createReceiver({
+    channel: guestCh, sendKey: guest.sendKey, recvKey: guest.recvKey,
+    control: createControlStream(), nextControlIndex: () => guestCtl++,
+    createSink: async () => sink,
+    onOffer: o => { o.accept().catch(() => {}) },
+    onError: e => errors.push(e),
+  })
+  guestCh.onFrame = guestRx.handleFrame
+
+  await assert.rejects(sendFile({
+    channel: hostCh, key: host.sendKey, file: fileOf(randomBytes(CHUNK_SIZE * 8 + 3)),
+    fileSeq: 0, control: hostControl, nextControlIndex: hostNext,
+  }), /Peer could not complete the transfer: sink_write expects a raw body/)
+  await hostCh.tail
+
+  assert.equal(errors.length, 1, `one failure, reported once; saw ${errors.map(String).join(' | ')}`)
+  assert.match(String(errors[0]), /sink_write expects a raw body/)
+  assert.ok(sink.aborted)
+})
+
+test('cancelling a receive aborts the sink, and nothing after it is reported', async () => {
+  // Cancel on the network receive path used to close the room and nothing
+  // else: the partial file stayed (15,910,050 bytes of a 64 MiB receive, on a
+  // phone) and the app's native handle lingered until the next receive.
+  const { host, guest } = await pairedSessions()
+  const [hostCh, guestCh] = channelPair()
+  const sink = memorySink()
+  /** @type {unknown[]} */
+  const errors = []
+  /** @type {() => void} */
+  let cancelled = () => {}
+  const wasCancelled = new Promise(resolve => { cancelled = () => resolve(undefined) })
+
+  const hostControl = createControlStream()
+  let hostCtl = 0
+  const hostNext = () => hostCtl++
+  const hostRx = createReceiver({
+    channel: hostCh, sendKey: host.sendKey, recvKey: host.recvKey,
+    control: hostControl, nextControlIndex: hostNext,
+    onOffer: () => {},
+    createSink: async () => { throw new Error('the sending peer accepts no files') },
+  })
+  hostCh.onFrame = hostRx.handleFrame
+
+  let guestCtl = 0
+  /** @type {ReturnType<typeof createReceiver>} */
+  const guestRx = createReceiver({
+    channel: guestCh, sendKey: guest.sendKey, recvKey: guest.recvKey,
+    control: createControlStream(), nextControlIndex: () => guestCtl++,
+    createSink: async () => sink,
+    onOffer: o => { o.accept().catch(() => {}) },
+    onProgress: p => {
+      if (p.chunk !== 2) return
+      // Settles the wait below whether or not cancel() does, so a receiver
+      // without it fails these assertions instead of hanging the suite.
+      Promise.resolve().then(() => guestRx.cancel()).finally(cancelled).catch(e => errors.push(e))
+    },
+    onFileDone: () => errors.push(new Error('a cancelled receive must not complete')),
+    onError: e => errors.push(e),
+  })
+  guestCh.onFrame = guestRx.handleFrame
+
+  // Not awaited: with the receiver gone the sender waits on a 'done' that is
+  // never coming, which in the app is ended by the room closing under it.
+  sendFile({
+    channel: hostCh, key: host.sendKey, file: fileOf(randomBytes(CHUNK_SIZE * 8 + 3)),
+    fileSeq: 0, control: hostControl, nextControlIndex: hostNext,
+  }).catch(() => {})
+
+  await wasCancelled
+  // Let every frame the sender still had queued reach the cancelled receiver.
+  for (let tail; tail !== hostCh.tail;) {
+    tail = hostCh.tail
+    await tail
+  }
+
+  assert.ok(sink.aborted, 'the partial file is abandoned')
+  assert.equal(sink.closed, false)
+  assert.deepEqual(errors, [], 'the person cancelled; nothing failed')
+  assert.equal(guestRx.busy, false)
+})
+
+test('a save dialog still open when the receive is cancelled does not revive it', async () => {
+  const { guest } = await pairedSessions()
+  const [, guestCh] = channelPair()
+  const sink = memorySink()
+  /** @type {(sink: Sink) => void} */
+  let pick = () => {}
+  /** @type {{ accept: () => Promise<Sink | null> }[]} */
+  const offers = []
+
+  const rx = createReceiver({
+    channel: guestCh, sendKey: guest.sendKey, recvKey: guest.recvKey,
+    control: createControlStream(), nextControlIndex: (() => { let n = 0; return () => n++ })(),
+    createSink: () => new Promise(resolve => { pick = resolve }),
+    onOffer: o => { offers.push(o) },
+  })
+
+  await rx.handleFrame(await sealControlFrame(guest.recvKey, 0, {
+    t: 'manifest', seq: 0, name: 'x.bin', size: 1, mime: 'application/octet-stream', chunks: 1,
+  }))
+  const accepting = offers[0].accept()
+  await rx.cancel()
+  pick(sink)
+
+  assert.equal(await accepting, null)
+  assert.ok(sink.aborted, 'the file the dialog just created is released, not written')
+  assert.equal(rx.busy, false)
 })
 
 test('filenames from the peer are sanitised before reaching a save dialog', () => {
