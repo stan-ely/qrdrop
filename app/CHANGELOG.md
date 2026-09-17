@@ -11,7 +11,7 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
-## Unreleased
+## 1.1.0 -- 2026-09-17
 
 **A smaller Android download.** Each release now has an APK per processor type beside the
 universal one, and the F-Droid repository offers a phone only its own: about 14 MB for a
