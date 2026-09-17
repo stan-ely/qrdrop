@@ -1,0 +1,36 @@
+{
+  "/etc/issue.net": "Ubuntu 24.04.5 LTS",
+  "antiFeatures": {},
+  "apksigner": "/usr/bin/apksigner",
+  "archivePolicy0": [],
+  "commandLine": [
+    "/home/runner/.local/share/mise/installs/pipx-fdroidserver/2.4.5/bin/fdroid update",
+    "--verbose",
+    "--pretty"
+  ],
+  "disabled": [],
+  "endTimestamp": 1789642725628,
+  "failedBuilds": {},
+  "jarsigner": "/usr/bin/jarsigner",
+  "keytool": "/usr/bin/keytool",
+  "needsUpdate": [
+    "com.stan_ely.qrdrop"
+  ],
+  "noPackages": [
+    "com.stan_ely.qrdrop"
+  ],
+  "noUpdateCheck": [
+    "com.stan_ely.qrdrop"
+  ],
+  "stages": {
+    "delete_disabled_builds": 1789642717703,
+    "index.make repo": 1789642722022,
+    "prepare_apps repo": 1789642721983,
+    "process_apks": 1789642717704,
+    "read_added_date_from_all_apks": 1789642721982,
+    "remove_apks": 1789642721982,
+    "scan_repo_files": 1789642721981
+  },
+  "startTimestamp": 1789642717000,
+  "subcommand": "update"
+}
