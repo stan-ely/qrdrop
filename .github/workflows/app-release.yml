@@ -661,10 +661,19 @@ jobs:
   # The Microsoft Store is a separate route and does not replace this one:
   # `winget install --source msstore` resolves the Store's signed MSIX, this
   # resolves the unsigned NSIS installer on the Release page.
+  #
+  # One release can be held back from winget-pkgs by setting the repository
+  # variable WINGET_SKIP_VERSION to that version. It names a version rather
+  # than being a boolean on purpose: a `WINGET_SKIP=true` left set after the
+  # release it was set for stops every later release from reaching winget with
+  # nothing in any run to read, and the failure is a package that silently
+  # stops receiving updates -- the same shape as the F-Droid key rotation this
+  # repository is careful about elsewhere. A version-named skip expires by
+  # itself at the next tag.
   winget:
     needs: [check, release]
     runs-on: windows-latest
-    if: ${{ !contains(needs.check.outputs.version, '-') }}
+    if: ${{ !contains(needs.check.outputs.version, '-') && needs.check.outputs.version != vars.WINGET_SKIP_VERSION }}
     env:
       VERSION: ${{ needs.check.outputs.version }}
       BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
@@ -789,7 +798,12 @@ jobs:
             `Description: ${q(description)}`,
             'Moniker: qrdrop',
             'Tags:',
-            ...['file-transfer', 'p2p', 'encryption', 'end-to-end-encryption', 'qr-code', 'webrtc', 'airdrop', 'sharing'].map((t) => `  - ${t}`),
+            // No other publisher's product title here -- 'airdrop' was in this
+            // list and the Microsoft Store rejected the 1.0.0 listing over the
+            // same word under policy 10.1.3 (keywords must not be product
+            // titles you do not publish). winget-pkgs is moderated by hand
+            // against a comparable rule, so it goes from both.
+            ...['file-transfer', 'p2p', 'encryption', 'end-to-end-encryption', 'qr-code', 'webrtc', 'wireless-transfer', 'sharing'].map((t) => `  - ${t}`),
             `ReleaseNotesUrl: ${q(`https://github.com/stan-ely/qrdrop/releases/tag/app-v${VERSION}`)}`,
             'ManifestType: defaultLocale',
             'ManifestVersion: 1.10.0',
