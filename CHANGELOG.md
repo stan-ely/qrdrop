@@ -3,7 +3,7 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
-## Unreleased
+## 0.6.0 — 2026-09-18
 
 **A transfer could die before it started, with "Out-of-order frame: expected 0, got
 1".** Intermittently, and most often from the command line. Every control message —
