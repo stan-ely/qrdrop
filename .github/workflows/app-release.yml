@@ -222,11 +222,21 @@ jobs:
       # matrix would still end in a job that builds them all, and it would buy
       # no wall-clock time. The second invocation finds cargo's outputs from
       # the first and mostly just packages.
-      - name: Build the universal APK and one per ABI
+      #
+      # The third is the Android App Bundle for Google Play, which takes no
+      # APK from a new app. It is the universal flavour, so its versionCode is
+      # the base times ten plus 0 -- the same code as the universal APK, which
+      # is the same version of the same code -- and Play cuts per-ABI APKs
+      # from it itself. Signed with the same key as everything else, and Play
+      # App Signing is enrolled with that same key as the app signing key
+      # (CLAUDE.md, "Google Play"), so an install from Play carries the
+      # certificate assetlinks.json names.
+      - name: Build the universal APK, one per ABI, and the Play bundle
         working-directory: app
         run: |
           npx tauri android build --apk --target aarch64 armv7 x86_64
           npx tauri android build --apk --split-per-abi --target aarch64 armv7 x86_64
+          npx tauri android build --aab --target aarch64 armv7 x86_64
 
       # Named for the Release page, where app-arm64-release.apk says neither
       # what it is nor which version, and for the F-Droid repository, which
@@ -280,11 +290,65 @@ jobs:
             echo "versionCode $got"
           done
 
+      # The same two proofs for the bundle, by other means: apksigner and
+      # aapt2 read APKs, not bundles. An AAB is signed as a plain jar, so
+      # keytool reads its certificate, and it must be the APKs' certificate --
+      # a bundle signed with anything else is refused by Play as the wrong
+      # upload key, or worse, accepted on a fresh listing as the key from then
+      # on. bundletool reads the versionCode out of the protobuf manifest; it
+      # is pinned by version and hash, because it runs in the job that holds
+      # the signing key.
+      - name: Verify the Play bundle's certificate and versionCode
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          BUNDLETOOL_VERSION: 1.18.3
+          BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+        run: |
+          mkdir -p aab-out
+          aab="aab-out/qrdrop-$VERSION.aab"
+          cp app/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab "$aab"
+
+          fingerprint() { tr -d ':' | tr '[:upper:]' '[:lower:]'; }
+          tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          want_cert="$("$tools/apksigner" verify --print-certs apk-out/*-universal.apk \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | fingerprint)"
+          got_cert="$(keytool -printcert -jarfile "$aab" | sed -n 's/^[[:space:]]*SHA256: //p' | head -1 | fingerprint)"
+          if [ -z "$got_cert" ] || [ "$got_cert" != "$want_cert" ]; then
+            echo "$aab is signed by '$got_cert' and the APKs by '$want_cert' -- Play would take this as a different upload key." >&2
+            exit 1
+          fi
+          echo "certificate $got_cert"
+
+          curl -sSfL -o "$RUNNER_TEMP/bundletool.jar" \
+            "https://github.com/google/bundletool/releases/download/$BUNDLETOOL_VERSION/bundletool-all-$BUNDLETOOL_VERSION.jar"
+          echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum -c -
+          base="$(sed -n 's/^version = "\(.*\)"$/\1/p' app/src-tauri/Cargo.toml | head -1 \
+            | awk -F. '{ printf "%d", ($1+0) * 1000000 + ($2+0) * 1000 + ($3+0) }')"
+          want=$((base * 10))
+          got="$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle "$aab" --xpath /manifest/@android:versionCode)"
+          if [ "$got" != "$want" ]; then
+            echo "$aab has versionCode $got, expected $want." >&2
+            exit 1
+          fi
+          echo "versionCode $got"
+
       - uses: actions/upload-artifact@v7
         with:
           name: android
           if-no-files-found: error
           path: apk-out/*.apk
+
+      # A workflow artifact and NOT a Release asset, for the reason the MSIX is
+      # one: an .aab installs from nowhere but Play, so on the Releases page it
+      # would be a download that does nothing. The release job's
+      # copy-by-extension is what keeps it off -- do not add .aab to that list.
+      # It is uploaded to Play Console by hand until a play job exists, which
+      # needs a service account the listing does not have yet.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: play-aab
+          if-no-files-found: error
+          path: aab-out/*.aab
 
   release:
     needs: [check, desktop, android]
@@ -308,6 +372,8 @@ jobs:
       - name: Assemble the artifacts
         run: |
           mkdir -p dist-release
+          # Deliberately not .msix or .aab: both are store uploads that install
+          # from no download, and both arrive in staging as workflow artifacts.
           find staging -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.apk' -o -name '*.zip' \) \
             -exec cp {} dist-release/ \;
           # Bare names, not ./*. Scoop's autoupdate reads this file to find the
@@ -981,6 +1047,13 @@ jobs:
       # icon.png is copied in rather than committed at repo/icons/icon.png,
       # because `fdroid update` owns that directory and overwrites the file
       # there with a generated placeholder. fdroid/icon.png is the source.
+      #
+      # The listing -- title, descriptions, icon, phone screenshots -- is
+      # copied in from fastlane/metadata/android/, which is where Google Play
+      # and f-droid.org read it too. One copy for all three, so the self-hosted
+      # repository cannot describe the app differently from the stores. The
+      # copy lands in metadata/, which the staging step below never touches:
+      # only repo/ goes to the public branch.
       - name: Build and sign the index
         working-directory: fdroid
         env:
@@ -989,8 +1062,9 @@ jobs:
           FDROID_KEYSTORE_PASSWORD: ${{ secrets.FDROID_KEYSTORE_PASSWORD }}
           FDROID_KEY_PASSWORD: ${{ secrets.FDROID_KEY_PASSWORD }}
         run: |
-          mkdir -p repo/icons
+          mkdir -p repo/icons metadata/com.stan_ely.qrdrop
           cp icon.png repo/icons/icon.png
+          cp -R ../fastlane/metadata/android/en-US metadata/com.stan_ely.qrdrop/
           fdroid update --verbose --pretty
 
       # Each assertion names its consequence, because none of these fail

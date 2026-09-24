@@ -87,6 +87,9 @@ fdroid/tmp/
 fdroid/unsigned/
 fdroid/config.py
 fdroid/*.p12
+# Copied in from fastlane/metadata/android/ before each `fdroid update`; that
+# is the one copy Play, f-droid.org and this repository all read.
+fdroid/metadata/com.stan_ely.qrdrop/
 
 # The F-Droid REPOSITORY signing key, which is not the app signing key -- see
 # CLAUDE.md. It signs the index rather than the APK, an F-Droid client pins its

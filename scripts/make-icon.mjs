@@ -1,7 +1,8 @@
 /**
  * Renders the app mark: app/src-tauri/icons/source.png (1024x1024, the input
- * `tauri icon` fans out from) and site/favicon.png (512x512, which the site
- * had none of at all).
+ * `tauri icon` fans out from), site/favicon.png (512x512, which the site
+ * had none of at all), and the same 512 again as the Android store listing's
+ * icon in fastlane/metadata/android/.
  *
  * WHY THIS IS A SEPARATE, HAND-RUN SCRIPT, same as scripts/make-og.mjs beside
  * it: it needs a headless browser, and `npm run build` runs in CI, in the
@@ -160,6 +161,16 @@ try {
   const small = await page.screenshot({ type: 'png' })
   await writeFile(favicon, small)
   console.log(`Wrote ${path.relative(ROOT, favicon)} (${FAV}x${FAV}, ${(small.length / 1024).toFixed(1)} kB)`)
+
+  // The same pixels are the store listing's icon, which Google Play takes at
+  // exactly 512x512, full bleed, and masks to its own shape. f-droid.org and
+  // the project's own F-Droid repository read the same file (see
+  // fdroid/config.yml). Written here rather than copied by hand, so that a
+  // palette change reaches the listing as well as the favicon.
+  const listing = path.join(ROOT, 'fastlane', 'metadata', 'android', 'en-US', 'images', 'icon.png')
+  await mkdir(path.dirname(listing), { recursive: true })
+  await writeFile(listing, small)
+  console.log(`Wrote ${path.relative(ROOT, listing)} (${FAV}x${FAV})`)
 
   /*
    * The web manifest's small icon. 512 is already covered by favicon.png

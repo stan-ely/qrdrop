@@ -27,7 +27,7 @@ node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
 ```
 
-Four image generators, all hand-run and none of them in `npm run build` — that
+Five image generators, all hand-run and none of them in `npm run build` — that
 runs in CI and in `prepublishOnly`, where downloading a browser is not
 acceptable. Their output is committed; run the relevant one when the palette,
 the card copy, or a diagram source changes:
@@ -37,6 +37,7 @@ node scripts/make-og.mjs                                 # site/og.png, the soci
 node scripts/make-icon.mjs                               # the app mark + site/favicon.png    (mise run img:icon)
 node scripts/make-diagrams.mjs                           # docs/diagrams/*.png from the .mmd sources (mise run img:diagrams)
 npm run build && node scripts/make-screenshots.mjs       # docs/screenshots/*.png              (mise run img:screenshots, which builds first)
+node scripts/make-store-screenshots.mjs                  # fastlane/.../phoneScreenshots/*.png  (mise run img:store, which builds app/dist first)
 ```
 
 `make-icon.mjs` writes `app/src-tauri/icons/source.png` and stops there; the
@@ -936,6 +937,38 @@ happen to occur inside compiled code. Nothing in qrdrop launches a shell. `appce
 an elevated terminal, so it cannot run from an ordinary shell or from CI here. Publishing from CI with `msstore` needs Partner Center Entra
 credentials that do not exist yet, so the first submission is made by hand from the
 `store-msix` artifact.
+
+**Google Play gets an Android App Bundle signed with the one release key, and Play App
+Signing must be enrolled with that same key — never a key Google generates.** Play takes
+no APK from a new app, so the `android` job builds a third artifact, the universal
+flavour as an `.aab` (versionCode base×10+0, the universal APK's), and uploads it as the
+`play-aab` **workflow artifact**. It is not a Release asset, for the MSIX's reason: it
+installs from nowhere but Play. The release job's copy-by-extension is what keeps it off.
+The job proves the bundle's certificate equals the APKs' (`keytool -printcert -jarfile`)
+and its versionCode (a hash-pinned `bundletool dump manifest`), because `apksigner` and
+`aapt2` read neither from a bundle.
+
+The key is the load-bearing part, and it is decided **once, at the first upload, with no
+way back**. Play re-signs everything it serves with its app signing key; let Google
+generate that key and every Play install carries a certificate that is not
+`ANDROID_CERT_FINGERPRINT`, so app links silently open the browser (see "`.well-known/`"
+below), and a phone can no longer move between a Play install and an F-Droid or Releases
+install without uninstalling, since Android refuses an update signed by a different
+certificate. So the first upload chooses "use a different app signing key" and supplies
+the existing keystore through Google's PEPK export. `wellKnownFiles` accepts a
+comma-separated list of fingerprints if a second certificate ever became unavoidable, and
+that is the fallback, not the plan.
+
+**The store listing lives in `fastlane/metadata/android/en-US/`, and it is the one copy.**
+Play (pasted by hand, or by `supply` one day), f-droid.org (which reads that path from the
+source tree) and this project's own F-Droid repository (the `fdroid` job and `mise run
+app:fdroid` copy it into `fdroid/metadata/com.stan_ely.qrdrop/`, which is gitignored)
+all read it. The icon is written by `make-icon.mjs` beside the favicon, and the phone
+screenshots by `make-store-screenshots.mjs` from the app channel build (`mise run
+app:build-site` first) at 360x720 — Play refuses anything longer than 2:1. The first Play
+upload is by hand from `play-aab`, and a `play` job waits on a service account that does
+not exist yet, the same position as msstore. A new personal Play account must also run a
+closed test (12 testers, 14 days) before production is allowed at all.
 
 **The Android app also ships from this project's own F-Droid repository, and it is a
 _binary_ repository rather than an f-droid.org listing.** That is the entire design, not a

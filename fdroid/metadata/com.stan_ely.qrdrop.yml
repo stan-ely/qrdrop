@@ -2,6 +2,11 @@
 # -- see the header of ../config.yml for why this repository serves our own
 # signed APK rather than one F-Droid built.
 #
+# The localized listing (title, descriptions, icon, screenshots) is not in
+# metadata/com.stan_ely.qrdrop/ on main: it lives in fastlane/metadata/android/
+# and is copied here before each `fdroid update`, because Google Play and
+# f-droid.org read that same directory.
+#
 # CurrentVersion and CurrentVersionCode are NOT written here. `fdroid update`
 # reads them off the APK it finds in repo/, so stating them would be a second
 # copy of a fact the binary already carries, and the one that goes stale.

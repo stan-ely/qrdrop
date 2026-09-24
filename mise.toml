@@ -192,6 +192,11 @@ description = "Render the README's three UI screenshots"
 depends = ["build"]
 run = "node scripts/make-screenshots.mjs"
 
+[tasks."img:store"]
+description = "Render the Android store listing's phone screenshots"
+depends = ["app:build-site"]
+run = "node scripts/make-store-screenshots.mjs"
+
 # `depends = ["build"]` rebuilds site/dist -- the check reads a built tree. A
 # positional arg picks a different tree to walk (mise appends it to the command,
 # the same way `mise run cli -- ...` forwards args); the stable rebuild is then a
@@ -335,7 +340,8 @@ run = "npx tauri ios build"
 description = "Build and sign the local F-Droid repo (Linux/WSL only; wants a throwaway keystore)"
 dir = "fdroid"
 run = """
-mkdir -p repo/icons
+mkdir -p repo/icons metadata/com.stan_ely.qrdrop
 cp icon.png repo/icons/icon.png
+cp -R ../fastlane/metadata/android/en-US metadata/com.stan_ely.qrdrop/
 fdroid update --verbose --pretty
 """
