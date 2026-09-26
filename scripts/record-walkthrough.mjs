@@ -75,7 +75,7 @@ const HOLD = {
 // at the recorder's frame rate without being busy work.
 const RAMP = { ms: 2600, steps: 30 }
 
-// Small and boring, per docs/demo-brief.md: the filename is on screen twice and
+// Small and boring, per docs/demo/brief.md: the filename is on screen twice and
 // a 2 MB file would make the ramp the longest beat in the loop. This is content,
 // not a screen state, so it is defined here rather than in screen-states.mjs
 // (whose PDF is sized for a still of the transfer bar, not for timing).

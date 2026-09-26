@@ -2,10 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`README.md` is unusually complete — protocol, threat model, key derivations, and the
-reasoning behind the transport seam are all there, and are not repeated here. Read it
-before changing anything in `src/core/` or `src/transport/`. This file covers what the
-README does not: the invariants a change can break silently, and where they live.
+The user-facing docs are unusually complete — `docs/protocol.md` (key derivations, the
+transport seam, sources and sinks), `docs/threat-model.md`, `docs/beam.md`, `docs/app.md`
+and `docs/hosting.md` carry the reasoning, and it is not repeated here. Read the first
+two before changing anything in `src/core/` or `src/transport/`. `README.md` is the
+front page only — kept short on purpose, so depth goes in `docs/`, and a new install
+channel is one row in its Install table. This file covers what the docs do not: the
+invariants a change can break silently, and where they live.
 
 ## Commands
 

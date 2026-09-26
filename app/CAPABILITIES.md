@@ -1,4 +1,13 @@
-# Phase 0 capability spike
+# App capabilities and measurements
+
+The app's lab notebook: what each platform's webview could actually do, and
+every measurement behind the choices in the shell, recorded phase by phase as
+the app was onboarded. It is dated rather than current -- a later phase
+supersedes an earlier one where they disagree (Phase 0's "not run" cells for
+Android were answered in Phase 4). For what the app does today, read
+[docs/app.md](../docs/app.md).
+
+## Phase 0: capability spike
 
 What `app/spike/index.html` found when loaded in a real Tauri window on each
 target. This is the gate for Phase 1: it exists to answer "does the webview on

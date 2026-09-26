@@ -147,6 +147,16 @@ test('the build date is available but not in the label', () => {
   }
 })
 
+test('the docs links name the ref this build is of', () => {
+  // The page at / runs the last release; explaining it with main's docs would
+  // describe code it is not running, the same mistake as a stamp that says
+  // v1.2.3 and links a commit.
+  assert.equal(buildStamp({ channel: 'stable', ...META }).docs, 'https://github.com/stan-ely/qrdrop/blob/v1.2.3/docs')
+  assert.equal(buildStamp({ channel: 'edge', ...META }).docs, 'https://github.com/stan-ely/qrdrop/blob/abc1234/docs')
+  assert.equal(buildStamp({ channel: 'app', ...META }).docs, 'https://github.com/stan-ely/qrdrop/blob/abc1234/docs')
+  assert.equal(buildStamp({ channel: 'edge', ...META, commit: 'unknown' }).docs, 'https://github.com/stan-ely/qrdrop/blob/main/docs')
+})
+
 test('og:url names the page being previewed, per channel', () => {
   assert.equal(buildStamp({ channel: 'stable', ...META }).ogUrl, 'https://share.stan-ely.com/')
   assert.equal(buildStamp({ channel: 'edge', ...META }).ogUrl, 'https://share.stan-ely.com/edge/')

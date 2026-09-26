@@ -240,8 +240,7 @@
         <li><strong>Both devices learn each other's IP address.</strong> That is inherent
           to a direct connection.</li>
         <li><strong>Code is self-hosted, not loaded from a CDN.</strong> This page serves
-          a bundle built from source, so the jsDelivr risk that used to be listed here
-          is gone. What remains: the server hosting this page could still serve modified
+          a bundle built from source. The server hosting it could still serve modified
           code, the same way any web app's server could. No in-browser design prevents
           that. For genuinely sensitive material, use a tool you can verify before running.</li>
         <li><strong>The QR code can encode a link, and that link still keeps the key off
@@ -294,16 +293,25 @@
   working with none of this present (it is published standalone, see
   package.json exports["./web"]). Both are filled by site/main.js from the
   markup above rather than authored twice.
+
+  Each ends on one link to the long form in docs/, which stays on GitHub rather
+  than being published here: this page is the tool, a single screen with no
+  room for a reference manual, and GitHub already renders those files,
+  diagrams and all. The href's placeholder becomes docs/ at the ref this build
+  is of (buildStamp in scripts/build-site.mjs), so the page at / is explained
+  by the docs of the release it runs. target="_blank" for the reason the footer's links give.
 -->
 <dialog id="how-dialog" class="sheet" aria-labelledby="how-title">
   <h2 id="how-title" tabindex="-1">How it works</h2>
   <div class="sheet-body"></div>
+  <p class="sheet-more"><a href="__DOCS__/protocol.md" target="_blank" rel="noopener noreferrer">The protocol in detail</a></p>
   <form method="dialog"><button class="chip" type="submit">Close</button></form>
 </dialog>
 
 <dialog id="protect-dialog" class="sheet" aria-labelledby="protect-title">
   <h2 id="protect-title" tabindex="-1">What this does and does not protect</h2>
   <div class="sheet-body"></div>
+  <p class="sheet-more"><a href="__DOCS__/threat-model.md" target="_blank" rel="noopener noreferrer">The full threat model</a></p>
   <form method="dialog"><button class="chip" type="submit">Close</button></form>
 </dialog>
 

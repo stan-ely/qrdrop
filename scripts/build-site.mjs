@@ -128,8 +128,15 @@ const EDGE_PATH = 'edge/'
  * is also the thing that would wrap the footer row onto a second line if it
  * were visible, on a page that has no spare vertical pixels anywhere.
  *
+ * `docs` is where the two sheets' "read more" links point: docs/ on GitHub, at
+ * the ref this build is of, for the same reason the pill links its own ref.
+ * The page at / runs the last release, and explaining it with main's docs
+ * would describe code it is not running. The docs are linked rather than
+ * published here -- this page is the tool, a single screen that never scrolls,
+ * and GitHub already renders them, diagrams and all.
+ *
  * @param {{ channel: string, version: string, commit: string, date: string }} meta
- * @returns {{ channel: string, label: string, href: string, title: string, ogUrl: string }}
+ * @returns {{ channel: string, label: string, href: string, title: string, ogUrl: string, docs: string }}
  */
 export function buildStamp({ channel, version, commit, date }) {
   if (channel !== 'stable' && channel !== 'edge' && channel !== 'app') {
@@ -143,6 +150,7 @@ export function buildStamp({ channel, version, commit, date }) {
       href: `${REPO}/commit/${commit}`,
       title: `Built from main at ${commit}, ${date}. This is the development build; it may be broken.`,
       ogUrl: `${ORIGIN}/${EDGE_PATH}`,
+      docs: docsAt(commit),
     }
   }
 
@@ -159,6 +167,7 @@ export function buildStamp({ channel, version, commit, date }) {
       href: `${REPO}/commit/${commit}`,
       title: `Built from main at ${commit}, ${date}, for the desktop/mobile app.`,
       ogUrl: '',
+      docs: docsAt(commit),
     }
   }
 
@@ -168,7 +177,19 @@ export function buildStamp({ channel, version, commit, date }) {
     href: `${REPO}/releases/tag/v${version}`,
     title: `Release v${version}, ${date}.`,
     ogUrl: `${ORIGIN}/`,
+    docs: docsAt(`v${version}`),
   }
+}
+
+/**
+ * docs/ on GitHub at one ref. A build with no git to ask reports its commit as
+ * 'unknown', which is not a ref, so that falls back to main: a link to newer
+ * docs is a smaller lie than a link to a 404.
+ *
+ * @param {string} ref
+ */
+function docsAt(ref) {
+  return `${REPO}/blob/${ref === 'unknown' ? 'main' : ref}/docs`
 }
 
 /**
@@ -793,12 +814,13 @@ async function main() {
     .replaceAll('__BUILD_LABEL__', stamp.label)
     .replaceAll('__BUILD_HREF__', stamp.href)
     .replaceAll('__BUILD_TITLE__', stamp.title)
+    .replaceAll('__DOCS__', stamp.docs)
     .replaceAll('__THEME_COLOR__', THEME_COLOR)
 
   const leftover = [
     '__CSP__', '__SCRIPT__', '__STYLES__', '__OG_URL__', '__ORIGIN__',
     '__CHANNEL__', '__BUILD_LABEL__', '__BUILD_HREF__', '__BUILD_TITLE__',
-    '__THEME_COLOR__',
+    '__DOCS__', '__THEME_COLOR__',
   ].filter(t => html.includes(t))
   if (leftover.length) {
     throw new Error(`site/index.html placeholder(s) not replaced: ${leftover.join(', ')} -- check the token still exists in the template`)

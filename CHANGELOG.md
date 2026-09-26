@@ -247,7 +247,7 @@ interrupt a live transfer — the mechanism behind opening a scanned link in an 
 Both still take the code only from the fragment, never the query string.
 
 **A desktop and mobile app now exists**, built from this same code and released on its own
-`app-v*` tags with its own changelog. See [the README](README.md#the-app) for what each
+`app-v*` tags with its own changelog. See [docs/app.md](docs/app.md) for what each
 platform can and cannot do.
 
 **If you self-host the browser bundle, redeploy.** The camera fix and the mobile send

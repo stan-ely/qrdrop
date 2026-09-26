@@ -404,6 +404,9 @@ footer { min-inline-size: 0; }
 .sheet-body li { margin-bottom: var(--sp-2); }
 .sheet-body strong { color: var(--text); font-weight: 600; }
 .sheet-body .how { display: flex; margin-block-start: 0; }
+.sheet-more { margin: 0; font-size: var(--fs--1); }
+.sheet-more a { color: var(--accent); }
+.sheet-more a:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-sm); }
 .sheet form { margin: 0; }
 footer summary {
   cursor: pointer;

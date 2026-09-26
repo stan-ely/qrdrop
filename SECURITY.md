@@ -19,8 +19,8 @@ applies to. A proof of concept is welcome and not required.
 
 ## Scope
 
-In scope is anything that breaks a claim the [README's threat
-model](README.md#threat-model) makes. Concretely:
+In scope is anything that breaks a claim the [threat
+model](docs/threat-model.md) makes. Concretely:
 
 - Recovering file contents, or the session keys, without the QR code.
 - Standing between two peers without both screens showing different emoji —
@@ -49,16 +49,15 @@ credential — there is no second factor and no account. Showing the code to a
 room means anyone in the room can pair. This is the design, and it is what makes
 "no signup" possible. How long a code stays useful — pairing latches on first
 arrival, there is no TTL, and the window is the sender's unpaired tab lifetime —
-is set out under [Threat
-model](README.md#threat-model) in the README, which is the one home for that
-reasoning.
+is set out in the [threat model](docs/threat-model.md), which is the one home
+for that reasoning.
 
 **Beam is unencrypted, and cannot be encrypted.** Animated-QR transfers have no
 handshake, therefore no key agreement, no forward secrecy, and no SAS: there is
 no peer to authenticate, only photons, and a key shown on the same screen as the
 data protects nothing. Anyone who can see the sending screen — including a
-photograph of it, or a camera in the room — has the file. The UI says so on both
-beam screens and the README carves it out of the threat model explicitly. Beam
+photograph of it, or a camera in the room — has the file. The UI says so in full before either side commits, tags both beam
+screens “Not encrypted”, and the threat model carves it out explicitly. Beam
 exists for air-gapped machines, where the alternative is a USB stick.
 
 **Both peers learn each other's IP address.** Inherent to a direct connection.

@@ -49,7 +49,7 @@ const OUT = path.join(ROOT, 'docs', 'demo', 'loop', 'laptop.webm')
 const PDF_PATH = path.join(ROOT, 'docs', 'demo', 'report.pdf')
 
 // The deployed build: the phone needs a real HTTPS origin or WebCrypto and the
-// camera fail closed (see docs/demo-brief.md, "Filming origin"). Overridable for
+// camera fail closed (see docs/demo/brief.md, "Filming origin"). Overridable for
 // a dry run against a tunnelled dev build, but the default is the real thing.
 const SITE = process.env.QRDROP_SITE || 'https://share.stan-ely.com'
 

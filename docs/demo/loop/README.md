@@ -59,7 +59,7 @@ The composition is small:
   through (`seam-craft`'s white-flash guard).
 - Optionally a small, static `qrdrop` wordmark in one corner — a persistent
   brand bug, **not** a caption. Nothing on this clip explains anything; if it
-  needs words it is the wrong ten seconds (see `../demo-brief.md`).
+  needs words it is the wrong ten seconds (see `../brief.md`).
 
 Build, gate, preview, then render only after the preview is approved:
 

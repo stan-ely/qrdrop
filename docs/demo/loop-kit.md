@@ -1,7 +1,7 @@
 # Loop production kit
 
 The shot-side checklist for the silent 10–15 s loop described in
-`../demo-brief.md`. This covers what happens with the recorders running; the
+`brief.md`. This covers what happens with the recorders running; the
 post-production procedure is `loop/README.md`.
 
 The loop is **one real transfer**, captured live from both ends at once. The

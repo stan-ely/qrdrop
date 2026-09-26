@@ -10,9 +10,10 @@ npm run typecheck   # two tsc runs; both must pass, see below
 npm start           # build, then serve the site on :4173
 ```
 
-The [README](README.md) is the long-form explanation of the protocol, the
-threat model, and why the transport seam is where it is. Read it before
-changing anything under `src/core/` or `src/transport/`. `CLAUDE.md` is the
+[`docs/protocol.md`](docs/protocol.md) and [`docs/threat-model.md`](docs/threat-model.md)
+are the long-form explanation of the protocol, what it protects, and why the
+transport seam is where it is. Read them before changing anything under
+`src/core/` or `src/transport/`. `CLAUDE.md` is the
 same territory written as a list of things that have already broken once; it is
 addressed to an agent, but the invariants in it are real and apply to everyone.
 
@@ -69,31 +70,95 @@ npm run test:e2e:interop  # two Node processes driving the CLI
 They depend on public Nostr relays, so they fail for reasons that have nothing
 to do with your change — a relay being unreachable is weather. A red tick for
 weather teaches everyone to ignore red ticks, which is why they are kept out.
-`npm run test:e2e:interop` in particular fails on most runs and did so before
-the UI work; see the note at the foot of `CLAUDE.md` before chasing it.
+A failure that is not a relay is worth chasing: the interop suite used to fail
+on most runs for a real reason, and the note at the foot of `CLAUDE.md` records
+what it was.
+
+<details>
+<summary><b>Why the interop suite spawns two processes</b></summary>
+
+Trystero computes `selfId` once per module instance, so two rooms sharing a
+process also share an identity: each sees the other's announcement carrying its
+own id, discards it as itself, and they wait for each other until the timeout.
+That is a property of Trystero rather than a bug here, but it is invisible
+until you try it.
+
+</details>
+
+<details>
+<summary><b>Type checking without a build step</b></summary>
+
+`tsc --noEmit` with `checkJs` over the JSDoc. The published sources are plain ES
+modules, unbundled and untranspiled; only the site's browser bundle is built.
+
+There are three configs because there are three runtimes, and `src/core/` and
+`src/transport/` deliberately appear in two of them. Being checked once without
+Node globals and once with them is what makes "isomorphic" a property the build
+enforces rather than a claim in a comment.
+
+</details>
 
 ## Changing the web UI
 
 `patch()` owns every child of the shadow root, so anything the view does not
 describe is removed as stale, and the test suite reads text and visibility
-rather than paint. Take screenshots when you change the view —
-`node scripts/make-screenshots.mjs` drives every screen and is the cheapest way
-to see all of them at once. A whole component reverting to unstyled browser
-defaults is invisible to a green test run, and has happened.
+rather than paint. Look at every screen when you change the view:
+`node scripts/check-layout.mjs --shots` walks all of them, in Chromium and
+Firefox, at four viewports, with a mouse and with touch, and fails on a page
+that scrolls or a button off screen. Its assertions only see layouts that are
+illegal, never ones that are legal and wrong, so read the pictures too. A whole
+component reverting to unstyled browser defaults is invisible to a green test
+run, and has happened. (`make-screenshots.mjs` renders the README's three
+pictures and nothing else.)
 
 All user-facing copy lives in `src/web/view.js`. If you are adding a string,
 that is where it goes.
 
 ## Regenerating the images
 
-Three hand-run scripts, none of them wired into `npm run build` — that runs in
+Five hand-run scripts, none of them wired into `npm run build` — that runs in
 CI and in `prepublishOnly`, neither of which should download a browser:
 
 ```bash
-node scripts/make-og.mjs           # site/og.png, the social card
-node scripts/make-diagrams.mjs     # docs/diagrams/*.png, from the .mmd sources
-npm run build && node scripts/make-screenshots.mjs
+node scripts/make-og.mjs                             # site/og.png, the social card
+node scripts/make-icon.mjs                           # the app mark and site/favicon.png
+node scripts/make-diagrams.mjs                       # docs/diagrams/*.png, from the .mmd sources
+npm run build && node scripts/make-screenshots.mjs   # docs/screenshots/*.png, for the README
+node scripts/make-store-screenshots.mjs              # the store listing's phone screenshots
 ```
 
 Their output is committed. Run the relevant one when the palette, the copy on
 the card, or a diagram source changes.
+
+## Where things are
+
+```
+src/index.js                 the isomorphic entry -- no DOM, no fs
+src/core/secret.js           QR secret, HKDF derivations
+src/core/session.js          ephemeral ECDH, directional keys, SAS
+src/core/frame.js            per-chunk AEAD, nonce construction
+src/core/control.js          ordered, sealed control messages
+src/core/sender.js           chunking, backpressure, accept handshake
+src/core/receiver.js         demux, verification, sink management
+src/core/source.js           the FileSource contract
+src/core/beam.js             beam's fountain code and framing
+src/transport/room.js        Trystero pairing, relay list, ICE
+src/transport/channel.js     the transport seam, on its own
+src/web/view.js              every screen, and all user-facing copy
+src/web/element.js           the qr-drop element: sessions, teardown, native events
+src/web/vdom.js              h() and patch(), hand-rolled
+src/web/styles.js            the component's CSS; tokens.js holds the design tokens
+src/web/beam.js              beam's live halves: the canvas player, the camera collector
+src/web/sink.js              File System Access, with a Blob fallback
+src/node/                    fs sink, fs source, terminal QR, WebRTC polyfill
+src/cli.js                   the qrdrop command
+
+site/index.html              the page; CSP placeholder filled in at build
+scripts/build-site.mjs       esbuild, and the generated CSP
+scripts/check-layout.mjs     every screen, both engines, every viewport
+types/qrdrop.d.ts            the Channel contract, and shared types
+
+app/src/                     the Tauri shell's JS: native sink, deep links
+app/src-tauri/               the Rust crate, and gen/ (committed; see CLAUDE.md)
+docs/                        protocol, threat model, beam, app, hosting
+```
