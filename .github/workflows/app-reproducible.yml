@@ -34,6 +34,7 @@ on:
       - 'app/package.json'
       - 'app/package-lock.json'
       - 'scripts/android-env.mjs'
+      - 'test/android-env.test.mjs'
       - 'scripts/build-site.mjs'
       - 'scripts/generate-tauri-config.mjs'
       - 'mise.toml'
