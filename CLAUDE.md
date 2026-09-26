@@ -970,6 +970,27 @@ upload is by hand from `play-aab`, and a `play` job waits on a service account t
 not exist yet, the same position as msstore. A new personal Play account must also run a
 closed test (12 testers, 14 days) before production is allowed at all.
 
+**Every Android build that ships goes through `scripts/android-env.mjs`, which is what
+f-droid.org needs.** f-droid.org publishes our signed APK, and not one signed with its own
+key, only if its build from source matches ours byte for byte. Rust writes absolute
+source paths into the `.so` (every registry crate's, measured), so the script remaps the
+checkout and `CARGO_HOME` with `--remap-path-prefix` and then runs the build command.
+`.github/workflows/app-reproducible.yml` builds the arm64 APK twice, in two directories
+with two `CARGO_HOME`s, and fails on any byte of difference or any build path left in
+the APK. Three things in the script are there because the obvious alternatives were
+measured and failed:
+
+- **It carries a copy of Tauri's own rustflags** (`-landroid -llog -lOpenSLES`). The
+  Tauri CLI sets `CARGO_TARGET_<triple>_RUSTFLAGS` outright, so a value of ours there is
+  thrown away. Cargo also takes only the first rustflags source it finds, so ours replace
+  Tauri's rather than joining them. `test/android-env.test.mjs` byte-searches the
+  installed CLI binary for the copied list. That check runs only where `app/node_modules`
+  exists, which includes the reproducibility workflow.
+- **It is a wrapper, not a `BuildTask.kt` edit.** `tauri android build` compiles the Rust
+  before it starts Gradle, so a flag set in that task never reaches the build that ships.
+- **It is not `trim-paths` either.** That profile option does exactly this job, but it
+  is still unstable in cargo 1.98.
+
 **The Android app also ships from this project's own F-Droid repository, and it is a
 _binary_ repository rather than an f-droid.org listing.** That is the entire design, not a
 shortcut taken to avoid writing build recipes: an app built by F-Droid is signed with

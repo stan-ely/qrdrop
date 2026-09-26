@@ -1,0 +1,146 @@
+# Builds the arm64 release APK twice, in two directories with two CARGO_HOMEs,
+# and fails unless the two are byte-identical. This is the gate for f-droid.org.
+#
+# f-droid.org can publish an app two ways. The ordinary one builds it from
+# source and signs it with F-Droid's key, which this project cannot accept:
+# assetlinks.json names our certificate, and Android says nothing when an app
+# link's signer does not match (CLAUDE.md, "Google Play" and the F-Droid
+# paragraphs after it). The other is a reproducible build. F-Droid builds from
+# source, copies the signature off our Release APK onto its own build, and
+# publishes ours if that verifies -- which it does only if the two are the same
+# bytes. So "reproducible" is a property this workflow proves, not one a
+# comment claims.
+#
+# The two builds differ in what F-Droid's differs in: the checkout path and
+# CARGO_HOME. Both are remapped by scripts/android-env.mjs, which is what this
+# tests. What they share with each other but not with F-Droid -- the home
+# directory, the NDK's install path, the Gradle cache -- is caught by the leak
+# check instead: no build path may appear anywhere in the APK.
+#
+# Unsigned on purpose. No secrets reach this workflow, and signing adds a block
+# that apksigcopier strips and re-adds by design, so comparing unsigned builds
+# answers the same question.
+#
+# Not in app.yml, because it is two cold release builds, about twice that
+# job's time, and it only needs to run when something that reaches the APK
+# changes. src/ is not in the paths for the reason app.yml gives.
+name: app-reproducible
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/src-tauri/**'
+      - 'app/package.json'
+      - 'app/package-lock.json'
+      - 'scripts/android-env.mjs'
+      - 'scripts/build-site.mjs'
+      - 'scripts/generate-tauri-config.mjs'
+      - 'mise.toml'
+      - '.github/actions/app-setup/**'
+      - '.github/workflows/app-reproducible.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-reproducible-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/app-setup
+        with:
+          tools: node rust java android-sdk
+
+      - run: mise run app:android:sdk
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - run: rustup target add aarch64-linux-android
+
+      # The copy of Tauri's own rustflags in android-env.mjs against the Tauri
+      # CLI this job is about to run. ci.yml cannot check it: it has no
+      # app/node_modules, so there the test skips.
+      - run: node --test test/android-env.test.mjs
+
+      - name: First build, in the workspace
+        working-directory: app
+        run: node ../scripts/android-env.mjs npx tauri android build --apk --split-per-abi --target aarch64
+
+      - name: Keep the first APK
+        run: |
+          mkdir -p "$RUNNER_TEMP/repro"
+          cp app/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk "$RUNNER_TEMP/repro/first.apk"
+
+      # A clone, so the second tree has the same commit (Gradle writes it into
+      # the APK) and none of the first build's outputs. A deeper path of a
+      # different length, and a CARGO_HOME no cache has touched, so every
+      # crate is downloaded and compiled again from a new location.
+      - name: Second build, somewhere else
+        env:
+          CARGO_HOME: ${{ runner.temp }}/elsewhere/cargo
+        run: |
+          elsewhere="$RUNNER_TEMP/elsewhere/deeper/build/qrdrop"
+          git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$elsewhere"
+          cd "$elsewhere"
+          npm ci
+          npm ci --prefix app
+          node scripts/build-site.mjs --channel app --out app/dist
+          node scripts/generate-tauri-config.mjs
+          (cd app && node ../scripts/android-env.mjs npx tauri android build --apk --split-per-abi --target aarch64)
+          # Proof that the second build really used the other CARGO_HOME. If
+          # something reset it on the way to cargo, the two builds would share
+          # one and this job would pass without testing the second remap.
+          test -d "$CARGO_HOME/registry/src" || { echo "cargo did not use CARGO_HOME=$CARGO_HOME" >&2; exit 1; }
+          cp app/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk "$RUNNER_TEMP/repro/second.apk"
+
+      # Before the comparison, because two builds can agree on a path F-Droid
+      # would not share. Every path either build ran from starts with $HOME or
+      # is the runner's temp dir, and none of them may be anywhere in the APK.
+      - name: No build path in the APK
+        run: |
+          unpacked="$RUNNER_TEMP/repro/unpacked"
+          unzip -q -o "$RUNNER_TEMP/repro/first.apk" -d "$unpacked"
+          leaks="$(grep -r -a -l -F -e "$HOME" -e "$RUNNER_TEMP" "$unpacked" || true)"
+          if [ -n "$leaks" ]; then
+            echo "These carry a path from this machine, which F-Droid's build could not reproduce:" >&2
+            while IFS= read -r f; do
+              echo "== $f"
+              strings "$f" | grep -F -e "$HOME" -e "$RUNNER_TEMP" | sort -u | head -5
+            done <<< "$leaks"
+            exit 1
+          fi
+
+      - name: The two builds are the same bytes
+        id: compare
+        run: |
+          cd "$RUNNER_TEMP/repro"
+          sha256sum first.apk second.apk
+          cmp first.apk second.apk
+
+      - name: Explain the difference
+        if: failure() && steps.compare.conclusion == 'failure'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends diffoscope-minimal
+          cd "$RUNNER_TEMP/repro"
+          diffoscope --html-dir diffoscope --text diffoscope.txt first.apk second.apk || true
+          head -200 diffoscope.txt
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: reproducibility
+          path: |
+            ${{ runner.temp }}/repro/*.apk
+            ${{ runner.temp }}/repro/diffoscope
+            ${{ runner.temp }}/repro/diffoscope.txt

@@ -290,7 +290,9 @@ run = "npx tauri android dev"
 description = "Build an Android APK (mise run app:android:build -- --debug)"
 depends = ["app:build-site", "app:config"]
 dir = "app"
-run = "npx tauri android build --apk"
+# Through android-env.mjs, as app-release.yml's builds are, so that a local
+# release APK has the same remapped paths as the shipped one.
+run = "node ../scripts/android-env.mjs npx tauri android build --apk"
 
 # macOS only -- these need Xcode and CocoaPods, so on any other host they
 # exist to document the command, not to be run. CI (.github/workflows/app.yml)

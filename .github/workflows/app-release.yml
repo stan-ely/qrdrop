@@ -231,12 +231,17 @@ jobs:
       # App Signing is enrolled with that same key as the app signing key
       # (CLAUDE.md, "Google Play"), so an install from Play carries the
       # certificate assetlinks.json names.
+      #
+      # All three through android-env.mjs, which remaps the build paths out of
+      # the native library. f-droid.org publishes these APKs only if its own
+      # build from source matches them byte for byte, and
+      # app-reproducible.yml is where that is proved.
       - name: Build the universal APK, one per ABI, and the Play bundle
         working-directory: app
         run: |
-          npx tauri android build --apk --target aarch64 armv7 x86_64
-          npx tauri android build --apk --split-per-abi --target aarch64 armv7 x86_64
-          npx tauri android build --aab --target aarch64 armv7 x86_64
+          node ../scripts/android-env.mjs npx tauri android build --apk --target aarch64 armv7 x86_64
+          node ../scripts/android-env.mjs npx tauri android build --apk --split-per-abi --target aarch64 armv7 x86_64
+          node ../scripts/android-env.mjs npx tauri android build --aab --target aarch64 armv7 x86_64
 
       # Named for the Release page, where app-arm64-release.apk says neither
       # what it is nor which version, and for the F-Droid repository, which
