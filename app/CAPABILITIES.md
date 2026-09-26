@@ -1270,6 +1270,11 @@ above. None of it blocks the config gate.
    a qrdrop problem, establish what a bare `RTCDataChannel` does between these
    two devices with no framing, sealing or sink in the path -- Phase 2's
    9.5 MB/s was loopback on one machine and is not that number.
+   **Partly answered (2026-09-13 and 2026-09-26)**, for a bare channel on one
+   machine with a controlled delay; see "The bare transport, measured" below.
+   What a data channel can do is set by SCTP congestion control and the round
+   trip, not by anything qrdrop or Trystero chooses. The two-device number is
+   still unmeasured.
 2. ~~**The `content://` sink**, so Android can receive at all.~~ **Closed
    2026-09-12.** It took the content-URI open *and* a base64 body for
    `sink_write`; see "Resolved (2026-09-12)" above for both and the numbers.
@@ -1424,3 +1429,88 @@ above. None of it blocks the config gate.
    (`0D:6F:10:46...D3:53:1A:44`) is the one `ANDROID_CERT_FINGERPRINT`
    publishes. That equality is the whole reason the repository serves our own
    signed APK instead of being an f-droid.org listing; see `fdroid/config.yml`.
+
+## The bare transport, measured
+
+Two runs, on one machine (i5-10210U, 4 cores / 8 threads), with no framing,
+sealing or sink in the path. Throughput is receiver-side MB/s (1e6 bytes).
+They answer what the stack can do. Issue #6 asks the other half: whether a
+different stack would do better between two real devices.
+
+### Loopback baseline, three stacks (2026-09-13)
+
+| Stack | MB/s | Notes |
+| --- | --- | --- |
+| iroh 1.2 (Rust, `presets::Minimal`, relay off, ip-only) | 136-171 at 256 MiB; 178 at 1 GiB | ~2.7 cores; 16 KiB and 1 MiB writes barely differ |
+| node-datachannel 0.33.0 (the CLI's stack) | ~21 at 256 MiB and 1 GiB | ~2.5 cores; 16 and 64 KiB messages identical |
+| Chromium 151 in-page (the WebView2 and Android WebView stack) | ~9 at 16 KiB; 8.5-14 at 64 KiB | |
+
+The Chromium figure matches Phase 2's 9.5 MB/s for the *full* qrdrop stack,
+so that ceiling was Chromium's data channel and not qrdrop's overhead.
+Loopback has no round trip, no loss and no congestion control to speak of,
+so it measures how much CPU each stack spends per byte and nothing else. The
+`@number0/iroh` Node binding was ruled out for any spike: its stream APIs take
+and return `Array<number>`, so its numbers would measure that conversion
+rather than QUIC. An app spike has to be a Rust Tauri command.
+
+### Chromium's data channel against a real round trip (2026-09-26)
+
+The question was whether the Chromium data channel could be made faster from
+JS, and the obvious suspect was Trystero's action wire. It cuts every message
+to `16 * 1024 - 36` bytes, and it holds the channel's send queue under 64 KB
+(`bufferedAmountLowThreshold = 65535`, awaited before every chunk).
+Bypassing both would mean a second, pre-negotiated `RTCDataChannel` on the
+paired connection for chunk frames. `sender.js`'s `drain()` would then come
+alive, and a capability flag would be needed because the frame size is a
+wire break.
+
+So it was measured first. Chromium 151.0.7922.34 talked to itself over one
+bare pre-negotiated channel, across message size × queue depth × round-trip
+time. Figures are the steady per-second rate once running, not the run
+average: several runs spent their first few seconds near zero before
+ramping, and averaging that in makes the table report start-up luck.
+
+| RTT | 16 KiB messages | 64 KiB messages | queue depth (64 KB / 1 MB / 4 MB) |
+| --- | --- | --- | --- |
+| ~0 (loopback) | 8-10 | 15-25 | a small gain from a deeper queue |
+| 2 ms | 9-10 | ~15 | no difference |
+| 5-10 ms (LAN-like) | 14-17 | 14-17 | no difference |
+| 20 ms | 8-13, sawtooth | 8-13, sawtooth | no difference |
+| 50 ms | 1-2.4 | 1-2.4 | no difference |
+| 100 ms | 0.6-1.0 | 0.6-1.0 | no difference |
+
+256 KiB messages were never better than 64 KiB, and with a 4 MB queue they
+were worse.
+
+**Message size matters only on the same machine, and queue depth hardly
+matters anywhere.** From 5 ms upward, every combination lands in the same
+band. The reason is visible in the per-second curve at 50 and 100 ms. The
+rate climbs by one ~1,200-byte packet per round trip -- about 0.4 MB/s each
+second at 50 ms, 0.1 at 100 ms -- and then halves. That is Reno-style
+additive increase with a loss response, inside Chromium's SCTP (dcSCTP).
+JS has no control over it, and a deeper send queue only gives the sender
+more data waiting behind a congestion window that is not open.
+
+**Decision: the bulk channel was not built.** It would be a wire break for a
+gain that appears only with both ends on one machine, which is not a
+transfer anyone makes. The browser path stays Trystero's data channel. The
+one lever left is a different stack in the native builds, which is issue #6,
+and that was always the real question.
+
+**How it was measured, so it can be repeated without sudo.** WSL Ubuntu
+24.04. `unshare -rn` gives a user and network namespace that owns its own
+`lo`, and inside it `tc qdisc replace dev lo root netem delay <rtt/2>ms limit
+100000` needs no privilege. The raised `limit` matters: netem's default
+1,000-packet queue drops at these rates, and a drop is exactly what the
+measurement is trying to observe. Chromium needs a dummy interface **and a
+default route** in the namespace (`ip link add d0 type dummy`, an address,
+`ip route add default dev d0`). Without the route it treats itself as
+offline and gathers no ICE candidates at all. The WSL system Node is 18,
+which Playwright refuses, so Node 24 came from `mise exec node@24`.
+Chromium's shared libraries were already present.
+
+A Node UDP delay proxy on Windows was tried first, and it cannot do this
+job: its timers fired 24-71 ms late even on a worker thread with a
+`setImmediate` spin loop, and SCTP reads that as loss. With a 4 MB queue it
+drove the channel to zero and held it there. A delay line in user space on
+Windows measures the delay line.
