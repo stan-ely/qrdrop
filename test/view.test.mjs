@@ -30,7 +30,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { render } from '../src/web/view.js'
+import { render, dialogContent } from '../src/web/view.js'
 
 /**
  * Every intent that begins a pairing. A control on the verify screen wired to
@@ -42,7 +42,7 @@ import { render } from '../src/web/view.js'
  * drifts fails loudly here, where a wrong derivation would pass quietly.
  */
 const PAIRING_INTENTS = new Set([
-  'send:pick', 'send:photo', 'receive:scan', 'manual:submit', 'beam:pick', 'beam:scan',
+  'send:pick', 'send:photo', 'receive:scan', 'manual:submit', 'beam:pick', 'beam:start', 'beam:scan',
 ])
 
 const SAS_WORDS = ['anchor', 'butter', 'cactus', 'dolphin']
@@ -56,6 +56,7 @@ function state(overrides) {
     offer: null, file: null, progress: null, outcome: null, message: null, digest: '',
     dragging: false, copied: null, pairing: false, busy: false, manualError: null,
     mode: 'p2p', beamNode: null, beam: null, dialogNode: null, modal: null, toast: null,
+    beamEnlarged: false,
     ...overrides,
   })
 }
@@ -152,4 +153,65 @@ test('the mismatch outcome says what happened and what starting over means', () 
   assert.match(text, /fresh code/, 'and that starting over means a new one')
   assert.ok(!text.includes('Send another file'),
     'the restart label must not invite re-offering the code an attacker just rolled against')
+})
+
+/**
+ * Beam's warning is said in full before anything moves, and only a tag stays
+ * on the live screens.
+ *
+ * The sentence used to be a callout on both beam screens for the whole
+ * transfer, where it arrived after the decision it informs and was the
+ * tallest thing competing with a QR that has to be large to be read. It moved
+ * to the two sheets that stand in front of each end's decision -- the
+ * sender's confirm before a frame is shown, the receiver's offer before
+ * Accept writes anything -- and these tests are what stop it quietly
+ * disappearing from one of them, or creeping back onto a screen.
+ */
+
+/** Every string in a tree, joined. @param {any} tree */
+function textOf(tree) {
+  return [...walk(tree)].flatMap(n => (n.children ?? []).filter((/** @type {any} */ c) => typeof c === 'string')).join(' ')
+}
+
+const FULL_WARNING = 'This is not encrypted, and cannot be'
+const beamFile = { name: 'report.pdf', size: 2_097_152 }
+
+test('the sender confirms the beam warning before anything is shown', () => {
+  /** @type {Set<string>} */
+  const intents = new Set()
+  const sheet = dialogContent(state({ modal: 'beam-confirm', file: beamFile }),
+    (/** @type {string} */ intent) => void intents.add(intent))
+
+  assert.match(textOf(sheet), new RegExp(FULL_WARNING))
+  for (const node of walk(sheet)) node.props?.onclick?.()
+  assert.ok(intents.has('beam:start'), 'the confirm sheet is the only way to start a beam')
+})
+
+test('the receiver sees the beam warning on the sheet that holds Accept', () => {
+  const sheet = dialogContent(state({
+    screen: 'beam-receive', mode: 'beam', role: 'receiver', modal: 'beam-offer', offer: beamFile,
+  }), () => {})
+  assert.match(textOf(sheet), new RegExp(FULL_WARNING))
+})
+
+test('the live beam screens carry the tag, not the paragraph', () => {
+  const beam = { fps: 10, loops: 2, solved: 41, blocks: 190, eta: 31 }
+  for (const [name, role] of [['beam-send', 'sender'], ['beam-receive', 'receiver']]) {
+    const text = textOf(screenTree(state({ screen: name, mode: 'beam', role, file: beamFile, beam }), name))
+    assert.ok(!text.includes(FULL_WARNING), `${name} should not carry BEAM_WARNING inline`)
+    assert.ok(text.includes('Not encrypted'), `${name} must still say it is not encrypted`)
+  }
+})
+
+test('the beam code enlarges on press, and the backdrop only ever shrinks it', () => {
+  /** @type {[string, any][]} */
+  const calls = []
+  const dispatch = (/** @type {string} */ intent, /** @type {any} */ payload) => void calls.push([intent, payload])
+  const s = state({ screen: 'beam-send', mode: 'beam', role: 'sender', file: beamFile, beamEnlarged: true })
+  const tree = [...walk(render(s, dispatch))].find(n => n.props?.id === 'screen-beam-send')
+  const nodes = [...walk(tree)]
+
+  nodes.find(n => n.props?.id === 'beam-stage').props.onclick()
+  nodes.find(n => n.props?.class === 'beam-hint').props.onclick()
+  assert.deepEqual(calls, [['beam:enlarge', undefined], ['beam:enlarge', false]])
 })

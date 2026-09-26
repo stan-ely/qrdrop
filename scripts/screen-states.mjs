@@ -73,6 +73,14 @@ export const FIXTURES = [
     state: { screen: 'choose', modal: 'info' },
   },
   {
+    // The sender's beam confirm: a file has been picked and nothing is shown
+    // yet. This sheet is the one place the sender reads BEAM_WARNING in full,
+    // so Start beaming has to be reachable under it on every viewport.
+    name: 'beam-confirm-sheet',
+    screen: 'choose',
+    state: { screen: 'choose', modal: 'beam-confirm', file: NOTES },
+  },
+  {
     name: 'send',
     screen: 'send',
     state: {
@@ -230,10 +238,9 @@ export const FIXTURES = [
     },
   },
   {
-    // beam-send with its 'About beaming' sheet open -- the "several passes are
-    // normal" and "nothing comes back here" reassurance that moved off the
-    // screen so the danger callout and the keep-it-on-screen line stay the
-    // loudest things on it.
+    // beam-send with its 'About beaming' sheet open -- BEAM_WARNING for
+    // reference, and the "several passes are normal" reassurance that is not
+    // what the screen's own lines are for.
     name: 'beam-info-sheet',
     screen: 'beam-send',
     state: {
@@ -241,6 +248,20 @@ export const FIXTURES = [
       file: NOTES,
       beam: { fps: 10, loops: 2, solved: 0, blocks: 0, eta: 31 },
       modal: 'info',
+    },
+  },
+  {
+    // The code enlarged over everything: the stage square and centred on the
+    // largest square the viewport holds, the backdrop over the rest. The
+    // square assertion is what holds this -- a stage stretched to the
+    // viewport would be an oblong with the code pinned into one side of it.
+    name: 'beam-enlarged',
+    screen: 'beam-send',
+    state: {
+      screen: 'beam-send', mode: 'beam', role: 'sender',
+      file: NOTES,
+      beam: { fps: 10, loops: 2, solved: 0, blocks: 0, eta: 31 },
+      beamEnlarged: true,
     },
   },
   {
@@ -261,8 +282,8 @@ export const FIXTURES = [
   },
   {
     // The Accept sheet, open. This is the state a beam receiver is in for the
-    // whole time it matters: the manifest has decoded, the warning is on
-    // screen, and the click that spends the showSaveFilePicker activation is
+    // whole time it matters: the manifest has decoded, BEAM_WARNING is on
+    // the sheet, and the click that spends the showSaveFilePicker activation is
     // in front of them. It is a separate fixture rather than a flag on the
     // one above because both states are real and both have to fit.
     name: 'beam-offer-sheet',
@@ -278,7 +299,7 @@ export const FIXTURES = [
   {
     // A beam receiver on a device whose camera the browser will not grant:
     // _startBeamReceive sets a zeroed beam and returns early, so there is no
-    // offer and no progress -- just the danger callout and the same-sized empty
+    // offer and no progress -- just the tag and the same-sized empty
     // scanner frame carrying NO_CAMERA_BEAM, which this mode has no fallback
     // for because a beam code is thousands of frames, not a string to type.
     name: 'beam-receive-no-camera',

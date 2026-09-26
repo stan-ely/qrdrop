@@ -1014,6 +1014,146 @@ ${buttonCSS()}
  * footer icons. */
 .qr svg { display: block; inline-size: 100%; block-size: 100%; aspect-ratio: 1; }
 
+/*
+ * The beam code gets a higher cap than the pairing QR, and that is the whole
+ * of the difference between them.
+ *
+ * A pairing QR is one version-6 code read once, from a hand's length. A beam
+ * frame is denser and is read hundreds of times in a row, often from across a
+ * desk by a camera that has to hold focus for minutes -- so every pixel this
+ * box gives up costs lock-on rate, and it used to give up a lot: capped at
+ * 16rem and sharing its column with two callouts, it came out small under a
+ * wall of warnings. BEAM_WARNING moved to the sheets before the transfer (see
+ * view.js), so the copy beside it is three short lines, and this cap is what
+ * lets the code take the room that freed.
+ *
+ * It is a <button> -- pressing it enlarges it, below -- so the first half of
+ * this is the UA button styling undone, as the dropzone's rule does it.
+ */
+.beam-stage {
+  block-size: min(26rem, 100%);
+  /* A floor that scales with the window, where .qr's is a fixed 7rem. The
+   * stage is the box .card-media gives up first, so on any card with copy in
+   * it the code sat AT its floor -- 112px, the size of the README picture
+   * this change started from -- on windows with hundreds of pixels to spare.
+   * 40vh still lets a genuinely short viewport (a landscape phone) take it
+   * down to what fits, and check-layout.mjs holds both ends of that. */
+  min-block-size: min(16rem, 40vh);
+  appearance: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: zoom-in;
+  -webkit-tap-highlight-color: transparent;
+}
+.beam-stage:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* The caption under the code in the card; see the enlarged rules for its
+ * second job. flex: none, so the code is what gives way to a short card. */
+.beam-hint {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs--1);
+  text-align: center;
+}
+
+/*
+ * Enlarged: the code fills the display, square, on the quiet zone.
+ *
+ * Square and NOT the whole viewport, even though the backdrop is. The code
+ * is square whatever box it is drawn into, and check-layout.mjs asserts that
+ * .beam-stage is -- a stage stretched to the viewport would be an oblong with
+ * the code pinned into it, the 352x306 failure over again. So the stage is
+ * the largest square that fits (vmin), and the backdrop behind it paints the
+ * rest in the same white, which a scanner reads as one large quiet zone.
+ *
+ * dvmin with a vmin fallback: on a phone the dynamic viewport is the one the
+ * URL bar has not taken a bite out of. The inset term is the LARGEST of the
+ * four safe-area insets, doubled, because a centred box has to clear the
+ * notch on whichever side it is -- a landscape phone has it on one side only,
+ * and centring moves the square just as far from both.
+ */
+.beam-stage[aria-pressed="true"] {
+  --beam-inset: max(var(--sp-4), env(safe-area-inset-top), env(safe-area-inset-right),
+    env(safe-area-inset-bottom), env(safe-area-inset-left));
+  --beam-full: calc(100vmin - 2 * var(--beam-inset));
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  z-index: calc(var(--z-overlay) + 1);
+  inline-size: var(--beam-full);
+  block-size: var(--beam-full);
+  max-inline-size: none;
+  min-block-size: 0;
+  border-radius: 0;
+  cursor: zoom-out;
+}
+@supports (width: 100dvmin) {
+  .beam-stage[aria-pressed="true"] { --beam-full: calc(100dvmin - 2 * var(--beam-inset)); }
+}
+
+/* The entrance animation moves .card-media with a transform, and a
+ * transformed ancestor becomes the containing block for everything fixed
+ * inside it -- so for the length of that animation the "full-screen" code was
+ * a 352px column's worth of overlay, 31px above the top of the viewport.
+ * check-layout.mjs measured exactly that, since it samples one frame after a
+ * state lands. A person cannot tap within the entrance, but the overlay must
+ * not depend on anybody's timing to be where it says it is. */
+.card:not([hidden]) > .card-body > .card-media:has(> .beam-stage[aria-pressed="true"]) { animation: none; }
+
+/* The backdrop, and it is the caption. Fixed across the whole viewport so a
+ * tap anywhere outside the code shrinks it, and so nothing underneath -- the
+ * Stop button least of all -- can be hit by a thumb that missed. The words
+ * sit below the code in portrait and beside it in landscape, where the spare
+ * room is. Ink is --scan-bg, not --muted: the surface is the unthemed quiet
+ * zone, so the text on it has to be unthemed too or dark mode greys it out. */
+.beam-stage[aria-pressed="true"] + .beam-hint {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: max(var(--sp-4), env(safe-area-inset-top)) max(var(--sp-4), env(safe-area-inset-right))
+    max(var(--sp-4), env(safe-area-inset-bottom)) max(var(--sp-4), env(safe-area-inset-left));
+  background: var(--qr-quiet-zone);
+  color: var(--scan-bg);
+  cursor: zoom-out;
+}
+@media (orientation: landscape) {
+  .beam-stage[aria-pressed="true"] + .beam-hint { justify-content: flex-end; }
+}
+
+/* The file and the "Not encrypted" tag, on one line on both beam screens.
+ * The name is truncated rather than wrapped: the full name is in the sheet
+ * that came before this screen, and a long one wrapping here took lines from
+ * the code. */
+.beam-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+}
+.beam-meta .filename {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+/* A fact, not a control -- flat, unclickable, the .path-badge shape. */
+.tag {
+  flex: none;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
+  font-size: var(--fs--1);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tag.danger { background: var(--bad-soft); color: var(--bad); }
+
 /* web/beam.js paints one canvas pixel per QR module and leaves the CSS to
  * blow it up to display size (see startBeamSend's canvas). image-rendering:
  * pixelated is not decorative here -- the default smoothing algorithm blurs
@@ -1452,7 +1592,14 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
   .card-body { gap: var(--sp-3); }
   .card-actions { padding-block-start: var(--sp-3); }
   .outcome { padding: var(--sp-3); }
-  .qr, .beam-stage { block-size: min(12rem, 100%); }
+  .qr { block-size: min(12rem, 100%); }
+  /* Higher than the pairing QR here too, for the reason on the base rule --
+   * but back on .qr's plain 7rem floor. The base rule's 40vh floor is a
+   * demand, and a short card cannot meet it: at 1280x620 it made the stage
+   * 248px in a media column with less than that to give, and the caption
+   * under it painted across the speed control. Legal to every assertion in
+   * check-layout.mjs, and visible in the first screenshot. */
+  .beam-stage { block-size: min(18rem, 100%); min-block-size: 7rem; }
   /* The scan panel joins them, and for the same reason spelled out on the
    * wide-branch rule below: height is the scarce axis here, so it has to be
    * the one that governs, with inline-size released so aspect-ratio can
@@ -1463,10 +1610,10 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
   .transfer-pct { font-size: var(--fs-2); }
 
   /* Callouts keep their colour, border and every word, and give up eight
-   * pixels of padding each. The beam send screen carries two of them -- the
-   * encryption warning and the keep-it-on-screen instruction, neither of which
-   * can be shortened -- and on a 1280x620 laptop that was the last 6px between
-   * this screen and a scrollbar. Exactly the trade the card padding above
+   * pixels of padding each. It was written when the beam send screen carried
+   * two of them, and on a 1280x620 laptop that was the last 6px between that
+   * screen and a scrollbar; the SAS and path callouts on the network screens
+   * still take the same saving. Exactly the trade the card padding above
    * makes, and for the reason written there: the padding is a comfort, the
    * content is the point. */
   .callout { padding: var(--sp-2) var(--sp-3); }
@@ -1545,6 +1692,7 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
    * width, exactly as the base rule does.
    */
   .qr, .beam-stage { block-size: min(22rem, 100%); margin-inline: 0; }
+  .beam-stage { block-size: min(30rem, 100%); }
 
   /* The scan panel, same treatment and the same reasoning. This is the branch
    * that exposed the bug: at 1280x620 the panel measured 352x302 in both
@@ -1809,37 +1957,11 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
    * or a rotation leaves a control that can be focused and cannot be seen.
    */
   #btn-photo { display: none; }
-  /*
-   * The filename goes last on the beam screens, and the reason is what the
-   * first screenshot of this branch showed.
-   *
-   * beam-send is the one screen whose copy still overflows here, by 79px, and
-   * the part that fell below the fold was \`.callout.warn\` -- "keep this code
-   * on screen until the other device says it is done", which view.js calls the
-   * single most important instruction on the screen and spends its most
-   * prominent element on. A safety instruction being the one thing you have to
-   * scroll to find is the exact shape of the bug check-layout.mjs was written
-   * after (Accept, 99px below the fold), arriving by a different route.
-   *
-   * So in landscape the filename yields its place to it. Of everything in that
-   * column the filename is the only line that is purely informational -- the
-   * heading names the screen, both callouts protect the person reading them,
-   * and the file is one they chose seconds ago. It is still there, one short
-   * scroll down, and nothing is clipped above the scroll origin (\`safe center\`
-   * on the copy column, and the clippedAbove assertion holding the line).
-   *
-   * \`order\` rather than a different vnode order, because the reading order is
-   * right in portrait: the comment in view.js explains that the instruction
-   * belongs against the action bar where the eye returns, and in a stacked
-   * layout it does. This branch is the one where the eye returns to a bar in
-   * the next column instead.
-   *
-   * The CHILD combinator is doing real work: every other .filename in the app
-   * is nested inside a .stack, so this reaches the two beam screens and
-   * nothing else. Both want it -- on beam-receive the line it moves ahead of
-   * is the progress readout.
-   */
-  .card-copy > .filename { order: 1; }
+  /* A rule used to sit here giving the beam screens' filename order: 1, so
+   * that in landscape the keep-it-on-screen callout was not the line pushed
+   * below the fold. The filename now shares a line with the Not-encrypted tag
+   * inside .beam-meta, and BEAM_WARNING left the screen for the sheets, so
+   * beam's copy fits this column and there is nothing left to reorder. */
 
 
   /* No media: one column across all three tracks, and the bar back underneath

@@ -186,6 +186,10 @@ ${selector} {
    */
   --z-bar: 10;
   --z-dialog: 20;
+  /* beam-send's enlarged code and its backdrop (the backdrop at this value,
+   * the code one above). Under the toast on purpose: "Press back again to
+   * cancel" has to be readable over the thing back is about to shrink. */
+  --z-overlay: 25;
   --z-toast: 30;
 
   /* ---- type ---- */

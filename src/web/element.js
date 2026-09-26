@@ -197,8 +197,40 @@ export class QRDropElement extends HTMLElement {
     // on an already-open dialog, and the sheet cannot be reopened because
     // nothing ever observed it closing.
     this._dialogNode.addEventListener('close', () => {
+      // `close` is dispatched as a task, after close() has returned -- so a
+      // sheet closed and another opened in the same task (one modal replaced
+      // by the next) receives the first one's event once the second is
+      // already up, and without this guard dismissed it. Chromium showed it:
+      // the beam confirm sheet opening straight after another sheet was shut
+      // by its predecessor's close. A dialog that is open is not closed,
+      // whatever event is still in the queue.
+      if (this._dialogNode.open) return
+      // A file picked for beaming is held only while its confirm sheet is
+      // open. However the sheet closes -- Cancel, Escape, or 'beam:start'
+      // having already taken it -- nothing is left waiting to be started by
+      // some later click.
+      this._pendingBeam = null
       if (this._state.modal) this._setState({ modal: null })
     })
+
+    /**
+     * The file picked for beaming, between the picker and the confirm sheet's
+     * Start. Held here and not in `state`, which carries only its name and
+     * size for the sheet's copy: a File is not something the pure view has
+     * any use for, and state is what fixtures and tests construct by hand.
+     * @type {File | null}
+     */
+    this._pendingBeam = null
+
+    /**
+     * Whether the host element is fullscreen because _setBeamEnlarged asked
+     * for it -- so leaving the enlarged code exits only a fullscreen this
+     * component entered, never one the embedding page did.
+     */
+    this._fullscreen = false
+
+    /** @type {(() => void) | null} */
+    this._onFullscreenChange = null
 
     /** @type {string | null} Set via the `base-url` attribute; see below. */
     this._baseURL = this.getAttribute('base-url') || null
@@ -505,9 +537,10 @@ export class QRDropElement extends HTMLElement {
       mode: /** @type {'p2p' | 'beam'} */ ('p2p'),
       beamNode: /** @type {Element | null} */ (null),
       dialogNode: /** @type {Element | null} */ (this._dialogNode),
-      modal: /** @type {'beam-offer' | 'error' | 'info' | null} */ (null),
+      modal: /** @type {import('./view.js').State['modal']} */ (null),
       toast: /** @type {string | null} */ (null),
       beam: /** @type {import('./view.js').State['beam']} */ (null),
+      beamEnlarged: false,
     }
   }
 
@@ -638,6 +671,19 @@ export class QRDropElement extends HTMLElement {
       this._onBackGesture()
     }
     window.addEventListener('popstate', this._onPopState)
+
+    // Fullscreen can end without us: Escape and F11 are the browser's, not
+    // the component's. When it does, the enlarged code comes down with it, or
+    // the overlay would stay up inside an ordinary window having lost the one
+    // thing it was for.
+    if (typeof document !== 'undefined') {
+      this._onFullscreenChange = () => {
+        if (document.fullscreenElement === this || !this._fullscreen) return
+        this._fullscreen = false
+        this._setBeamEnlarged(false)
+      }
+      document.addEventListener('fullscreenchange', this._onFullscreenChange)
+    }
 
     // The pointer can change under a running page -- a folio keyboard comes
     // off a tablet, a mouse is plugged into a phone dock -- and the choose
@@ -808,6 +854,11 @@ export class QRDropElement extends HTMLElement {
 
     if (this._onPopState) window.removeEventListener('popstate', this._onPopState)
     this._onPopState = null
+
+    if (this._onFullscreenChange) document.removeEventListener('fullscreenchange', this._onFullscreenChange)
+    this._onFullscreenChange = null
+    if (this._fullscreen && document.fullscreenElement === this) document.exitFullscreen().catch(() => {})
+    this._fullscreen = false
     // Takes the sentinel back off the history stack if one is still pushed,
     // via the isConnected term in _syncBackGuard. A detached component leaving
     // its guard behind would make the page's own back button dead for one
@@ -843,9 +894,14 @@ export class QRDropElement extends HTMLElement {
       // parameter rather than a second function.
       case 'send:photo': return this._pickFile(undefined, { accept: 'image/*', capture: 'environment' })
       case 'receive:scan': return void this._beginScan().catch(e => this._fail(e))
-      case 'beam:pick': return this._pickFile(file => this._startBeamSend(file))
+      // Picking a file does not start the beam; it opens the confirm sheet
+      // that carries BEAM_WARNING, and 'beam:start' on that sheet is what
+      // starts it. See _confirmBeam.
+      case 'beam:pick': return this._pickFile(async file => this._confirmBeam(file))
+      case 'beam:start': return this._beginConfirmedBeam()
       case 'beam:scan': return void this._startBeamReceive()
       case 'beam:fps': return this._setBeamFps(payload)
+      case 'beam:enlarge': return this._setBeamEnlarged(payload ?? !this._state.beamEnlarged)
       case 'manual:submit': return this._submitManualCode(payload)
       case 'verify:confirm': return this._onVerifyConfirm?.()
       // Not a one-shot callback like the three around it. Those need the live
@@ -892,7 +948,11 @@ export class QRDropElement extends HTMLElement {
       // change it would reopen itself over the new screen -- the beam offer
       // sheet floating above the choose screen after a cancel -- describing a
       // decision that is no longer on the table.
-      partial = { error: null, modal: null, ...partial }
+      //
+      // beamEnlarged for the same reason: the enlarged code belongs to
+      // beam-send, and an overlay that outlived the screen would cover the
+      // next one with a canvas nobody is painting any more.
+      partial = { error: null, modal: null, beamEnlarged: false, ...partial }
     }
     if (partial.screen === 'done') this._sessionEnded = true
 
@@ -907,6 +967,7 @@ export class QRDropElement extends HTMLElement {
       // once per progress tick.
       this._syncWakeLock()
       this._syncBackGuard()
+      this._syncFullscreen()
       // An armed "press back again" belongs to the screen that armed it. A
       // transfer that finishes inside the window would otherwise leave the
       // next press cancelling on the done screen.
@@ -1058,6 +1119,14 @@ export class QRDropElement extends HTMLElement {
     // guard must already be in place.
     history.pushState({ qrdropGuard: true }, '')
     this._backGuard = true
+
+    // Back on the enlarged code means "put it back", which is what back
+    // means on every full-screen image viewer a person has used. It is not a
+    // step towards cancelling, so it neither arms nor spends the second press.
+    if (this._state.beamEnlarged) {
+      this._setBeamEnlarged(false)
+      return
+    }
 
     if (this._backArmed) {
       this._disarmBack()
@@ -1797,12 +1866,83 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
+   * The sender's one look at BEAM_WARNING, before a single frame is shown.
+   *
+   * The warning used to be a two-sentence callout on the beam-send screen for
+   * the whole transfer, which is where it did the least good: by the time it
+   * was on screen the file was already playing, and for the minutes after
+   * that it was the thing standing between the QR and the size a camera
+   * across a desk needs. Said here, it is said while the choice is still
+   * open, and answered by a click -- "Start beaming" -- rather than scrolled
+   * past. The screen keeps a "Not encrypted" tag so the fact never leaves it.
+   *
+   * Guarded to the choose screen like every other way in, since the picker
+   * resolves whenever the person finishes choosing.
+   *
+   * @param {File} file
+   */
+  _confirmBeam(file) {
+    if (this._state.screen !== 'choose') return
+    this._pendingBeam = file
+    this._setState({ file: { name: file.name, size: file.size }, modal: 'beam-confirm' })
+  }
+
+  _beginConfirmedBeam() {
+    const file = this._pendingBeam
+    this._pendingBeam = null
+    if (!file || this._state.screen !== 'choose') return
+    this._startBeamSend(file).catch(e => this._fail(e))
+  }
+
+  /**
+   * The sender's code, filling the display or back in the card.
+   *
+   * The overlay is CSS (styles.js, `.beam-stage[aria-pressed="true"]`) and is
+   * the part that works everywhere. The Fullscreen API is asked for on top of
+   * it, only to take the browser's own chrome away as well -- and it is asked
+   * of the host rather than the stage, so the toast ("Press back again to
+   * cancel") still shows above the code. It is best effort on purpose:
+   * iPhone Safari has no element fullscreen at all, and an Android WebView
+   * without an onShowCustomView handler (wry's) rejects or ignores the
+   * request. Either way the overlay alone has to be the whole feature, so
+   * nothing here waits on the promise.
+   *
+   * @param {boolean} on
+   */
+  _setBeamEnlarged(on) {
+    if (this._state.screen !== 'beam-send' || on === this._state.beamEnlarged) return
+    this._setState({ beamEnlarged: on })
+
+    if (on && !document.fullscreenElement && typeof this.requestFullscreen === 'function') {
+      try {
+        this.requestFullscreen().then(() => { this._fullscreen = true }, () => {})
+      } catch { /* no fullscreen here; the overlay stands alone */ }
+    }
+    if (!on) this._syncFullscreen()
+
+    // Focus follows the code, so Escape and Enter reach the stage's own
+    // handlers whichever way it was toggled -- Safari does not focus a
+    // clicked button, and back or fullscreenchange never focused anything.
+    const stage = /** @type {HTMLElement | null} */ (this._root.getElementById('beam-stage'))
+    stage?.focus({ preventScroll: true })
+  }
+
+  /** Leaves a fullscreen this component entered, once nothing wants it. */
+  _syncFullscreen() {
+    if (this._state.beamEnlarged || !this._fullscreen) return
+    this._fullscreen = false
+    if (document.fullscreenElement === this) document.exitFullscreen().catch(() => {})
+  }
+
+  /**
    * Beam: collect a file from another device's screen through this camera.
    */
   async _startBeamReceive() {
     this._setState({
       screen: 'beam-receive', mode: 'beam', role: 'receiver',
-      status: cameraAvailable() ? 'Point the camera at the other screen.' : '',
+      // Empty: the heading already says exactly this, and a status line that
+      // repeats the heading under it is one more line pushing the camera down.
+      status: '',
       beam: { fps: 0, loops: 0, solved: 0, blocks: 0, eta: null },
     })
     if (!cameraAvailable()) return

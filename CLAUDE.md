@@ -134,23 +134,22 @@ rule is `safe center` now. Zero-box children are exempt, for the same reason the
 offscreen check exempts a closed dialog: an element that is not laid out reports
 0x0 at the origin, which is above every scroll container on the page.
 
-**One screen still overflows and it is beam-send, by 79px at 800x360 and 49 at
-844x390.** Those are the `copyScroll` budgets on those two viewports — a budget and
-not the `allowBodyScroll` flag they replaced, because an on/off exemption lets the
-one screen that legitimately overflows hide every screen that does not. Beam wants
-228px of heading, encryption callout, filename and keep-it-on-screen instruction in
-150; that is a shortfall in *area*, so no rearrangement closes it. The numbers are
-Firefox's, 1px above Chromium's on the same fixture — take the larger, or the
-budget passes one engine and fails the other on an unchanged tree.
+**The `copyScroll` budget is 27px at 800x360 and none at 844x390, and it is not
+beam's any more.** A budget and not the `allowBodyScroll` flag it replaced, because
+an on/off exemption lets the one screen that legitimately overflows hide every
+screen that does not — and that happened here: the budget was beam-send's 79px
+(and 49), and under it the network path's send (27), verify (17) and toast (14)
+screens had been scrolling unnoticed. Beam fits both landscape phones now, since its
+encryption warning moved into the sheets (below), so a beam screen overflowing is a
+regression. The 27 is send's, in both engines; closing it is a layout job of its own.
+Take the larger engine's number whenever they differ, or the budget passes one
+engine and fails the other on an unchanged tree.
 
 **What the first screenshot of that branch caught, which no assertion did:** the
 part below the fold was `.callout.warn`, the keep-it-on-screen instruction
-`view.js` calls the most important thing on the screen. Legal, reachable, and the
-exact shape of the Accept-below-the-fold bug this script was written after. So in
-this branch `.card-copy > .filename` takes `order: 1` and the filename yields its
-place — it is the only purely informational line in that column. The child
-combinator is load-bearing: every other `.filename` in the app is nested in a
-`.stack`, so this reaches the two beam screens and nothing else, and both want it.
+`view.js` calls the most important thing on the screen — legal, reachable, and the
+exact shape of the Accept-below-the-fold bug this script was written after. The
+`order: 1` rule that answered it is gone with the overflow it worked around.
 Look at the pictures; the assertions cannot see this class of thing.
 
 **"Take a photo" is `display: none` here.** Three buttons wrapped the choose bar
@@ -458,6 +457,30 @@ refuses to open. Nothing may be `await`ed ahead of `createSink` in that handler.
 Beam has no SAS and must not grow a decorative one: there is no peer to
 authenticate, and a fake gesture teaches that the real one on the network path
 is theatre.
+
+**Beam's "not encrypted" warning is confirmed before each end's decision, and the
+live screens carry only a tag.** `BEAM_WARNING` is said in full on the sender's
+`beam-confirm` sheet — picking a file opens it, and only its Start beaming
+(`beam:start`) starts the player — and on the receiver's `beam-offer` sheet before
+Accept writes anything. The beam screens show a "Not encrypted" tag beside the
+filename. The paragraph used to sit on both screens for the whole transfer, where it
+arrived after the decision it informs and was what kept the QR small. Do not move it
+back onto a screen; put it in front of the next decision, if there is one.
+`test/view.test.mjs` pins both sheets. The picked `File` waits in `_pendingBeam`,
+never in `state`, and the dialog's `close` listener drops it. That listener returns
+early while the dialog is open again: `close` is dispatched as a task, and a sheet
+replaced by another in one task used to be shut by its predecessor's late event.
+
+**The sender's code enlarges to fill the display, and the overlay is CSS, not the
+Fullscreen API.** `#beam-stage` is a `<button>` (`beam:enlarge`, `aria-pressed`);
+`.beam-stage[aria-pressed="true"]` is a fixed square of `100dvmin` less the largest
+safe-area inset, and `.beam-hint` beside it becomes the full-viewport backdrop that
+catches a missed tap. `requestFullscreen()` on the host is asked for on top, best
+effort — iPhone Safari has no element fullscreen and wry's Android WebView ignores it,
+so the overlay must stand alone. Back and Escape shrink it before they do anything
+else. The stage stays square because `check-layout.mjs` asserts it; and its
+`.card-media` gets `animation: none` while enlarged, because the entrance animation's
+transform makes that box the containing block for anything fixed inside it.
 
 **`MAX_FRAME_BYTES` is not derived from `CHUNK_SIZE`, and must not be "tidied" into
 being.** The transport's action wire chunks a payload at `16 * 1024 - 36`, so

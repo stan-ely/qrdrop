@@ -113,7 +113,7 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   by element.js. For things that HAPPENED rather than things that are true:
  *   a state a screen can go on describing belongs in `status`, which is always
  *   on screen, not in something that disappears.
- * @property {'beam-offer' | 'error' | 'info' | null} modal which sheet is open, if any.
+ * @property {'beam-confirm' | 'beam-offer' | 'error' | 'info' | null} modal which sheet is open, if any.
  *   The sheet is the only box on a non-scrolling page allowed to scroll
  *   inside itself, so it is where long copy and anything unplanned goes.
  * @property {Element | null} beamNode the adopted <canvas> the player owns
@@ -121,6 +121,8 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   `eta` is seconds: one full pass on the sending screen, and the measured
  *   time remaining on the receiving one. Null while there is not yet enough
  *   evidence to estimate honestly.
+ * @property {boolean} beamEnlarged whether beam-send's code fills the display
+ *   (styles.js's overlay). Reset on every screen change by element.js.
  */
 
 /** @typedef {(intent: string, payload?: any) => void} Dispatch */
@@ -334,24 +336,57 @@ export function dialogContent(state, dispatch) {
     ]
   }
 
+  // The sender's half of BEAM_WARNING, and the only place it is said in full
+  // before anything is shown. See element.js's _confirmBeam for why this is a
+  // sheet answered by a click rather than a callout on the screen: said on
+  // beam-send it arrived after the file was already playing, and then sat
+  // between the code and the size a camera needs for the whole transfer.
+  if (state.modal === 'beam-confirm' && state.file) {
+    return [
+      h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, 'Beam without a network?'),
+      h('div', { class: 'sheet-body' }, [
+        h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`),
+        h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
+        // The long form of BEAM_KEEP_SHOWING, said once where there is room:
+        // the reason the sender cannot stop early is that this screen is never
+        // told when the other device is done.
+        h('p', {}, `${BEAM_KEEP_SHOWING} Nothing comes back to this screen, so only the other device can tell you.`),
+      ]),
+      h('div', { class: 'sheet-actions' }, [
+        h('button', {
+          class: 'btn primary', type: 'button', onclick: () => dispatch('beam:start'),
+        }, 'Start beaming'),
+        h('button', {
+          class: 'btn ghost', type: 'button', onclick: () => dispatch('modal:close'),
+        }, 'Cancel'),
+      ]),
+    ]
+  }
+
   if (state.modal === 'beam-offer' && state.offer) {
     return [
       h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, 'Before you accept'),
       h('div', { class: 'sheet-body' }, [
         h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`),
 
-        // Said BEFORE the click, not after, because both of these are things a
-        // person would have chosen differently had they known. Accepting opens
-        // a save dialog, and the browser creates that file the instant a
-        // location is picked -- minutes before there are any bytes to write
-        // into it. A transfer abandoned in between therefore leaves a real,
-        // zero-byte file sitting in Downloads, which is indistinguishable from
-        // a corrupted download and is exactly how the first tester read it.
-        // Nothing can delete it from here: the File System Access handle
-        // grants writing to that file and nothing else.
+        // The receiver's half of BEAM_WARNING. This sheet opens itself the
+        // moment the manifest decodes and nothing is written before Accept,
+        // so it is the receiver's "before" in the same sense the confirm sheet
+        // is the sender's -- and the screen behind it carries only the tag.
+        h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
+
+        // Said BEFORE the click, not after, because it is something a person
+        // would have chosen differently had they known. Accepting opens a save
+        // dialog, and the browser creates that file the instant a location is
+        // picked -- minutes before there are any bytes to write into it. A
+        // transfer abandoned in between therefore leaves a real, zero-byte file
+        // sitting in Downloads, which is indistinguishable from a corrupted
+        // download and is exactly how the first tester read it. Nothing can
+        // delete it from here: the File System Access handle grants writing to
+        // that file and nothing else.
         h('p', {},
-          'This saves a file straight away and fills it in at the end, so both screens have to stay '
-          + 'as they are until it finishes. Stopping early leaves an empty file you can delete.'),
+          'Saving starts now and the file fills in at the end. '
+          + 'Stop early and you are left with an empty file to delete.'),
         h('p', {}, BEAM_KEEP_GOING),
       ]),
 
@@ -1341,8 +1376,8 @@ export const NO_CAMERA_SCAN = 'No camera available — enter the code by hand.'
 export const NO_CAMERA_BEAM = 'This device has no usable camera, so it cannot receive a beamed file.'
 
 /**
- * The one warning both beam screens must carry, word for word. A single
- * source rather than two hand-written copies for the same reason
+ * The one warning both ends of a beam must be shown, word for word. A single
+ * source rather than hand-written copies for the same reason
  * src/web/tokens.js gives the palette exactly one home: two copies of a
  * safety-critical sentence drift the first time someone edits one of them,
  * and this particular sentence is the entire reason a receiver is allowed to
@@ -1350,9 +1385,27 @@ export const NO_CAMERA_BEAM = 'This device has no usable camera, so it cannot re
  * be encrypted (no handshake, so no ECDH, no forward secrecy, no SAS) --
  * this is that fact's UI half, and it must never be softened into something
  * that reads as "still somewhat protected."
+ *
+ * WHERE IT IS SAID, AND WHY NOT ON THE SCREENS. In full, in a sheet that has
+ * to be answered before anything moves: the sender's confirm sheet
+ * ('beam-confirm', before a single frame is shown) and the receiver's offer
+ * sheet ('beam-offer', before Accept writes anything). The live screens carry
+ * BEAM_TAG instead. They used to carry this sentence as a callout for the
+ * whole transfer, and that was the worst place for it: it arrived after the
+ * decision it informs, and it was the tallest thing competing with a QR that
+ * has to be large to be read across a desk -- the code came out small under a
+ * wall of warnings. Do not put it back on the screens; put it in front of the
+ * next decision instead, if there ever is one.
  */
 const BEAM_WARNING = 'This is not encrypted, and cannot be — there is no handshake, so nothing here to '
   + 'verify. Anyone who can see this screen while it plays can read the file.'
+
+/**
+ * What stays on the live beam screens of BEAM_WARNING: the fact, in two
+ * words, in the danger colour. Short enough to sit beside the filename on one
+ * line at 360px, which is the entire point of it being a tag.
+ */
+const BEAM_TAG = 'Not encrypted'
 
 /**
  * The other instruction that must not drift, for a duller but more frequent
@@ -1383,15 +1436,16 @@ const BEAM_WARNING = 'This is not encrypted, and cannot be — there is no hands
  * meant. The same reasoning, for the same reason, as NO_CAMERA_SCAN and
  * NO_CAMERA_BEAM above.
  */
-// One line, not two. The first version of this ran to a second sentence and
-// cost the beam screen 40px of copy it did not have on a 390x844 phone --
-// check-layout.mjs failed it. A safety instruction that pushes the rest of the
-// screen out of view is not a safer screen, which is the whole lesson of the
-// Accept button that started this layout.
-const BEAM_KEEP_SHOWING = 'Keep this code on screen until the other device says it is done. '
-  + 'Nothing comes back here.'
-const BEAM_KEEP_GOING = 'Keep the camera on the other screen, and leave that screen playing, '
-  + 'until this one says it is done.'
+// One short line each. The first version of the sender's ran to a second
+// sentence and cost the beam screen 40px of copy it did not have on a 390x844
+// phone -- check-layout.mjs failed it -- and even one full sentence was still
+// two lines at that width, beside a QR that wanted every one of them. A safety
+// instruction that pushes the rest of the screen out of view is not a safer
+// screen, which is the whole lesson of the Accept button that started this
+// layout. The longer form ("nothing comes back here") is said once, in the
+// confirm sheet, where there is room for it.
+const BEAM_KEEP_SHOWING = 'Keep this on screen until the other device is done.'
+const BEAM_KEEP_GOING = 'Keep pointing until this says it is done.'
 
 /**
  * @param {State} state
@@ -1415,24 +1469,54 @@ function beamSend(state, dispatch) {
     // holds no other reference to its canvas than the one this prop hands
     // back, so any path that let the wrapper be thrown away and recreated
     // would silently orphan the canvas the player is still painting to.
-    media: h('div', { id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', adopt: state.beamNode }),
+    //
+    // A <button> at every size and every pointer, so the tag never changes
+    // under the adopted canvas (the same canReuse argument as the dropzone's).
+    // Pressing it enlarges the code to fill the display -- the one thing a
+    // sender can do to make a far or fussy camera lock on -- and aria-pressed
+    // is both its state for assistive tech and the hook styles.js hangs the
+    // overlay on. Escape puts it back, as it would any full-screen viewer.
+    media: [
+      h('button', {
+        id: 'beam-stage', class: 'beam-stage', key: 'beam-stage', type: 'button',
+        adopt: state.beamNode,
+        'aria-pressed': state.beamEnlarged ? 'true' : 'false',
+        'aria-label': state.beamEnlarged ? 'Shrink the code' : 'Enlarge the code',
+        onclick: () => dispatch('beam:enlarge'),
+        onkeydown: /** @param {KeyboardEvent} ev */ ev => {
+          if (ev.key === 'Escape' && state.beamEnlarged) dispatch('beam:enlarge', false)
+        },
+      }),
+      // Always rendered, for the stage's position. It is the caption under the
+      // code in the card and, enlarged, the backdrop behind it: fixed across
+      // the whole viewport so a tap anywhere outside the code shrinks it too
+      // and nothing underneath -- Stop, least of all -- can be hit by a thumb
+      // that missed. The copy follows the pointer, as the dropzone's does.
+      h('p', {
+        class: 'beam-hint', key: 'beam-hint', 'aria-hidden': 'true',
+        onclick: () => dispatch('beam:enlarge', false),
+      }, state.beamEnlarged
+        ? (state.coarse ? 'Tap to shrink' : 'Click or press Esc to shrink')
+        : (state.coarse ? 'Tap the code to enlarge it' : 'Click the code to enlarge it')),
+    ],
     body: [
     h('h2', { tabindex: '-1' }, 'Show this to the other device'),
-    h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
-    state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
+
+    // The file and BEAM_TAG on one line. BEAM_WARNING itself was said in the
+    // confirm sheet before this screen existed; see its comment for why it is
+    // not repeated here.
+    h('p', { class: 'beam-meta' }, [
+      state.file ? h('span', { class: 'filename' }, `${state.file.name} · ${bytes(state.file.size)}`) : null,
+      h('span', { class: 'tag danger' }, BEAM_TAG),
+    ]),
 
     // The single most important instruction on the screen, and it is styled as
     // one rather than as a status line. The first person to use this stopped
     // showing the code as soon as the other device said "Accept", because in
     // every other transfer UI -- including this app's own WebRTC path -- Accept
     // means the bytes now move on their own. Here it means the opposite: the
-    // work has not started yet. That misreading is the default, so it is worth
-    // spending the most prominent element on the page to prevent.
-    //
-    // Last in the column rather than mid-way up it, which is where a typed
-    // copy of it used to sit: this is the sentence the sender has to still be
-    // acting on in four minutes' time, so it belongs against the action bar
-    // where the eye returns, not above the status line it outranks.
+    // work has not started yet. That misreading is the default, so it keeps
+    // the callout even though BEAM_WARNING gave its up.
     h('p', { class: 'callout warn' }, BEAM_KEEP_SHOWING),
     ],
 
@@ -1468,28 +1552,33 @@ function beamSend(state, dispatch) {
       // single pass takes -- which at least turns "keep it up indefinitely" into
       // a number someone can plan around.
       h('p', { class: 'status', 'aria-live': 'polite' },
-        `Shown in full ${loops} time${loops === 1 ? '' : 's'}, ${duration(eta)} per pass.`),
+        `Shown ${loops}× · ${duration(eta)} per pass`),
     ],
 
+    // "Stop", not "Cancel": what this button ends is a thing visibly running,
+    // and nothing here is waiting to be cancelled.
     actions: [
-      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Stop'),
     ],
 
-    // The warning and the keep-it-on-screen instruction stay inline -- they are
-    // the whole reason this screen is careful. What moves is the reassurance
-    // around them: that many passes are expected. True, but not what the status
-    // line is for.
+    // The keep-it-on-screen instruction stays inline -- it is the one thing the
+    // sender must still be acting on minutes from now. What lives here is the
+    // reassurance around it: that many passes are expected, and what to do
+    // when a camera cannot keep up. True, but not what the status line is for.
     //
-    // "Nothing comes back here, so stop only when the other device says so"
-    // used to be a second paragraph here. It is the fourth phrasing of
-    // BEAM_KEEP_SHOWING, which is now on the screen itself and says the same
-    // thing in its second sentence -- and a safety instruction that is only
-    // complete once you have opened a details sheet is not one the screen can
-    // rely on having been read.
+    // A safety instruction that is only complete once you have opened a
+    // details sheet is not one the screen can rely on having been read, which
+    // is why nothing in this sheet is the only copy of anything.
+    //
+    // BEAM_WARNING is here as well as in the confirm sheet: the tag on the
+    // screen says the fact, and this is where a person who taps Details to
+    // ask "not encrypted how?" finds the answer in the same words.
     info: {
       title: 'About beaming',
       content: [
-        h('p', { class: 'note' }, 'Several passes are normal.'),
+        h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
+        h('p', { class: 'note' },
+          'Several passes are normal. If the other camera struggles, enlarge the code or lower the speed.'),
       ],
     },
   }
@@ -1520,7 +1609,6 @@ function beamReceive(state, dispatch) {
       ]),
     body: [
       h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
-      h('p', { class: 'callout danger', role: 'note' }, BEAM_WARNING),
 
       // Unlike receive()'s scanner there is no manual-entry fallback here -- a
       // beam code is thousands of frames, not one string a person could read
@@ -1530,9 +1618,13 @@ function beamReceive(state, dispatch) {
       // camera would have filled instead of as a note stranded below the
       // warning, where it read as one more thing gone wrong.
 
-      state.offer
-        ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`)
-        : null,
+      // The same line beam-send has, so both ends of one transfer read alike:
+      // the file (once the manifest has named it) and BEAM_TAG. BEAM_WARNING
+      // itself is in the offer sheet, which opens before anything is saved.
+      h('p', { class: 'beam-meta' }, [
+        state.offer ? h('span', { class: 'filename' }, `${state.offer.name} · ${bytes(state.offer.size)}`) : null,
+        h('span', { class: 'tag danger' }, BEAM_TAG),
+      ]),
 
       // Post-Accept. This is the state the first tester was in when they put
       // the sending laptop down, so the instruction is promoted to the loudest
@@ -1540,7 +1632,7 @@ function beamReceive(state, dispatch) {
       !state.offer && state.beam && state.beam.blocks > 0
         ? h('p', { class: 'callout warn' }, BEAM_KEEP_GOING)
         : null,
-      !state.offer
+      !state.offer && state.status
         ? h('p', { class: 'status', 'aria-live': 'polite' }, state.status)
         : null,
 
@@ -1570,8 +1662,7 @@ function beamReceive(state, dispatch) {
         // an estimate extrapolated from two blocks reads as broken.
         state.beam && blocks > 0
           ? h('p', { class: 'status', 'aria-live': 'polite' },
-            `${Math.floor(pct)}% — ${solved} of ${blocks} pieces`
-            + (state.beam.eta ? `, ${duration(state.beam.eta)} left` : ''))
+            `${Math.floor(pct)}%` + (state.beam.eta ? ` · ${duration(state.beam.eta)} left` : ''))
           : null,
       ]),
     ],

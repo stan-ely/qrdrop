@@ -134,30 +134,27 @@ const VIEWPORTS = [
    * value of the field. These two shipped as 'allowBodyScroll: true', which
    * turned the copy-column assertion off here entirely -- so the landscape work
    * that followed could have been regressed away without this file saying a
-   * word. The number is what beam-send actually measures after that work, in
-   * both engines and at both pointers, and nothing else on either viewport
-   * scrolls at all. Any OTHER screen appearing in this column is a real fault,
-   * and beam-send going over it is a real regression.
+   * word. The number is the largest any screen actually measures on that
+   * viewport, in both engines and at both pointers.
    *
-   * Both numbers are Firefox's, which is 1px above Chromium's on the same
-   * fixture in both viewports -- the engines round the wrapped status line
-   * differently. Taking the larger is right for a budget: the smaller would
-   * pass one engine and fail the other on an unchanged tree, which is the one
-   * way to teach someone to stop believing this file.
+   * It was beam-send's, at 79px here and 49 at 844x390, and it is not any
+   * more: beam's encryption warning moved off the screen and into the sheets
+   * that come before each end's decision (see BEAM_WARNING in view.js), and
+   * every beam fixture now fits both landscape phones with no scroll at all.
+   * So 844x390 has no budget, and a beam screen overflowing either viewport
+   * again is a regression.
    *
-   * Why beam-send alone cannot reach zero: at 800x360 the card gives its copy
-   * column 150px and beam wants 228 for a heading, an encryption callout, a
-   * filename and the keep-it-on-screen instruction, none of which CLAUDE.md
-   * will shorten. That is a shortfall in AREA, so no rearrangement closes it --
-   * the two that were tried are recorded in styles.js's flat branch. The choice
-   * was scrolling the column or moving the encryption warning behind a tap in
-   * the info sheet, and scrolling wins: a safety notice below the fold is still
-   * on the screen, where one behind a disclosure is not. clippedAbove above is
-   * what keeps that honest -- everything stays REACHABLE, nothing is cut off
-   * the top, and the heading and the warning are both above the fold.
+   * What the 27 here is, found by setting it to zero: the network path's send
+   * screen (27px, both engines, with or without its info sheet), verify (17)
+   * and the toast fixture, which sits over send (14). All three were already
+   * scrolling by those amounts before beam gave its budget back -- measured on
+   * the unchanged tree -- and beam's larger number had been hiding them. They
+   * scroll, nothing is clipped above the scroll origin, and the QR and SAS
+   * tiles stay whole; closing them is a layout job of its own for the send
+   * and verify screens, and until then this is their number, not beam's.
    */
-  { name: 'phone-narrow-landscape', width: 800, height: 360, copyScroll: 79 },
-  { name: 'phone-landscape', width: 844, height: 390, copyScroll: 49 },
+  { name: 'phone-narrow-landscape', width: 800, height: 360, copyScroll: 27 },
+  { name: 'phone-landscape', width: 844, height: 390 },
   { name: 'tablet', width: 834, height: 1112 },
   { name: 'laptop', width: 1440, height: 900 },
   // Wide and short, which is the case a design tuned on a phone forgets: a
