@@ -1514,3 +1514,55 @@ job: its timers fired 24-71 ms late even on a worker thread with a
 `setImmediate` spin loop, and SCTP reads that as loss. With a 4 MB queue it
 drove the channel to zero and held it there. A delay line in user space on
 Windows measures the delay line.
+
+### WebSocket against the same round trips (2026-09-27)
+
+The candidate for a native-only LAN fast path is a direct WebSocket carrying
+the same sealed frames. It uses WebSocket rather than raw TCP because a page
+can open one with no IPC in the way. Android's page-to-Rust path is base64
+JSON, and nothing carries bytes from Rust to the page, so a Rust socket
+feeding frames through `invoke` would give back the gain. The measurement
+rule was that it has to clearly beat the 14-17 MB/s the data channel holds
+at LAN round trips.
+
+Same namespace and netem setup as above. Chromium 151 is the WebSocket
+client, and a Node `ws` server is the peer, with 16 KiB messages and the
+sender held under 1 MB `bufferedAmount`. **up** is Chromium sending (the
+phone or app as sender); **down** is Chromium receiving. Run averages over
+512 MiB, every cell complete:
+
+| RTT | up | down | data channel, same RTT |
+| --- | --- | --- | --- |
+| ~0 | 64 | 44 | 8-25 |
+| 2 ms | 72 | 64 | 9-15 |
+| 5 ms | 76 | 58 | 14-17 |
+| 10 ms | 73 | 53 | 14-17 |
+| 20 ms | 79 | 67 | 8-13 |
+
+**About 4x the data channel across the LAN range, in both directions.** The
+first part of the rule passes. The comparison isn't perfectly like for like:
+the data channel ran Chromium to Chromium, and this ran Chromium to Node. The
+app-to-app path will be Chromium to a Rust relay to Chromium, which has not
+been measured yet.
+
+Two anomalies turned up, and both were chased:
+
+- **A few hundred KB "missing" at 0-5 ms (harness bug).** The first run
+  showed Chromium receiving all but ~117 messages and then idling until the
+  timeout. `ss` showed its socket had received every byte, and a message
+  sent afterwards still arrived. So the missing ones were the *first*
+  messages: Node began sending before `page.evaluate` had installed
+  `onmessage`, and a WebSocket message dispatched with no handler is
+  discarded. The same rule will bind the real link: the frame handler must
+  be live before the peer can send.
+- **down at 100 ms is flat at 0.6 MB/s, and it is the receive window.**
+  Node's socket was `rwnd_limited` 99.3% of the time with `snd_wnd` ~74 KB,
+  and Chromium's receive buffer sat at 128 KB without autotuning upward.
+  74 KB per 100 ms is ~0.7 MB/s. This is outside the LAN range this path is
+  for, so it was not chased further. It is also the first thing to look at
+  if the path is ever widened beyond one network. (50 ms ran at 40 MB/s.)
+
+Still open before any code: whether the Android WebView can open
+`ws://<LAN address>` from `http://tauri.localhost` at all (the app's CSP,
+plus Chromium's Local Network Access checks), and how fast the desktop
+app's Rust relay is.
