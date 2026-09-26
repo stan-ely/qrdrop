@@ -26,8 +26,11 @@ test('CARGO_HOME follows cargo: the variable if set, ~/.cargo if not', () => {
 })
 
 // The copy of Tauri's flags is only right while it matches the Tauri CLI that
-// actually runs. The CLI is a native binary per platform, and its flags sit in
-// it as one run of adjacent string constants, so the check is a byte search.
+// actually runs. The CLI is a native binary per platform, so the check is a
+// byte search for each flag on its own. Not for the three as one run: the
+// Windows build happens to lay them out adjacent, but the Linux linker splits
+// them up (-llog lands elsewhere), and a check for the run failed on the first
+// CI run. What this cannot see is a fourth flag added upstream.
 // Skipped where app/ has no node_modules, which includes ci.yml. It runs in
 // app-reproducible.yml, which installs them.
 test("the copied flags are the installed Tauri CLI's own", async t => {
@@ -38,8 +41,10 @@ test("the copied flags are the installed Tauri CLI's own", async t => {
   const binary = (await readdir(dir)).find(name => name.endsWith('.node'))
   assert.ok(binary, `no .node binary in ${dir}`)
   const bytes = await readFile(path.join(dir, binary))
-  assert.ok(
-    bytes.includes(Buffer.from(TAURI_ANDROID_RUSTFLAGS.join(''))),
-    `${cli} no longer carries ${TAURI_ANDROID_RUSTFLAGS.join(' ')} -- update TAURI_ANDROID_RUSTFLAGS in scripts/android-env.mjs`
-  )
+  for (const flag of TAURI_ANDROID_RUSTFLAGS) {
+    assert.ok(
+      bytes.includes(Buffer.from(flag)),
+      `${cli} no longer carries ${flag} -- update TAURI_ANDROID_RUSTFLAGS in scripts/android-env.mjs`
+    )
+  }
 })

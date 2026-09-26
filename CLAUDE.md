@@ -984,7 +984,7 @@ measured and failed:
   Tauri CLI sets `CARGO_TARGET_<triple>_RUSTFLAGS` outright, so a value of ours there is
   thrown away. Cargo also takes only the first rustflags source it finds, so ours replace
   Tauri's rather than joining them. `test/android-env.test.mjs` byte-searches the
-  installed CLI binary for the copied list. That check runs only where `app/node_modules`
+  installed CLI binary for each copied flag; a flag Tauri adds is beyond it. That check runs only where `app/node_modules`
   exists, which includes the reproducibility workflow.
 - **It is a wrapper, not a `BuildTask.kt` edit.** `tauri android build` compiles the Rust
   before it starts Gradle, so a flag set in that task never reaches the build that ships.
