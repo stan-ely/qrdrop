@@ -204,6 +204,48 @@ needed for here. A socket that opens is not a relay that works.
 
 </details>
 
+<details>
+<summary><b>The local-network fast path, and the one moment it can switch</b></summary>
+
+A WebRTC data channel levels off at 14–17 MB/s even on one network. That limit
+comes from SCTP's congestion control, and nothing in JavaScript can change it.
+A WebSocket between the same two devices runs over the OS's TCP. It measured
+about 4× the data channel in a network namespace and about 6× on a phone over
+Wi-Fi; the figures are in `app/CAPABILITIES.md`. So when both ends are native
+(the CLI or the app), `src/transport/lan.js` moves the sender's frames onto a
+direct WebSocket. The website never does this: a page cannot accept a
+connection, and only the app registers the platform hook.
+
+- **The frames are the same frames.** They go into the same handler, face the
+  same tag check and ordering checks, and a frame that fails its tag is
+  counted and dropped just as before. The socket makes the transfer faster; it
+  is not trusted any more than WebRTC is.
+- **Nothing is said before the SAS.** The sender's `lan-hello` goes out after
+  its confirm, and the receiver speaks only in reply. The listener's
+  `lan-offer` names its addresses and a 16-byte token, sealed like every other
+  control message. The side that dials in presents the token first, and the
+  listener takes exactly one connection that does, then stops listening.
+- **Only a quiet side listens.** Listening on Windows, and for an unsigned
+  macOS app, raises an OS firewall prompt. Each hello says whether it would,
+  and when neither side can listen quietly, the transfer stays on WebRTC.
+- **The switch happens at Accept, and only there.** A frame on a second
+  channel can overtake one still in flight on the first, and an authenticated
+  frame that arrives out of order is fatal. When the sender reads the peer's
+  accept, every frame it has sent over WebRTC is one the receiver has provably
+  handled. From that moment every frame this side sends goes over the socket,
+  and the receiver's replies never move. `sendFile`'s `onAccept` is the hook.
+- **Older builds are unaffected.** They drop both messages as unknown types.
+  The receiver's hello is queued ahead of its Accept, so a sender that sees
+  Accept without a hello knows at once that the peer is an older build, and
+  never waits.
+
+The app listens through a relay in its own Rust process (`src-tauri/src/lan.rs`),
+which its page reaches over `127.0.0.1`. It uses a relay rather than IPC
+because, on Android, IPC carries bytes as base64 inside JSON. `--no-lan` turns
+the fast path off for the CLI.
+
+</details>
+
 **The confidentiality path uses WebCrypto only** — P-256, HKDF, AES-GCM, no
 third-party code. Trystero sits below that boundary: it protects signalling, but
 a compromise there could not read a file byte.

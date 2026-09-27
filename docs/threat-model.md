@@ -19,6 +19,13 @@ before relying on it. The mechanisms referred to here are described in
   fault in the transfer — so somebody else in the rendezvous room cannot
   *interrupt* a transfer they cannot read. This was not true before v0.3.1; see
   the note under [Known limitations](#known-limitations).
+- The local-network fast path between two native peers (see
+  [protocol.md](protocol.md), "The local-network fast path") carries the same
+  sealed frames. It is offered only after the SAS, it dials only private
+  addresses the paired peer sealed, and its listener takes one connection that
+  presents a one-time token. Someone else on the Wi-Fi who finds the port
+  learns that a transfer is happening between two addresses, which they could
+  see from the traffic anyway, and cannot put a frame into it.
 
 **Not protected**
 

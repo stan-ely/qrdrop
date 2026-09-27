@@ -205,7 +205,8 @@ and out of CI:
 
 ```bash
 npm run test:e2e          # two real browsers over real relays
-npm run test:e2e:interop  # two Node processes driving the CLI
+npm run test:e2e:interop  # two Node processes driving the CLI, pinned to WebRTC
+npm run test:e2e:interop:lan  # the same, over the local-network fast path
 ```
 
 `mise.toml` mirrors every npm script as a task; either runner works.
@@ -549,6 +550,28 @@ step, keyed on the `nextControlIndex` function. So pass the **same function** to
 over the same counter — that gets a queue of its own and races again. Do not add a
 control send that calls `sealControl` and `channel.send` directly.
 `test/control-order.test.mjs` slows the first seal and asserts both shapes stay in order.
+
+**The local-network fast path moves the sender's frames at Accept and at no other
+moment, and only after the SAS.** `src/transport/lan.js` carries the reasoning; these
+are the parts a tidy-up breaks with every test still green. The switch
+(`room.sendOverLan()`, called from `sendFile`'s `onAccept`) must stay between the
+peer's accept and chunk 0. That is the one point where every frame already sent over
+WebRTC is one the receiver has provably handled. Switch any earlier and a LAN frame
+can overtake a WebRTC one, which the receiver treats as a fatal out-of-order frame.
+The receiver never switches: its replies stay on WebRTC. The sender's `lan-hello`
+goes out after its SAS confirm, and the receiver only ever speaks in reply. An
+announce before the SAS hands a listening port to an unverified key. The receiver's
+reply is queued synchronously inside its demux, which is what puts it ahead of its
+Accept and lets `ready()` recognise an older peer without a timeout. Only a side that
+can listen `'quiet'`ly listens (the Android app, Linux), because listening on
+Windows or an unsigned macOS app raises a firewall prompt; neither quiet means
+WebRTC. The app listens through `src-tauri/src/lan.rs`, a relay its page reaches over
+`127.0.0.1`, and never through IPC: Android's invoke is base64 in JSON, and nothing
+carries bytes from Rust back to a page. `ws:` is in the app channel's CSP only
+(`buildCSP`'s `lan` flag). The website has no `LanPlatform`, and it must not gain
+one. `test/lan.test.mjs` counts the frames that cross the socket, so a change that
+quietly falls back to WebRTC fails there rather than passing as "still delivers the
+file". `npm run test:e2e:interop:lan` is the live check.
 
 **A control stream's `fail()` is sticky, and the first error wins.** It used to reject the
 waiter parked in `next()` if there was one and forget the error otherwise — and in the
