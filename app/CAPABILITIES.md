@@ -1606,3 +1606,63 @@ Both of Phase 0's conditions for the Android side hold: the phone is not
 blocked, and the path clearly beats the data channel. What remains before any
 code is the desktop app's Rust relay, which sits between its page and the LAN
 socket.
+
+### The Rust relay, on both ends (2026-09-27)
+
+A webview cannot accept a connection, so the app's page reaches the LAN
+through a relay in its own Rust process. The page connects to
+`127.0.0.1`, and the relay forwards to the peer. The spike was a standalone
+tokio binary with two modes:
+
+- **`ws`** ends the WebSocket on both sides and forwards each message whole.
+  `tokio-tungstenite` 0.28 does the framing, and each message is sent (and so
+  flushed) as it arrives. This is the listening role, where both the page and
+  the LAN peer connect in as clients.
+- **`splice`** is `copy_bidirectional` between two TCP sockets, so the page's
+  WebSocket runs end to end to the peer. This fits only the connecting role.
+
+Measurements, 16 KiB messages, 1 MB of `bufferedAmount`:
+
+- **Desktop, Windows loopback.** Chromium 151 (WebView2's engine) talked to a
+  Node `ws` peer, 512 MiB a run, two rounds. Direct ran 44-55 MB/s, the `ws`
+  relay 46-54 and the splice 48-53. The spread is round-to-round noise in the
+  endpoints, and nothing in it tracks the relay.
+- **The phone, which matters more.** A phone pairing with a Windows app or a
+  Windows CLI is the case where the *phone* listens, because the Windows side
+  would get a firewall prompt. The same relay was cross-compiled for
+  `aarch64-linux-android` and run from `adb shell` on the RMX3868. The
+  WebView's page connected to it on `127.0.0.1`, and it forwarded over the
+  Wi-Fi to the desktop. Runs were interleaved with direct ones, 256 MiB each:
+
+| Phone ↔ desktop | Direct | Through the on-phone relay |
+| --- | --- | --- |
+| Phone sends | 31.9-40.5 MB/s | 38.8-41.4 MB/s |
+| Phone receives | 41.9-51.1 MB/s | 41.2-49.8 MB/s |
+
+**The relay costs nothing measurable on either end.** At these rates it is
+under the noise between one Wi-Fi run and the next. These direct figures are
+higher than the section above, because the Wi-Fi was better in this session.
+Treat roughly 30-50 MB/s as the range for this phone.
+
+Two stalls turned up, and both were chased:
+
+- **Direct connects timed out, and it was the screen.** The display had timed
+  out mid-session, and ColorOS cuts a backgrounded app's network. The relay,
+  started from `adb shell`, kept running under the shell's own user, which is
+  why it could reach the desktop while the app could not. This is the same
+  vendor behaviour recorded above for the save dialog, and it applies to
+  WebRTC just as much. It is not specific to the socket.
+- **A second receive run stalled at zero after a few seconds, once direct and
+  once relayed: a harness bug.** The previous receive run's 15-second
+  deadline was never cleared. After a run that finished early, it fired
+  during the next one and removed that run's `onmessage`. With the timer
+  cleared, every run completed. None of the figures above come from a
+  stalled run.
+
+**Phase 0 passes.** On the LAN, the WebSocket path is 4x the data channel in
+the namespace and about 6x on the phone. Android's WebView reaches it once
+`ws:` is in the app channel's `connect-src`. The relay the app needs to
+listen costs nothing measurable on either platform. The spike ran the relay
+outside the app's process, so the one thing still unproven is that it
+behaves the same inside the Tauri process on Android. That check comes with
+the first device build of `lan.rs`.
