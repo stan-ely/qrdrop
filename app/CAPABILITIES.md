@@ -1666,3 +1666,43 @@ listen costs nothing measurable on either platform. The spike ran the relay
 outside the app's process, so the one thing still unproven is that it
 behaves the same inside the Tauri process on Android. That check comes with
 the first device build of `lan.rs`.
+
+### The fast path, built, on the phone (2026-09-27)
+
+This is the implementation, not the spike. `lan.rs` runs inside the app
+process, and `createLanLink` switches the sender at Accept. The app was a
+debug build on the RMX3868, driven over CDP, paired over real relays with the
+Windows CLI. The Windows side never listens, so the phone listened every time,
+through the in-process relay. 128 MiB a run. Every digest matched. `netstat`
+showed a TCP connection to the phone on each fast-path run and none on the
+`--no-lan` runs.
+
+| 128 MiB, phone ↔ Windows CLI | WebRTC (`--no-lan`) | Fast path |
+| --- | --- | --- |
+| Phone sends (from Accept) | 5.5 MB/s | 13.0 MB/s |
+| Phone receives (from the Save tap) | 4.3 MB/s | 5.8 MB/s |
+
+**The in-process relay works on Android.** The relay was the one thing Phase 0
+left unproven, and it is proven now: same listener, same token handshake,
+reached from the page on `127.0.0.1` with the app in the foreground.
+
+**Neither direction reaches the socket's 30-50 MB/s, and the bottleneck is
+different in each.**
+
+- **Receiving is capped by the sink.** On Android a block crosses to Rust as
+  base64 in JSON ("Android has no raw body", CLAUDE.md), and a whole transfer
+  on that path measured about 3.4 MB/s when it was fixed. The fast path lifts
+  the transport ceiling, and the save path becomes the ceiling. Raising it
+  needs a byte path from the page to Rust on Android, which the fast path does
+  not change.
+- **Sending is not yet attributed.** The source here was an in-memory `File`,
+  so this is not the SAF read cost, and AES-GCM measured about 140 MB/s on
+  this phone. 13.0 MB/s is about 1.3 ms per 16 KiB frame across `sender.js`'s
+  loop: seal, send, wait for drain. The likely suspect is a per-call WebCrypto
+  round trip in the WebView, which the bare-socket spike never paid. It has
+  not been measured.
+
+Still not run: app ↔ app, the desktop app on either end, and CLI ↔ CLI across
+two machines. That last one ran only on one machine, with `QRDROP_LAN_LISTEN`
+forcing the roles. Over real relays with 256 MiB, the receiver listening ran
+32.8 MB/s, the sender listening 41.7 and `--no-lan` 17.0.
