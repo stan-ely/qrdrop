@@ -325,9 +325,10 @@ release can still be re-run — after publishing, the only fix is a hand-edited 
 Run it locally before tagging to see exactly what the Release will say.
 
 The formula's `sha256` is taken from the *registry's* tarball, not a local `npm pack`, since
-the registry URL is what the formula points at. That step retries: the CDN takes a few
-seconds to serve a version published one job earlier, and a cold 404 there would fail an
-otherwise fine release.
+the registry URL is what the formula points at. That step retries until a 15-minute
+deadline: the CDN can take minutes to serve a version published one job earlier (v0.6.0's
+tarball 404'd for about five after `npm view` listed it), and a cold 404 there would fail an
+otherwise fine release. It was six tries 15 s apart until that happened.
 
 No winget. It has no npm step and its `PackageDependencies` field is only partly honoured by
 the client, so a real Windows package means shipping a self-contained ~58 MB bundle (Node

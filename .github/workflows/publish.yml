@@ -186,14 +186,21 @@ jobs:
       # has to be right -- and if the two ever disagree, this is where it should
       # be found out, not in someone's `brew install`.
       #
-      # The retry loop is not defensive padding: the registry CDN takes a few
-      # seconds to serve a version published one job ago, and a cold 404 here
-      # would fail a release that is otherwise entirely fine.
+      # The retry loop is not defensive padding: the registry CDN can take
+      # minutes to serve a version published one job ago, and a cold 404 here
+      # would fail a release that is otherwise entirely fine. It was sized for
+      # "a few seconds" at first (six tries, 15 s apart), and v0.6.0 404'd for
+      # about five minutes after `npm view` already listed the version, failing
+      # this job until a hand re-run. So it is a deadline now, with room to
+      # spare over what was measured, not a count of tries.
       - name: Resolve the published tarball
         id: tarball
         run: |
           url="https://registry.npmjs.org/qrdrop/-/qrdrop-$VERSION.tgz"
-          for attempt in 1 2 3 4 5 6; do
+          deadline=$(( SECONDS + 900 ))
+          attempt=0
+          while (( SECONDS < deadline )); do
+            attempt=$(( attempt + 1 ))
             if curl -fsSL "$url" -o tarball.tgz; then
               sha="$(sha256sum tarball.tgz | cut -d' ' -f1)"
               echo "url=$url" >> "$GITHUB_OUTPUT"
@@ -202,9 +209,9 @@ jobs:
               exit 0
             fi
             echo "Attempt $attempt: not on the registry CDN yet; waiting."
-            sleep 15
+            sleep 20
           done
-          echo "qrdrop@$VERSION never became fetchable at $url" >&2
+          echo "qrdrop@$VERSION was not fetchable at $url within 15 minutes" >&2
           exit 1
 
       - uses: actions/checkout@v7
