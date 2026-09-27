@@ -1702,7 +1702,34 @@ different in each.**
   round trip in the WebView, which the bare-socket spike never paid. It has
   not been measured.
 
-Still not run: app ↔ app, the desktop app on either end, and CLI ↔ CLI across
+Still not run: app ↔ app between two phones, and CLI ↔ CLI across
 two machines. That last one ran only on one machine, with `QRDROP_LAN_LISTEN`
 forcing the roles. Over real relays with 256 MiB, the receiver listening ran
 32.8 MB/s, the sender listening 41.7 and `--no-lan` 17.0.
+
+### The desktop app and the phone, app to app (2026-09-27)
+
+The Windows desktop app (debug, `750d1cd`) against the Android app (debug,
+same commit), 128 MiB each way over real relays, both pages driven over CDP.
+Windows says `prompt` and the phone `quiet`, so the phone listened through
+`lan.rs` in both directions and WebView2 dialled it from the page's own
+WebSocket. That dial is what had never carried a file.
+
+- **Desktop app sends, phone receives:** 6.3 MB/s from the Save tap to both
+  sides reaching done, a direct TCP connection from the desktop to the
+  phone's relay port throughout, digests equal. The phone's save path is
+  the ceiling here, as it was against the CLI.
+- **Phone sends, desktop app receives:** the file arrived whole (134,217,728
+  bytes, digests equal, both sides `lan`), but there is no rate. The
+  harness lost its CDP handle to the desktop page when Windows' save dialog
+  opened, and the dialog was answered by hand.
+
+Both badges moved from "Local network" to "Local network, direct" during
+the transfer, the sender's at Accept and the receiver's at its first frame
+over the socket, which is the indicator's first run outside a unit test.
+
+The phone offered exactly one address, 192.168.1.7, its Wi-Fi. That is the
+`getifaddrs` listing in `lan.rs` running on the device, since a Windows
+host never compiles it: loopback and the down interfaces were filtered, and
+nothing that is not private was offered. A phone with a VPN up has not been
+tried.
