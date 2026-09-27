@@ -48,19 +48,19 @@
     "test:e2e:interop:lan": "npm run build && node e2e/interop.e2e.mjs --lan"
   },
   "dependencies": {
-    "@trystero-p2p/nostr": "0.25.3",
-    "@trystero-p2p/torrent": "0.25.3",
+    "@trystero-p2p/nostr": "0.25.4",
+    "@trystero-p2p/torrent": "0.25.4",
     "jsqr": "^1.4.0",
     "qrcode-generator": "^2.0.4"
   },
   "optionalDependencies": {
-    "node-datachannel": "0.33.0"
+    "node-datachannel": "0.33.4"
   },
   "devDependencies": {
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.6.3",
     "esbuild": "^0.25.0",
     "mermaid": "^11.17.2",
-    "playwright": "^1.61.1",
+    "playwright": "^1.63.0",
     "typescript": "^7.0.2"
   },
   "engines": {

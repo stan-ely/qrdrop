@@ -22,6 +22,11 @@ the receiver accepts and before the first chunk; `createReceiver` takes an optio
 `onPeerLan`; and a paired room has `attachLan`, `sendOverLan` and `onClose`. The
 negotiation is `createLanLink` in `src/transport/lan.js`.
 
+**Dependencies.** `node-datachannel` moves from 0.33.0 to 0.33.4. It was pinned because
+0.33.0 was the last version to ship every platform's prebuilt binary, and 0.33.4 ships
+them all again, adding Windows on ARM. The Trystero packages go to 0.25.4, a patch with
+no API change. Both interop suites and the two-browser suite pass on the new versions.
+
 ## 0.6.0 — 2026-09-18
 
 **A transfer could die before it started, with "Out-of-order frame: expected 0, got
