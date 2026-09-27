@@ -257,6 +257,24 @@ const IPC_ORIGINS = ['ipc:', 'http://ipc.localhost']
 const ASSET_ORIGINS = ['asset:', 'http://asset.localhost', 'https://asset.localhost']
 
 /**
+ * The local-network fast path (src/transport/lan.js), as a connect-src entry.
+ *
+ * A bare scheme, which allows a ws:// connection to any host, and that is as
+ * narrow as this can be written: the peer is a LAN address nobody knows until
+ * the offer arrives, and the app's own relay is on a port picked at bind
+ * time. What keeps it safe is not this list. lan.js dials only private IPv4
+ * addresses from an offer the paired peer sealed, and the frames on the
+ * socket are sealed like every other frame. Plain ws: and not wss:, because
+ * no certificate exists for a LAN address, and the encryption that matters
+ * is inside.
+ *
+ * App only. The website has no listener to reach and no LanPlatform, and an
+ * entry that opens a page to every ws:// host would be the widest thing in
+ * its policy for nothing (CLAUDE.md, the platform seam).
+ */
+const LAN_ORIGINS = ['ws:']
+
+/**
  * The Content-Security-Policy, as a single generated string.
  *
  * connect-src is built from SIGNALING_URLS -- every URL src/transport/room.js
@@ -327,15 +345,24 @@ const ASSET_ORIGINS = ['asset:', 'http://asset.localhost', 'https://asset.localh
  * entry is justified. Hence a parameter rather than an unconditional entry.
  *
  * @param {readonly string[]} signalingUrls
- * @param {{ ipc?: boolean }} [options] `ipc` adds the Tauri runtime's own
- *   origins: the IPC endpoints and the asset protocol the shared-file path
- *   reads through. One flag for both because they arrive together -- a build
- *   with a Tauri runtime has both, and a build without has neither.
+ * @param {{ ipc?: boolean, lan?: boolean }} [options] `ipc` adds the Tauri
+ *   runtime's own origins: the IPC endpoints and the asset protocol the
+ *   shared-file path reads through. One flag for both because they arrive
+ *   together -- a build with a Tauri runtime has both, and a build without
+ *   has neither. `lan` adds LAN_ORIGINS, for the app's local-network fast
+ *   path. A separate flag from `ipc` because it is a separate permission: it
+ *   widens where the page may connect, where `ipc` only names the runtime's
+ *   own endpoints.
  * @returns {string}
  */
-export function buildCSP(signalingUrls, { ipc = false } = {}) {
+export function buildCSP(signalingUrls, { ipc = false, lan = false } = {}) {
   const origins = [...new Set(signalingUrls.map(u => new URL(u).origin))]
-  const connect = [`'self'`, ...(ipc ? [...IPC_ORIGINS, ...ASSET_ORIGINS] : []), ...origins]
+  const connect = [
+    `'self'`,
+    ...(ipc ? [...IPC_ORIGINS, ...ASSET_ORIGINS] : []),
+    ...(lan ? LAN_ORIGINS : []),
+    ...origins,
+  ]
   const directives = [
     `default-src 'self'`,
     `script-src 'self'`,
@@ -784,7 +811,7 @@ async function main() {
   // and the most restrictive of the two wins -- so allowing IPC in
   // tauri.conf.json alone is not enough while this tag also ships in the
   // bundle. Both come from the same generator so they cannot disagree.
-  const csp = buildCSP(SIGNALING_URLS, { ipc: channel === 'app' })
+  const csp = buildCSP(SIGNALING_URLS, { ipc: channel === 'app', lan: channel === 'app' })
   const template = await readFile(path.join(SITE, 'index.html'), 'utf8')
   // replaceAll, not replace: __ORIGIN__ appears three times (og:url and two
   // image URLs) and `String.replace` with a string argument substitutes only

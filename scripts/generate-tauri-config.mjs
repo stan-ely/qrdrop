@@ -33,7 +33,7 @@ const SRC_TAURI = path.join(ROOT, 'app', 'src-tauri')
 
 async function main() {
   const template = await readFile(path.join(SRC_TAURI, 'tauri.conf.template.json'), 'utf8')
-  const csp = buildCSP(SIGNALING_URLS, { ipc: true })
+  const csp = buildCSP(SIGNALING_URLS, { ipc: true, lan: true })
 
   const output = template.replaceAll('__CSP__', csp)
   if (output.includes('__CSP__')) {

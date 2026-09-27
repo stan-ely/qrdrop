@@ -11,6 +11,19 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
+## Unreleased
+
+**Much faster between the app and another native device on the same Wi-Fi.** When the
+other end is the qrdrop app or the command line, the file now moves over a direct
+connection on the local network instead of WebRTC. Measured on a Realme phone with a
+Windows desktop running the command line, a 128 MiB file went from 5.5 MB/s to 13.0
+sending from the phone. Receiving went from 4.3 MB/s to 5.8, where Android's save path,
+not the network, is now the limit. The file is encrypted exactly as before, and the connection is offered only after the four
+symbols are confirmed. The Android and Linux apps accept the connection. The Windows and
+macOS apps never listen, because that is where a firewall dialog would appear, but they
+connect out to a phone or a Linux machine that does. Two Windows machines, and anything
+paired with the website, stay on WebRTC.
+
 ## 1.1.0 -- 2026-09-17
 
 **A smaller Android download.** Each release now has an APK per processor type beside the

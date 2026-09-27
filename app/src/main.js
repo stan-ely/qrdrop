@@ -28,10 +28,20 @@ import { defineQRDrop, registerPlatform } from '../../src/web/index.js'
 import { wireInfoSheets } from '../../site/wire-sheets.js'
 import { createTauriSink, canStreamToDisk } from './tauri-sink.js'
 import { secretFromDeepLink } from './deep-link.js'
+import { createTauriLan } from './lan.js'
 
 const APP_LINK_ORIGIN = 'https://share.stan-ely.com/'
 
 registerPlatform({ createSink: createTauriSink, canStreamToDisk })
+
+// The local-network fast path. Registered when the shell has answered, which
+// is a few milliseconds and always before any pairing can finish (see
+// lan.js). A failure only means this app stays on WebRTC, as the website
+// always does, so it is logged and nothing else.
+createTauriLan().then(
+  lan => registerPlatform({ lan }),
+  error => console.warn('qrdrop: local-network fast path unavailable', String(error)),
+)
 
 defineQRDrop()
 

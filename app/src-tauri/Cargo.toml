@@ -54,6 +54,22 @@ base64 = "0.22"
 tauri-plugin-deep-link = "2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# The local-network fast path's relay (src/lan.rs): a listener a webview
+# cannot be, forwarding sealed frames between this app's page on 127.0.0.1
+# and the peer on the LAN. tokio is already in the tree through Tauri, which
+# runs its async runtime; the features named here are the ones lan.rs uses on
+# top. tokio-tungstenite is new to the build, with its default features off:
+# the relay only ever accepts, so it takes the server handshake and none of
+# the client, TLS or connect machinery. CLAUDE.md's "no new runtime
+# dependencies" is the root npm package's rule, not this crate's.
+tokio = { version = "1", features = ["net", "time", "macros"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+
+[dev-dependencies]
+# lan.rs's test dials the relay as both the page and the peer would.
+tokio = { version = "1", features = ["rt", "macros"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect"] }
 
 # Windows and Linux deliver a deep link by launching a SECOND copy of the app
 # with the URL in argv; single-instance forwards that to the running window

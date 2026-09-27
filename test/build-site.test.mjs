@@ -65,6 +65,19 @@ test('ipc: true adds the Tauri runtime origins, ahead of the signalling ones', (
   )
 })
 
+test('lan: true adds the ws: scheme for the local-network fast path, and nothing else does', () => {
+  const connect = (/** @type {string} */ csp) => csp.split('; ').find(d => d.startsWith('connect-src '))
+  assert.equal(
+    connect(buildCSP(['wss://a.example'], { ipc: true, lan: true })),
+    `connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://asset.localhost ws: wss://a.example`,
+  )
+  // The website's policy, and an app policy without the flag, must not open
+  // the page to every ws:// host: a bare scheme is the widest entry a
+  // connect-src can hold.
+  assert.doesNotMatch(connect(buildCSP(SIGNALING_URLS)) ?? '', /(^| )ws:( |$)/)
+  assert.doesNotMatch(connect(buildCSP(SIGNALING_URLS, { ipc: true })) ?? '', /(^| )ws:( |$)/)
+})
+
 test('the website carries no Tauri runtime origins at all', () => {
   // The half that matters more, and the reason this is a parameter rather
   // than an unconditional entry: the deployed site has no Tauri runtime, so

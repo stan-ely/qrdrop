@@ -1,3 +1,4 @@
+mod lan;
 mod share;
 mod sink;
 
@@ -43,6 +44,7 @@ pub fn run() {
         // app/src/main.js.
         .plugin(tauri_plugin_deep_link::init())
         .manage(sink::SinkState::default())
+        .manage(lan::LanState::default())
         .invoke_handler(tauri::generate_handler![
             sink::sink_open,
             sink::sink_write,
@@ -59,6 +61,13 @@ pub fn run() {
             // end, the same shape and registered everywhere for the same
             // reasons. See src/share.rs.
             share::take_launch_action,
+            // The local-network fast path's relay: whether listening is
+            // quiet here, and a listener for one peer and one page. Every
+            // target, for share.rs's reason; on a target that says 'prompt'
+            // the JS side never calls lan_listen. See src/lan.rs.
+            lan::lan_mode,
+            lan::lan_listen,
+            lan::lan_close,
         ])
         .setup(|app| {
             // Desktop dev has no installer to have registered the `qrdrop`
