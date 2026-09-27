@@ -86,7 +86,7 @@ const EARLY_FRAME_LIMIT = 16
 export const RELAYS = [
   'wss://nos.lol',
   'wss://relay.primal.net',
-  'wss://relay.mostr.pub',
+  'wss://relay.ditto.pub',
   'wss://purplerelay.com',
   'wss://nostr.data.haus',
   'wss://nostr-01.yakihonne.com',

@@ -28,6 +28,11 @@ receiver when the first frame arrives over the direct connection.
 them all again, adding Windows on ARM. The Trystero packages go to 0.25.4, a patch with
 no API change. Both interop suites and the two-browser suite pass on the new versions.
 
+**One signalling relay replaced.** `wss://relay.mostr.pub` now answers every connection
+with a permanent redirect to `relay.ditto.pub`, and a WebSocket does not follow redirects,
+so it had stopped carrying any pairing. The list names `wss://relay.ditto.pub` in its place,
+which paired two peers on every attempt, and the app's content security policy follows.
+
 ## 0.6.0 — 2026-09-18
 
 **A transfer could die before it started, with "Out-of-order frame: expected 0, got
