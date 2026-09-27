@@ -110,6 +110,7 @@ const VIEWPORTS = [
    * had visibly changed shape.
    */
   { name: 'phone-narrow', width: 360, height: 800 },
+  { name: 'phone-short', width: 360, height: 640 },
   { name: 'phone', width: 390, height: 844 },
   /*
    * The same two phones turned sideways, and they are here because their

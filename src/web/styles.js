@@ -1630,6 +1630,19 @@ input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring);
 }
 
 /*
+ * Short AND narrow: a 360x640 phone, the small end of what Android still
+ * ships. Each branch above answers one axis and assumes the other has slack,
+ * so here the copy column kept the narrow branch's 12px gaps while the media
+ * above it had already given up everything down to the pairing QR's floor --
+ * and the send screen scrolled by 2px in both engines. The gaps between the
+ * copy's blocks are what is left to give; the QR's floor is not, because a
+ * code that does not resolve fails the one job that screen has.
+ */
+@media ${BREAKPOINT_SHORT} and (max-width: 30rem) {
+  .card-copy { gap: var(--sp-2); }
+}
+
+/*
  * Wide and short: media beside the words instead of above them.
  *
  * A laptop in landscape is short of height with several hundred horizontal
