@@ -100,6 +100,13 @@ const RUNNING_SCREENS = new Set([
   'send', 'receive', 'verify', 'transfer', 'beam-send', 'beam-receive',
 ])
 
+/**
+ * The shortest gap between two progress renders; see _trackProgress. Ten a
+ * second is smoother than a person reads a percentage, and each skipped
+ * render is main-thread time the sender spends sealing the next frame instead.
+ */
+const PROGRESS_INTERVAL_MS = 100
+
 const coarsePointer = () =>
   typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 
@@ -1493,12 +1500,26 @@ export class QRDropElement extends HTMLElement {
    * One progress renderer for both directions, which is why it reads the
    * union `TransferProgress`.
    *
+   * At most one render per PROGRESS_INTERVAL_MS, plus the last one. Both
+   * cores report after every 16 KiB frame, and `_setState` renders the whole
+   * UI synchronously, so this used to be ~8,000 full renders for 128 MiB,
+   * each one on the main thread between one frame and the next. On the
+   * RMX3868 that was 0.53 ms a frame, and the fast path's send is bound by
+   * main-thread time per frame: four alternating 64 MiB rounds to the CLI
+   * went 12.2 MB/s rendering every frame and 15.5 MB/s at this interval.
+   * The same rule beam's onTick keeps, for the same reason. The last report
+   * always renders, so the bar never stops short of 100%.
+   *
    * @param {string} verb 'Sent' or 'Received'.
    * @returns {(p: TransferProgress) => void}
    */
   _trackProgress(verb) {
+    let rendered = -Infinity
     return p => {
       const moved = 'sent' in p ? p.sent : p.received
+      const now = performance.now()
+      if (moved < p.total && now - rendered < PROGRESS_INTERVAL_MS) return
+      rendered = now
       this._setState({
         progress: { moved, total: p.total },
         status: `${verb} ${bytes(moved)} of ${bytes(p.total)}`,

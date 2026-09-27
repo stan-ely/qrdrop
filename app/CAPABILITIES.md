@@ -1733,3 +1733,70 @@ The phone offered exactly one address, 192.168.1.7, its Wi-Fi. That is the
 host never compiles it: loopback and the down interfaces were filtered, and
 nothing that is not private was offered. A phone with a VPN up has not been
 tried.
+
+### The phone's send, attributed (2026-09-27)
+
+The open question from "The fast path, built": the phone sent at about 13
+MB/s over a socket that had carried 30-50 bare. Same RMX3868 debug app, same
+Windows CLI receiving, 64 MiB a run over real relays. The WebCrypto guess
+above was wrong, and so were three others.
+
+**Ruled out, each by measurement on the phone:**
+
+- **WebCrypto.** In the app's WebView, one 16 KiB frame costs 63 µs to
+  encrypt and 22 µs to hash, and the sender's three calls in a row come to
+  94 µs, a ceiling of about 174 MB/s. Adding all three to a bare send loop
+  took it from 43.3 to 40.5 MB/s.
+- **The in-process relay.** A bare loop from the page through `lan.rs` to a
+  Node client on the desktop ran 39.6-43.3 MB/s in the *debug* build, the
+  same as the page going straight to the desktop (32-41). Unoptimised Rust
+  unmasking every client frame was a plausible suspect, and it is not one.
+  It made no difference whether the desktop end read with `ws` or with
+  Node's built-in WebSocket, which is what the CLI uses.
+- **The receiver.** A CPU profile of the CLI through a whole run has its
+  main thread idle 38% of the time, and it asked the phone to pause once,
+  for 245 ms, while it opened the file.
+- **The drain poll.** `wrapWebSocket`'s `drained()` polls with
+  `setTimeout(1)`, which this WebView clamps to 4.6 ms. Swapping it for a
+  `MessageChannel` hop gave 14.2 and 16.4 against 13.9 and 14.4, which is
+  inside the noise, and spinning that way made a run slower.
+
+**What it is: main-thread time per frame.** A Chromium trace of a send has
+the page's main thread busy about 0.7 ms per frame, and the same bare loop
+with 0.5 ms of busy work per message drops from 43 to 24 MB/s. The socket
+lives on other threads of the same phone, so every millisecond the page
+spends between frames is a millisecond it does not refill it. The largest
+single piece was the UI: `_trackProgress` called `_setState` after every
+frame, so the whole view rendered 4,116 times in a 64 MiB run, 0.53 ms each.
+Rendering at most every 100 ms, four alternating rounds each:
+
+| 64 MiB, phone → Windows CLI | Run 1 | Run 2 | Run 3 | Run 4 | Mean |
+| --- | --- | --- | --- | --- | --- |
+| Render every frame | 11.9 | 13.3 | 11.3 | 12.4 | 12.2 MB/s |
+| At most every 100 ms (patched in the page) | 14.8 | 15.7 | 15.5 | 16.1 | 15.5 MB/s |
+
+The change itself, built into a debug APK (`_trackProgress` with
+`PROGRESS_INTERVAL_MS`), then eight 64 MiB runs in a row, every one over
+the direct socket with digests equal: 15.1, 8.2, 15.9, 22.1, 23.1, 23.2,
+12.3 and 12.8 MB/s. The median is 15.5, which agrees with the patched
+rounds. The spread does not: runs seem to fall at 12-16 and at 22-23, with
+one at 8.2, where eight runs of the old build the same afternoon all fell
+between 11.3 and 13.3. It is unexplained. Wi-Fi weather is the obvious
+candidate, and it has not been shown. Treat the gain as real and its size
+as roughly a quarter until a longer series says otherwise.
+
+One trap from this run, for the next device session: `tauri android build
+--debug --target aarch64` writes `apk/universal/debug/`, not
+`apk/arm64/debug/`. The file at the second path was an old build without
+`lan.rs`, and installing it made every run fall back to WebRTC at 5 MB/s
+while the page looked normal. `invoke('lan_mode')` answering "Command not
+found" is how that shows.
+
+What is left is spread thin, with no hot function to go after: in a JS
+profile of a run with renders limited, `WebSocket.send` is about 0.12 ms a
+frame, the calling side of the three WebCrypto calls about 0.2, the engine's
+own task and promise machinery about 0.3, and GC under 0.1. Each of those is
+paid per frame, so the next step on this path is fewer, larger frames rather
+than faster code. `CHUNK_SIZE` is set by the data channel's message size,
+the direct socket has no such limit, and a frame size that varies by path
+changes the protocol, so that is a decision and not a patch.

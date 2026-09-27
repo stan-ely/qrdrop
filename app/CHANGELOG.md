@@ -26,6 +26,12 @@ paired with the website, stay on WebRTC. A phone offers every address it has on 
 network, so a VPN running on it does not hide its Wi-Fi address from the other device. While the file is moving that
 way, the connection badge on the transfer screen reads "Local network, direct".
 
+**Sending from a phone is faster on that connection.** The progress bar used to redraw the
+whole screen after every 16 KB of the file, and on a phone that was a real part of the time
+spent per piece. It now redraws at most ten times a second. The same phone's sends to the
+command line went from about 12 MB/s to a median of 15.5 over eight runs, with a wide spread
+between runs.
+
 ## 1.1.0 -- 2026-09-17
 
 **A smaller Android download.** Each release now has an APK per processor type beside the

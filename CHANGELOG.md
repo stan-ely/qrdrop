@@ -33,6 +33,10 @@ with a permanent redirect to `relay.ditto.pub`, and a WebSocket does not follow 
 so it had stopped carrying any pairing. The list names `wss://relay.ditto.pub` in its place,
 which paired two peers on every attempt, and the app's content security policy follows.
 
+**The progress bar redraws at most ten times a second.** It redrew the whole component after
+every 16 KB frame, which on a phone was a measurable share of the time spent per frame; see
+the app changelog for the numbers. The final 100% is always drawn.
+
 ## 0.6.0 — 2026-09-18
 
 **A transfer could die before it started, with "Out-of-order frame: expected 0, got
