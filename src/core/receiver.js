@@ -67,6 +67,9 @@ const RESUME_AT = 1 * 1024 * 1024
  * @param {(path: NetworkPath) => void} [args.onPeerPath] The peer's own view of
  *   the network route. Advisory: nothing waits for it, and a peer that never
  *   sends one is not an error.
+ * @param {(msg: Extract<ControlMessage, { t: 'lan-hello' | 'lan-offer' }>) => void} [args.onPeerLan]
+ *   The peer's half of the local-network negotiation (transport/lan.js).
+ *   Advisory in the same way as onPeerPath: a transfer never waits on it.
  * @param {(manifest: Manifest) => Promise<Sink | null>} args.createSink Where received
  *   bytes land. Required, and deliberately not defaulted: this module is the
  *   runtime-agnostic core, and a default would have to name either the browser
@@ -86,7 +89,7 @@ const RESUME_AT = 1 * 1024 * 1024
  */
 export function createReceiver({
   channel, sendKey, recvKey, control, nextControlIndex,
-  onOffer, onProgress, onFileDone, onError, onPeerPath, createSink,
+  onOffer, onProgress, onFileDone, onError, onPeerPath, onPeerLan, createSink,
 }) {
   let controlIn = 0
 
@@ -351,6 +354,13 @@ export function createReceiver({
         // never sees this (it is the side that sends it); a misbehaving peer
         // that sent one anyway would only toggle a gate no send loop reads.
         if (msg.t === 'pause' || msg.t === 'resume') return void control.setFlow(msg.t)
+
+        // The local-network negotiation, for the same reasons as 'path': it
+        // describes the connection, answers no request here, and nothing
+        // awaits it as a reply. Called synchronously and in frame order, which
+        // transport/lan.js relies on: a receiver's reply to the sender's
+        // hello is queued from inside this call, ahead of any Accept.
+        if (msg.t === 'lan-hello' || msg.t === 'lan-offer') return void onPeerLan?.(msg)
 
         if (SENDER_REPLIES.includes(msg.t)) return void control.push(msg)
         if (msg.t === 'manifest') return void await handleManifest(msg)

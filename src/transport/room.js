@@ -50,7 +50,7 @@
 
 import { joinRoom as joinNostr } from '@trystero-p2p/nostr'
 import { joinRoom as joinTorrent } from '@trystero-p2p/torrent'
-import { createChannel } from './channel.js'
+import { createChannel, createLanChannel, createSwitchableChannel } from './channel.js'
 import { createEphemeralKeypair, exportPublicKey, establishSession } from '../core/session.js'
 import { fromBase64url, toBase64url } from '../core/secret.js'
 
@@ -699,7 +699,7 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
 
   // Null until the caller registers onFrame(). Frames the paired peer sends
   // before then wait in `early` and are handed over, in order, the moment it
-  // does -- see frameAction.onMessage below for why they cannot be dropped.
+  // does -- see deliver() below for why they cannot be dropped.
   /** @type {((bytes: Bytes) => void) | null} */
   let frameHandler = null
   /** @type {Bytes[]} */
@@ -717,12 +717,12 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
   /** @type {string | null} */
   let pairedPeerId = null
 
-  frameAction.onMessage = (data, { peerId: from }) => {
-    // A stranger's frames are dropped, never held: queueing an unpaired
-    // peer's bytes for later replay into an authenticated session is the
-    // opposite of the intent.
-    if (from !== pairedPeerId) return
-    const bytes = toBytes(data)
+  /**
+   * One of the paired peer's frames, from WebRTC or from an attached LAN
+   * socket: handed to the handler, or held until there is one.
+   * @param {Bytes} bytes
+   */
+  const deliver = bytes => {
     if (frameHandler) return frameHandler(bytes)
 
     // The PAIRED peer's frames are held until onFrame() is registered. They
@@ -745,6 +745,14 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
     // past it frames are dropped, which surfaces as that same out-of-order
     // failure in the offending session and nowhere else.
     if (early.length < EARLY_FRAME_LIMIT) early.push(bytes)
+  }
+
+  frameAction.onMessage = (data, { peerId: from }) => {
+    // A stranger's frames are dropped, never held: queueing an unpaired
+    // peer's bytes for later replay into an authenticated session is the
+    // opposite of the intent.
+    if (from !== pairedPeerId) return
+    deliver(toBytes(data))
   }
 
   return new Promise((resolve, reject) => {
@@ -807,6 +815,7 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
             // these and overtake them.
             for (const bytes of early.splice(0)) fn(bytes)
           },
+          deliver,
           session,
           peerId: id,
         })
@@ -901,7 +910,7 @@ export async function openRoom({
 
   onStatus?.(`Paired over ${winner.strategy}`)
 
-  const { session, peerId, room, frameAction, setFrameHandler } = winner
+  const { session, peerId, room, frameAction, setFrameHandler, deliver } = winner
 
   /**
    * Memoised: classifyPath polls for up to three seconds, and there are now
@@ -921,6 +930,19 @@ export async function openRoom({
     return pathOnce
   }
 
+  /**
+   * The session's one outbound channel, pointed at Trystero until a sender
+   * moves it onto the LAN. Handed out from the start rather than swapped
+   * later, because core/ keeps the channel object it is given.
+   */
+  const channel = createSwitchableChannel(createChannel(frameAction, peerId))
+
+  /** @type {LanSocket | null} */
+  let lan = null
+  let closing = false
+  /** @type {Array<() => void>} */
+  const closers = []
+
   return {
     session,
     peerId,
@@ -934,7 +956,7 @@ export async function openRoom({
      * stays 0 and the manual high/low watermark logic in sender.js never fires
      * on this path.
      */
-    channel: createChannel(frameAction, peerId),
+    channel,
 
     /**
      * Register the inbound frame handler.
@@ -983,10 +1005,66 @@ export async function openRoom({
     },
 
     /**
+     * Adopts an authenticated LAN socket (transport/lan.js). Its messages go
+     * into deliver(), the same path as the paired peer's WebRTC frames, and
+     * face the same authentication, ordering and drop accounting there. The
+     * peerId filter does not apply because it has nothing to filter: the
+     * socket is the peer's by its token, and anything else on it would fail
+     * its tag anyway.
+     *
+     * `onLost` is for a receiver. It fires when the socket closes after
+     * carrying at least one frame and before close() was called here, which
+     * is a sender whose frames have stopped arriving while WebRTC may well
+     * still be up. A sender never needs it: its next send refuses a closed
+     * socket (createLanChannel), and a close that lands after its last frame
+     * is followed by the receiver's done or its leave on WebRTC.
+     *
+     * @param {LanSocket} socket
+     * @param {{ onLost?: () => void }} [options]
+     */
+    attachLan(socket, { onLost } = {}) {
+      if (closing) return socket.close()
+      lan?.close()
+      lan = socket
+      let carried = false
+      socket.onclose = () => {
+        if (carried && !closing) onLost?.()
+      }
+      socket.onmessage = bytes => {
+        carried = true
+        deliver(bytes)
+      }
+    },
+
+    /**
+     * Moves this side's frames onto the attached LAN socket. See the header
+     * of transport/lan.js for why this happens only between the peer's
+     * accept and chunk 0, and why the receiver never calls it.
+     * @returns {boolean}
+     */
+    sendOverLan() {
+      if (!lan || !lan.open || closing) return false
+      channel.switchTo(createLanChannel(lan))
+      return true
+    },
+
+    /** @param {() => void} fn */
+    onClose(fn) {
+      closers.push(fn)
+    },
+
+    /**
      * Callers that stay alive afterwards may ignore the promise. One about to
      * exit must await it, or the peer is never told -- see tryLeave.
      */
     close() {
+      if (!closing) {
+        closing = true
+        for (const fn of closers.splice(0)) {
+          try { fn() } catch { /* a closer failing must not keep the room open */ }
+        }
+        lan?.close()
+      }
       return tryLeave(room)
     },
   }

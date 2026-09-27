@@ -171,6 +171,22 @@ interface PairedRoom {
    */
   isRelayed(): Promise<boolean>
   /**
+   * Adopts an authenticated LAN socket. Its inbound messages join the
+   * paired peer's frames in the same handler, and close() closes it. Sending
+   * does not move until sendOverLan().
+   */
+  attachLan(socket: LanSocket, options?: { onLost?: () => void }): void
+  /**
+   * Moves every frame this side sends from WebRTC to the attached LAN
+   * socket, for the rest of the session. Returns false, and moves nothing,
+   * when no socket is attached or it has closed. Only a sender calls it, and
+   * only between the peer's accept and chunk 0 -- see lan.js for why that is
+   * the one safe moment.
+   */
+  sendOverLan(): boolean
+  /** Runs `fn` when close() is called, before the leave goes out. */
+  onClose(fn: () => void): void
+  /**
    * Leaves the room, telling the peer. Settles once the leave message has had
    * its chance to go out, and never rejects. A caller that keeps running may
    * ignore it; a process about to exit must await it, or the peer learns of
@@ -197,6 +213,8 @@ interface ResolvedAttempt {
   room: import('@trystero-p2p/nostr').Room
   frameAction: import('@trystero-p2p/nostr').MessageAction
   setFrameHandler: (fn: (bytes: Bytes) => void) => void
+  /** Hands one of the paired peer's frames in, or holds it until onFrame(). */
+  deliver: (bytes: Bytes) => void
   session: SessionKeys
   peerId: string
 }
@@ -252,8 +270,85 @@ type ControlMessage =
    */
   | { t: 'pause' }
   | { t: 'resume' }
+  /**
+   * The local-network fast path (transport/lan.js). Both belong to the
+   * connection, carry no seq, and are routed past the reply queue to
+   * createReceiver's onPeerLan, as 'path' is. A build that predates them
+   * drops both as unrecognised, which is the whole of the compatibility
+   * story: the peer that sent one then sees no reply, and stays on WebRTC.
+   *
+   * 'lan-hello' says whether this side can accept a connection and whether
+   * doing so would put an OS firewall prompt in front of its person. The
+   * sender sends one only after its SAS confirm, and the receiver sends one
+   * only in reply to the sender's.
+   *
+   * 'lan-offer' comes from whichever side the two hellos chose to listen. It
+   * holds the addresses, the port, and a one-time token for the other side to
+   * present. The token is a bearer secret for one connection and travels
+   * only here, sealed. Every field is peer-supplied and is checked
+   * (lan.js's parseOffer) before anything dials it.
+   */
+  | { t: 'lan-hello'; listen: LanListenMode }
+  | { t: 'lan-offer'; addrs: string[]; port: number; token: string }
 
 type ControlType = ControlMessage['t']
+
+// ---------------------------------------------------------------------------
+// The local-network fast path
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether one side can accept a LAN connection, and at what cost to its
+ * person. 'quiet' listens with nothing shown (Android, Linux), 'prompt' could
+ * listen but the OS would ask first (Windows, and an unsigned macOS app), and
+ * 'none' cannot listen at all.
+ */
+type LanListenMode = 'quiet' | 'prompt' | 'none'
+
+/**
+ * One message-oriented socket to the peer on the LAN, already past the token
+ * handshake by the time room.attachLan sees it. Three adapters build one:
+ * lan.js's wrapWebSocket (a page's or Node's WebSocket client),
+ * node/lan-server.js (the CLI's listening side), and tests.
+ *
+ * Messages that arrive while `onmessage` is null are held and handed over
+ * when it is assigned. That is not a convenience: a WebSocket message
+ * dispatched with no handler is discarded, and the peer does not wait for
+ * this side to be ready.
+ */
+interface LanSocket {
+  send(bytes: Bytes): void
+  readonly bufferedAmount: number
+  readonly open: boolean
+  /** Resolves once bufferedAmount is at or below `threshold`, or the socket closes. */
+  drained(threshold: number): Promise<void>
+  onmessage: ((bytes: Bytes) => void) | null
+  onclose: (() => void) | null
+  close(): void
+}
+
+/** A listener waiting for the one peer that presents its token. */
+interface LanListener {
+  port: number
+  addrs: string[]
+  /** The single connection that presented the token, already acknowledged. */
+  accepted: Promise<LanSocket>
+  close(): void
+}
+
+/**
+ * What a native runtime lends lan.js. The deployed website has none, which
+ * is how it never takes this path: the web component asks
+ * getPlatform().lan, which only app/src/main.js registers, and the CLI
+ * builds one in node/lan.js.
+ */
+interface LanPlatform {
+  listen: LanListenMode
+  /** Present whenever `listen` is not 'none'. Binds only when called. */
+  open?(token: Bytes): Promise<LanListener>
+  /** Opens `ws://host:port/` and resolves once the socket is open. */
+  dial(url: string, timeoutMs: number): Promise<LanSocket>
+}
 
 /**
  * The awaitable inbound-control queue from core/control.js.

@@ -56,6 +56,13 @@ export function relayCapDeclineMessage({ name, size, limit }) {
 export const PEER_DISCONNECTED = 'The other device disconnected.'
 
 /**
+ * The direct local-network connection (transport/lan.js) closed while it was
+ * carrying the file. Said by a sender whose next send finds the socket gone,
+ * and by a receiver whose sender's frames stopped arriving over it.
+ */
+export const LAN_CLOSED = 'The direct connection to the other device on the local network closed.'
+
+/**
  * How to describe a connection's route to the person using it.
  *
  * `label` is the badge text, `detail` the sentence under it. Both surfaces

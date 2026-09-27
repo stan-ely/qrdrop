@@ -108,10 +108,16 @@ async function flowControl(control) {
  *   counter: control.js's sendControl keeps one direction's control frames in
  *   index order by queueing on that function.
  * @param {(p: SendProgress) => void} [args.onProgress]
+ * @param {() => Promise<void> | void} [args.onAccept] Runs once the peer has
+ *   accepted and before chunk 0 is read. It exists for one caller: the LAN
+ *   fast path moves the session's channel here, because this is the one
+ *   moment every frame already sent is one the receiver has provably handled
+ *   (see transport/lan.js). It is awaited, so whatever it waits for delays
+ *   the first chunk, and sendFile does not know or care what it did.
  * @param {AbortSignal} [args.signal]
  * @returns {Promise<{ declined: true } | { declined: false, digest: string }>}
  */
-export async function sendFile({ channel, key, file, fileSeq, control, nextControlIndex, onProgress, signal }) {
+export async function sendFile({ channel, key, file, fileSeq, control, nextControlIndex, onProgress, onAccept, signal }) {
   channel.bufferedAmountLowThreshold = LOW_WATER
   const out = { channel, key, nextControlIndex }
 
@@ -128,6 +134,8 @@ export async function sendFile({ channel, key, file, fileSeq, control, nextContr
   const reply = await control.next(['accept', 'decline', 'error'], fileSeq)
   if (reply.t === 'error') throw new Error('Peer refused the transfer: ' + reply.message)
   if (reply.t === 'decline') return { declined: true }
+
+  await onAccept?.()
 
   let digest = EMPTY_CHAIN()
   let sent = 0
