@@ -189,8 +189,9 @@ async function pairRooms() {
  * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
  * @param {Bytes[]} [args.written]
  * @param {() => void} [args.onLost]
+ * @param {() => void} [args.onCarrying]
  */
-function side({ room, role, platform, onOffer, onFileDone, written = [], onLost }) {
+function side({ room, role, platform, onOffer, onFileDone, written = [], onLost, onCarrying }) {
   const control = createControlStream()
   let n = 0
   const nextControlIndex = () => n++
@@ -215,7 +216,7 @@ function side({ room, role, platform, onOffer, onFileDone, written = [], onLost 
   })
   if (platform) {
     lan = createLanLink({
-      role, platform, room, onLost,
+      role, platform, room, onLost, onCarrying,
       send: msg => sendControl({ channel: room.channel, key: room.session.sendKey, nextControlIndex }, msg),
     })
   }
@@ -236,10 +237,11 @@ async function transfer({ sender, receiver, size = CHUNK_SIZE * 5 + 123 }) {
   for (let at = 0; at < size; at += 65536) crypto.getRandomValues(bytes.subarray(at, at + 65536))
   /** @type {Bytes[]} */
   const written = []
+  let carrying = 0
   /** @type {Promise<{ name: string, size: number, digest: string }>} */
   const received = new Promise(resolve => {
     side({
-      room: guest, role: 'receiver', platform: receiver, written,
+      room: guest, role: 'receiver', platform: receiver, written, onCarrying: () => { carrying += 1 },
       onOffer: ({ accept }) => { void accept() },
       onFileDone: resolve,
     })
@@ -268,7 +270,7 @@ async function transfer({ sender, receiver, size = CHUNK_SIZE * 5 + 123 }) {
     for (const c of written) { got.set(c, at); at += c.length }
     assert.deepEqual(got, bytes, 'the file arrived whole')
     assert.equal(done.digest, result.declined ? '' : result.digest)
-    return { flipped, waited, chunks: Math.ceil(size / CHUNK_SIZE) }
+    return { flipped, waited, carrying, chunks: Math.ceil(size / CHUNK_SIZE) }
   } finally {
     await Promise.all([host.close(), guest.close()])
   }
@@ -279,6 +281,7 @@ test('two quiet peers move the chunks and the completion onto the LAN, and nothi
   const receiverPlatform = net.platform('quiet')
   const r = await transfer({ sender: net.platform('quiet'), receiver: receiverPlatform })
   assert.equal(r.flipped, true)
+  assert.equal(r.carrying, 1, "the receiver hears once that the sender switched: the app's badge")
   assert.equal(receiverPlatform.opened, 1, 'both quiet, so the receiver listens')
   // The listener is the receiver, so the sender is the dialler: every chunk
   // plus 'complete' went dialler -> listener, and the receiver's replies
@@ -335,6 +338,7 @@ test('an unreachable listener leaves the transfer on WebRTC', async () => {
   }
   const r = await transfer({ sender: cannotDial, receiver: net.platform('quiet') })
   assert.equal(r.flipped, false)
+  assert.equal(r.carrying, 0, 'a receiver still on WebRTC never shows the fast-path badge')
   assert.equal(net.frames.toListener + net.frames.toDialler, 0)
 })
 

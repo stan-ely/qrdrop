@@ -51,7 +51,7 @@ const SAS_WORDS = ['anchor', 'butter', 'cactus', 'dolphin']
 function state(overrides) {
   return /** @type {any} */ ({
     screen: 'choose', role: null, status: '', error: null, code: '', qrNode: null,
-    qrIsLink: false, path: null, pathDebug: null, cameraAvailable: true, rtcAvailable: true,
+    qrIsLink: false, path: null, lan: false, pathDebug: null, cameraAvailable: true, rtcAvailable: true,
     capabilityNote: null, coarse: false, sas: '🎧 🧈 🌵 🐬', sasWords: SAS_WORDS,
     offer: null, file: null, progress: null, outcome: null, message: null, digest: '',
     dragging: false, copied: null, pairing: false, busy: false, manualError: null,
@@ -214,4 +214,25 @@ test('the beam code enlarges on press, and the backdrop only ever shrinks it', (
   nodes.find(n => n.props?.id === 'beam-stage').props.onclick()
   nodes.find(n => n.props?.class === 'beam-hint').props.onclick()
   assert.deepEqual(calls, [['beam:enlarge', undefined], ['beam:enlarge', false]])
+})
+
+test('the fast path takes over the badge, in the local colour and with no metered warning', () => {
+  // 'relay' and a large file: the one pairing where the badge would otherwise
+  // warn loudest, so a fast-path badge that let the warning through, or kept
+  // the relay's colour, would show here.
+  const file = { name: 'holiday.mov', size: 900_000_000 }
+  const progress = { moved: 1, total: file.size }
+  const on = screenTree(state({ screen: 'transfer', role: 'sender', file, progress, path: 'relay', lan: true }), 'transfer')
+  const badge = [...walk(on)].find(n => String(n.props?.class ?? '').startsWith('path-badge'))
+  assert.equal(badge?.props.class, 'path-badge local')
+  assert.match(textOf(on), /Local network, direct/)
+  assert.doesNotMatch(textOf(on), /relay|mobile data|metered/i)
+
+  const off = screenTree(state({ screen: 'transfer', role: 'sender', file, progress, path: 'relay' }), 'transfer')
+  assert.match(textOf(off), /Through a public relay/)
+
+  // The receiver learns of the switch only from the first frame, which may
+  // come before the classification ever resolves.
+  const early = screenTree(state({ screen: 'transfer', role: 'receiver', file, progress, lan: true }), 'transfer')
+  assert.match(textOf(early), /Local network, direct/)
 })

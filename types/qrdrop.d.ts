@@ -175,7 +175,7 @@ interface PairedRoom {
    * paired peer's frames in the same handler, and close() closes it. Sending
    * does not move until sendOverLan().
    */
-  attachLan(socket: LanSocket, options?: { onLost?: () => void }): void
+  attachLan(socket: LanSocket, options?: { onLost?: () => void; onCarrying?: () => void }): void
   /**
    * Moves every frame this side sends from WebRTC to the attached LAN
    * socket, for the rest of the session. Returns false, and moves nothing,

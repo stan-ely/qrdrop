@@ -116,6 +116,23 @@ export function pathDescription(path) {
 }
 
 /**
+ * The badge once the file is moving over the local-network fast path
+ * (transport/lan.js). Not a NetworkPath: that type is room.path()'s
+ * classification of the WebRTC connection, which the fast path does not
+ * replace -- the receiver's replies stay on it, and so does the sender's
+ * every frame before Accept. So it is a separate fact the badge prefers,
+ * rather than a fifth answer to a question the room asks of ICE.
+ *
+ * "Local network" leads because it is the same promise the 'local' badge
+ * makes, and the same colour carries it. "Faster" is what the person can
+ * notice; the CLI says the same thing in its own words.
+ */
+export const LAN_PATH = {
+  label: 'Local network, direct',
+  detail: "A direct connection to the other device on this network, faster than the usual route. The file's bytes are staying on this network.",
+}
+
+/**
  * The size at which crossing the internet is worth saying out loud.
  *
  * 25 MiB, and deliberately NOT RELAYED_MAX_BYTES, though the two constants now

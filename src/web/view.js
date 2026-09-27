@@ -46,7 +46,7 @@
 
 import { h } from './vdom.js'
 import { bytes, duration } from '../core/format.js'
-import { pathDescription, meteredWarning } from '../core/messages.js'
+import { pathDescription, meteredWarning, LAN_PATH } from '../core/messages.js'
 // A value import, not just a type -- checked once against beam.js's own
 // module top level before relying on it here: it defines constants and
 // exported functions and touches neither `document` nor a camera at import
@@ -81,6 +81,10 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  * @property {NetworkPath | null} path which route
  *   the connection took, or null before classification resolves -- and always
  *   null in beam mode, which has no connection to classify.
+ * @property {boolean} lan whether this side's file is moving over the
+ *   local-network fast path: the sender once it switched at Accept, the
+ *   receiver once the first frame arrived over it. Never set on the website,
+ *   which has no LanPlatform. The badge prefers it to `path`.
  * @property {string | null} pathDebug TEMPORARY: the raw candidate-pair dump,
  *   populated only under `?debug=path`. Remove with collectPathEvidence.
  * @property {boolean} cameraAvailable
@@ -172,18 +176,24 @@ const builders = {
  * @param {State} state
  */
 function pathBadge(state) {
-  if (!state.path || state.mode === 'beam') return null
+  if ((!state.path && !state.lan) || state.mode === 'beam') return null
 
-  const { label, detail } = pathDescription(state.path)
+  // The fast path wins over the classification, which describes the WebRTC
+  // connection the file has stopped using. It arrives on the transfer screen
+  // (the switch is at Accept), replacing a badge already there, which is what
+  // the aria-live below is for. It takes the 'local' colour because it makes
+  // the 'local' promise, and no metered warning, because nothing it carries
+  // leaves the network.
+  const { label, detail } = state.lan ? LAN_PATH : pathDescription(state.path ?? 'unknown')
   // The sender knows the file, the receiver knows the offer; whichever this
   // side has is the size the warning should be about.
   const subject = state.file ?? state.offer
-  const warning = subject
+  const warning = subject && state.path && !state.lan
     ? meteredWarning({ name: subject.name, size: subject.size, path: state.path })
     : null
 
   return h('div', { class: 'path-info', 'aria-live': 'polite' }, [
-    h('p', { class: `path-badge ${state.path}` }, label),
+    h('p', { class: `path-badge ${state.lan ? 'local' : state.path}` }, label),
     h('p', { class: 'note' }, detail),
     warning ? h('p', { class: 'callout warn' }, warning) : null,
     // TEMPORARY, `?debug=path` only. Text content via h(), never innerHTML --

@@ -23,7 +23,8 @@ symbols are confirmed. The Android and Linux apps accept the connection. The Win
 macOS apps never listen, because that is where a firewall dialog would appear, but they
 connect out to a phone or a Linux machine that does. Two Windows machines, and anything
 paired with the website, stay on WebRTC. A phone offers every address it has on the
-network, so a VPN running on it does not hide its Wi-Fi address from the other device.
+network, so a VPN running on it does not hide its Wi-Fi address from the other device. While the file is moving that
+way, the connection badge on the transfer screen reads "Local network, direct".
 
 ## 1.1.0 -- 2026-09-17
 

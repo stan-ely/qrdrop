@@ -390,6 +390,8 @@ export function serverHandshake(socket, token, timeoutMs) {
  *   through core/control.js's sendControl with this side's one nextControlIndex.
  * @param {() => void} [args.onLost] Receivers only: the link closed after
  *   carrying traffic, while the room was still open. See room.attachLan.
+ * @param {() => void} [args.onCarrying] Receivers only: the first frame
+ *   arrived over the link, which is how a receiver learns the sender switched.
  * @returns {{
  *   start: () => void,
  *   handle: (msg: ControlMessage) => void,
@@ -397,7 +399,7 @@ export function serverHandshake(socket, token, timeoutMs) {
  *   close: () => void,
  * }}
  */
-export function createLanLink({ role, platform, room, send, onLost }) {
+export function createLanLink({ role, platform, room, send, onLost, onCarrying }) {
   const mine = listenMode(platform.listen)
   /** @type {LanListenMode | null} */
   let theirs = null
@@ -416,7 +418,7 @@ export function createLanLink({ role, platform, room, send, onLost }) {
   /** @param {LanSocket | null} socket */
   const adopt = socket => {
     if (socket && closed) socket.close()
-    if (socket && !closed) room.attachLan(socket, { onLost })
+    if (socket && !closed) room.attachLan(socket, { onLost, onCarrying })
     settle(closed ? null : socket)
   }
 

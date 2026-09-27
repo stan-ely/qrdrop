@@ -496,6 +496,7 @@ export class QRDropElement extends HTMLElement {
       qrNode: /** @type {Element | null} */ (null),
       qrIsLink: false,
       path: /** @type {NetworkPath | null} */ (null),
+      lan: false,
       pathDebug: /** @type {string | null} */ (null),
       cameraAvailable: cameraAvailable(),
       // Read once per instance, same as cameraAvailable above -- neither
@@ -1339,7 +1340,7 @@ export class QRDropElement extends HTMLElement {
     // trust. Accurate and misleading at once. Caught by looking at the
     // screenshot; every assertion in check-layout.mjs was green.
     this._setState({
-      screen: 'done', outcome: 'mismatch', file: null, digest: '', message: null, path: null,
+      screen: 'done', outcome: 'mismatch', file: null, digest: '', message: null, path: null, lan: false,
     })
   }
 
@@ -1373,7 +1374,7 @@ export class QRDropElement extends HTMLElement {
       sas: '', sasWords: [], offer: null, file: null, progress: null,
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
       mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
-      path: null, pathDebug: null,
+      path: null, lan: false, pathDebug: null,
       // Last key wins over the `error: null` _setState injects for any
       // update carrying a screen change, which is what lets this one reset
       // set an error while every other one still clears the stale one. The
@@ -1648,7 +1649,9 @@ export class QRDropElement extends HTMLElement {
           nextControlIndex,
           onProgress: this._trackProgress('Sent'),
           // The one moment the channel may move (transport/lan.js).
-          onAccept: async () => { await lan?.ready() },
+          onAccept: async () => {
+            if (lan && await lan.ready()) this._setState({ lan: true })
+          },
         })
 
         this._sessionEnded = true
@@ -1807,6 +1810,11 @@ export class QRDropElement extends HTMLElement {
             if (this._sessionEnded || this._state.screen !== 'transfer') return
             this._failTransfer(new Error(LAN_CLOSED))
           })
+        },
+        // The receiver never switches, so the first frame over the socket is
+        // the first it knows of the sender having done so.
+        onCarrying: () => {
+          if (!this._sessionEnded) this._setState({ lan: true })
         },
       })
     }

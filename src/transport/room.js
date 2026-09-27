@@ -1019,10 +1019,13 @@ export async function openRoom({
      * socket (createLanChannel), and a close that lands after its last frame
      * is followed by the receiver's done or its leave on WebRTC.
      *
+     * `onCarrying` fires once, at the first message. It is a receiver's only
+     * news that the sender switched, since the receiver never does.
+     *
      * @param {LanSocket} socket
-     * @param {{ onLost?: () => void }} [options]
+     * @param {{ onLost?: () => void, onCarrying?: () => void }} [options]
      */
-    attachLan(socket, { onLost } = {}) {
+    attachLan(socket, { onLost, onCarrying } = {}) {
       if (closing) return socket.close()
       lan?.close()
       lan = socket
@@ -1031,7 +1034,10 @@ export async function openRoom({
         if (carried && !closing) onLost?.()
       }
       socket.onmessage = bytes => {
-        carried = true
+        if (!carried) {
+          carried = true
+          onCarrying?.()
+        }
         deliver(bytes)
       }
     },

@@ -20,7 +20,8 @@ the transfer goes over WebRTC as it always has.
 For code using the package directly: `sendFile` takes an optional `onAccept`, run after
 the receiver accepts and before the first chunk; `createReceiver` takes an optional
 `onPeerLan`; and a paired room has `attachLan`, `sendOverLan` and `onClose`. The
-negotiation is `createLanLink` in `src/transport/lan.js`.
+negotiation is `createLanLink` in `src/transport/lan.js`, and its `onCarrying` tells a
+receiver when the first frame arrives over the direct connection.
 
 **Dependencies.** `node-datachannel` moves from 0.33.0 to 0.33.4. It was pinned because
 0.33.0 was the last version to ship every platform's prebuilt binary, and 0.33.4 ships
