@@ -1273,8 +1273,12 @@ above. None of it blocks the config gate.
    **Partly answered (2026-09-13 and 2026-09-26)**, for a bare channel on one
    machine with a controlled delay; see "The bare transport, measured" below.
    What a data channel can do is set by SCTP congestion control and the round
-   trip, not by anything qrdrop or Trystero chooses. The two-device number is
-   still unmeasured.
+   trip, not by anything qrdrop or Trystero chooses. **The two-device number
+   (2026-09-27)**: a bare channel with the phone sending to a desktop
+   Chromium over the same Wi-Fi ran 4.4-4.9 MB/s. So the app's 4.03 is about
+   90% of what the channel itself carries between these two devices, and the
+   rest of the cost is not worth chasing. See "The Android WebView, on the
+   phone" below.
 2. ~~**The `content://` sink**, so Android can receive at all.~~ **Closed
    2026-09-12.** It took the content-URI open *and* a base64 body for
    `sink_write`; see "Resolved (2026-09-12)" above for both and the numbers.
@@ -1562,7 +1566,43 @@ Two anomalies turned up, and both were chased:
   for, so it was not chased further. It is also the first thing to look at
   if the path is ever widened beyond one network. (50 ms ran at 40 MB/s.)
 
-Still open before any code: whether the Android WebView can open
-`ws://<LAN address>` from `http://tauri.localhost` at all (the app's CSP,
-plus Chromium's Local Network Access checks), and how fast the desktop
-app's Rust relay is.
+### The Android WebView, on the phone (2026-09-27)
+
+The Realme RMX3868 (Android 16, WebView 153.0.8010.36) was on the same Wi-Fi
+as the Windows desktop. The phone ran the arm64 debug APK and was driven over
+CDP from `http://tauri.localhost`. The desktop ran a Node `ws` server on
+`0.0.0.0`. Messages were 16 KiB, with 1 MB of `bufferedAmount` on each
+sender, and each run moved 256 MiB.
+
+- **The shipped CSP blocks it, as it should.** A `securitypolicyviolation`
+  fired with `connect-src blocked ws://192.168.1.3:47811/`. So the app
+  channel's policy needs `ws:`, and only that channel's: the website must
+  never be able to open one.
+- **Local Network Access does not get in the way.** With the CSP bypassed
+  (`Page.setBypassCSP`, standing in for `ws:` in `connect-src`), the socket
+  opened in 58 ms with no prompt and no error. That is what the spec
+  predicts: `*.localhost` is already the loopback address space, and a
+  request to a private address is not a step inward from there.
+- **Throughput, against a bare data channel between the same two devices.**
+  Both were measured back to back. The data channel was host to host over UDP,
+  not relayed, and Trystero-shaped: 16 KiB less 36 bytes per message, and
+  `bufferedAmountLowThreshold` 65535.
+
+| | WebSocket | Data channel |
+| --- | --- | --- |
+| Phone sends | 29.4-32.2 MB/s | 4.4-4.9 MB/s |
+| Phone receives | 32.4-40.8 MB/s | 5.9-7.3 MB/s |
+
+**About 6x on a real phone, in both directions**, which is more than the 4x
+seen in the namespace. The data channel is also lower here than there, and the
+phone's single network thread is the likely reason. The WebSocket curves are
+flat from the second second on, so no congestion-control ramp shows up
+anywhere in a 256 MiB run. The phone-send figure also explains item 1 above.
+The app's 4.03 MB/s was already close to the channel's own ceiling between
+these two devices, so the work on the read side had taken the sender about as
+far as the data channel allows.
+
+Both of Phase 0's conditions for the Android side hold: the phone is not
+blocked, and the path clearly beats the data channel. What remains before any
+code is the desktop app's Rust relay, which sits between its page and the LAN
+socket.
