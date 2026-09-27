@@ -3,8 +3,8 @@
  * qrdrop: send a file straight from one device to another over WebRTC, keyed
  * by a QR code, with nothing readable in between.
  *
- *   qrdrop send <file> [--no-qr] [--yes] [--relay <url>]... [--debug]
- *   qrdrop receive [code] [--out <dir>] [--yes] [--relay <url>]... [--debug]
+ *   qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--relay <url>]... [--debug]
+ *   qrdrop receive [code] [--out <dir>] [--yes] [--no-lan] [--relay <url>]... [--debug]
  *   qrdrop --help | --version
  *
  * This is the Node counterpart to src/web/element.js: same protocol, same
@@ -27,13 +27,15 @@ import process from 'node:process'
 import {
   generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword,
   openRoom, STRATEGIES, RELAYED_MAX_BYTES, createControlStream, createReceiver, sendFile,
-  combinePaths, sendPathVerdict,
+  combinePaths, sendPathVerdict, sendControl,
 } from './index.js'
+import { createLanLink } from './transport/lan.js'
+import { nodeLanPlatform } from './node/lan.js'
 import { encodeSecretURL } from './core/secret.js'
 import { bytes as formatBytes } from './core/format.js'
 import {
   relayCapMessage, relayCapDeclineMessage, pathDescription, meteredWarning,
-  METERED_WARN_BYTES, PEER_DISCONNECTED,
+  METERED_WARN_BYTES, PEER_DISCONNECTED, LAN_CLOSED,
 } from './core/messages.js'
 import { createFileSink, fromPath, renderQRToTerminal, loadRTCPolyfill, serveStatic } from './node/index.js'
 import { openURL } from './node/open-url.js'
@@ -82,6 +84,10 @@ const OPTIONS = [
     `Skip the "accept this file?" prompt on receive.`,
     'Never skips the code-match confirmation -- see below.',
   ] },
+  { flag: '--no-lan', desc: [
+    'Keep the file on WebRTC even when both devices could use a',
+    'direct connection on the local network',
+  ] },
   { flag: '--debug', desc: [
     'Print stack traces instead of one-line error messages',
   ] },
@@ -112,8 +118,8 @@ function formatOptions(options) {
 const USAGE = `qrdrop -- send a file peer-to-peer, keyed by a QR code
 
 Usage:
-  qrdrop send <file> [--no-qr] [--yes] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
-  qrdrop receive [code] [--out <dir>] [--yes] [--strategy <name>] [--relay <url>]... [--debug]
+  qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
+  qrdrop receive [code] [--out <dir>] [--yes] [--no-lan] [--strategy <name>] [--relay <url>]... [--debug]
   qrdrop web [--port <n>] [--no-open]
   qrdrop --help
   qrdrop --version
@@ -132,6 +138,12 @@ and a terminal on the receiving end has neither.
 
 A transfer that ends up going through a public TURN relay (rare — only when a
 direct connection cannot be made) is capped at ${Math.round(RELAYED_MAX_BYTES / (1024 * 1024))} MB.
+
+When both devices run qrdrop natively (this CLI or the qrdrop app) and one of
+them can accept a connection without a firewall prompt, the file itself moves
+over a direct connection on the local network, several times faster than
+WebRTC. It carries the same end-to-end encrypted frames, and only after the
+emoji check. --no-lan turns it off.
 
 Every transfer — send or receive — stops to show four emoji and asks you to
 confirm they match on both devices before anything about the file moves. That
@@ -298,8 +310,9 @@ function makeProgressReporter({ verb }) {
  * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
  * @param {(manifest: Manifest) => Promise<Sink>} args.createSink
  * @param {(path: NetworkPath) => void} [args.onPeerPath]
+ * @param {Parameters<typeof createReceiver>[0]['onPeerLan']} [args.onPeerLan]
  */
-function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, createSink }) {
+function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, onPeerLan, createSink }) {
   const control = createControlStream()
   let controlOut = 0
   // One function for this whole side, returned to the caller and handed to
@@ -321,6 +334,7 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, cre
     onFileDone,
     onError: error => console.error('Transfer error:', error instanceof Error ? error.message : error),
     onPeerPath,
+    onPeerLan,
     createSink,
   })
 
@@ -444,9 +458,10 @@ async function establish({ secret, role, relays, strategy, prompter }) {
  * @param {readonly string[] | undefined} args.relays
  * @param {string | undefined} args.strategy
  * @param {string | undefined} args.qrUrl
+ * @param {boolean} args.lan
  * @param {ReturnType<typeof makePrompter>} args.prompter
  */
-async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) {
+async function runSend({ filePath, showQR, relays, strategy, qrUrl, lan: useLan, prompter }) {
   const source = await fromPath(filePath)
   const style = styleFor(process.stdout)
   let room
@@ -478,12 +493,29 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
       throw new Error(relayCapMessage({ name: source.name, size: source.size, limit: RELAYED_MAX_BYTES }))
     }
     const exchange = createPathExchange(room)
+    /** @type {ReturnType<typeof createLanLink> | null} */
+    let lan = null
     const { control, nextControlIndex, receiver } = attachReceiver({
       room,
       onPeerPath: exchange.onPeerPath,
+      onPeerLan: msg => lan?.handle(msg),
       createSink: async () => { throw new Error('Peer tried to send us a file mid-send') },
     })
     exchange.send(nextControlIndex)
+    // After establish(), which is to say after the SAS was confirmed: the
+    // hello says whether this machine will listen, the offer that may follow
+    // names its addresses, and neither goes to a peer nobody has verified
+    // yet (transport/lan.js, "WHEN IT IS SAID").
+    if (useLan) {
+      const paired = room
+      lan = createLanLink({
+        role: 'sender',
+        platform: nodeLanPlatform(),
+        room: paired,
+        send: msg => sendControl({ channel: paired.channel, key: paired.session.sendKey, nextControlIndex }, msg),
+      })
+      lan.start()
+    }
 
     // A peer that leaves mid-transfer would otherwise park this process on
     // control.next() forever: sendFile blocks awaiting an 'accept' or a 'done'
@@ -530,6 +562,13 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
       control,
       nextControlIndex,
       onProgress,
+      // Between the peer's accept and chunk 0 is the one moment the channel
+      // can move (transport/lan.js, "WHY ACCEPT IS THE ONE MOMENT TO MOVE").
+      onAccept: async () => {
+        if (lan && await lan.ready()) {
+          process.stdout.write('Using a direct connection on the local network.\n')
+        }
+      },
     })
 
     // Declined or sent, the exchange is over and the peer is entitled to
@@ -557,9 +596,10 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, prompter }) 
  * @param {boolean} args.assumeYes
  * @param {readonly string[] | undefined} args.relays
  * @param {string | undefined} args.strategy
+ * @param {boolean} args.lan
  * @param {ReturnType<typeof makePrompter>} args.prompter
  */
-async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter }) {
+async function runReceive({ code, outDir, assumeYes, relays, strategy, lan: useLan, prompter }) {
   const raw = code ?? await prompter.ask('Code (or paste a shared link): ')
   const secret = decodeSecret(raw)
   const createSink = createFileSink({ outDir })
@@ -614,11 +654,14 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
       })
 
       const exchange = createPathExchange(paired)
+      /** @type {ReturnType<typeof createLanLink> | null} */
+      let lan = null
       const { nextControlIndex, receiver } = attachReceiver({
         room: paired,
         createSink,
         onProgress,
         onPeerPath: exchange.onPeerPath,
+        onPeerLan: msg => lan?.handle(msg),
         onFileDone: file => resolve({ kind: 'done', file }),
         onOffer: ({ manifest, accept, decline }) => {
           const describe = `${manifest.name} (${formatBytes(manifest.size)})`
@@ -655,6 +698,27 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, prompter 
 
       cancelReceive = receiver.cancel
       interruptHooks.add(cancelReceive)
+
+      // Speaks only in reply to the sender's hello, which the sender sends
+      // only after its own SAS confirm -- and this side's frames were held
+      // until establish() returned, after ours.
+      if (useLan) {
+        lan = createLanLink({
+          role: 'receiver',
+          platform: nodeLanPlatform(),
+          room: paired,
+          send: msg => sendControl({ channel: paired.channel, key: paired.session.sendKey, nextControlIndex }, msg),
+          // The sender's frames stopped arriving over the link while WebRTC
+          // may still be up, so no leave is coming to end this wait. Behind
+          // settled() for the leave handler's reason: the last frames may
+          // still be in decryption when the close is seen.
+          onLost: () => {
+            receiver.settled().then(() => {
+              if (!sessionEnded.done) reject(new Error(LAN_CLOSED))
+            })
+          },
+        })
+      }
 
       // Sent as soon as this side has classified, without waiting for an
       // offer: the peer wants it for its own badge whether or not a file ever
@@ -755,8 +819,8 @@ async function runWeb({ port, open }) {
  * @typedef {
  *   | { command: 'help' }
  *   | { command: 'version' }
- *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, qrUrl: string | undefined, debug: boolean }
- *   | { command: 'receive', code: string | undefined, outDir: string, assumeYes: boolean, relays: readonly string[] | undefined, strategy: string | undefined, debug: boolean }
+ *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, qrUrl: string | undefined, lan: boolean, debug: boolean }
+ *   | { command: 'receive', code: string | undefined, outDir: string, assumeYes: boolean, relays: readonly string[] | undefined, strategy: string | undefined, lan: boolean, debug: boolean }
  *   | { command: 'web', port: number, open: boolean, debug: boolean }
  * } ParsedArgs
  */
@@ -812,6 +876,7 @@ function parseCliArgs(argv) {
       // it would have their code silently start pointing a scanning phone at
       // that origin instead of at nothing. Send-only, and opt-in per run.
       'qr-url': { type: 'string' },
+      'no-lan': { type: 'boolean', default: false },
       debug: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -842,6 +907,7 @@ function parseCliArgs(argv) {
       relays: values.relay,
       strategy: values.strategy,
       qrUrl: values['qr-url'],
+      lan: !values['no-lan'],
       debug: values.debug,
     }
   }
@@ -853,6 +919,7 @@ function parseCliArgs(argv) {
     assumeYes: values.yes,
     relays: values.relay,
     strategy: values.strategy,
+    lan: !values['no-lan'],
     debug: values.debug,
   }
 }
@@ -927,12 +994,12 @@ async function main() {
     if (parsed.command === 'send') {
       return await runSend({
         filePath: parsed.filePath, showQR: parsed.showQR,
-        relays: parsed.relays, strategy: parsed.strategy, qrUrl: parsed.qrUrl, prompter,
+        relays: parsed.relays, strategy: parsed.strategy, qrUrl: parsed.qrUrl, lan: parsed.lan, prompter,
       })
     }
     return await runReceive({
       code: parsed.code, outDir: parsed.outDir, assumeYes: parsed.assumeYes,
-      relays: parsed.relays, strategy: parsed.strategy, prompter,
+      relays: parsed.relays, strategy: parsed.strategy, lan: parsed.lan, prompter,
     })
   } catch (error) {
     reportError(error, parsed.debug)

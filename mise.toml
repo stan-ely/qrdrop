@@ -150,6 +150,11 @@ description = "Run web/node interop e2e test"
 depends = ["build"]
 run = "node e2e/interop.e2e.mjs"
 
+[tasks."test:e2e:interop:lan"]
+description = "Run the CLI interop e2e over the local-network fast path"
+depends = ["build"]
+run = "node e2e/interop.e2e.mjs --lan"
+
 [tasks.phone]
 description = "Open UI in browser with phone-sized viewport (390x844)"
 depends = ["build"]

@@ -3,6 +3,25 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
+## Unreleased
+
+**Several times faster between two native devices on one network.** When both ends run
+the command line or the qrdrop app, and one of them can accept a connection without the
+operating system asking its person first, the file itself now moves over a direct
+connection on the local network instead of WebRTC. Measured between two copies of the
+command line, 256 MB went at 33–42 MB/s against 17 MB/s. The file is encrypted exactly
+as before, the connection is offered only after the four symbols are confirmed, and
+nothing about pairing changes. Linux listens; Windows and macOS never do, because that is
+where a firewall dialog would appear, but they still connect out to a device that
+listens, such as a phone running the app or a Linux machine. Two Windows machines stay on
+WebRTC. `--no-lan` turns it off. An older version on the other end ignores the offer, and
+the transfer goes over WebRTC as it always has.
+
+For code using the package directly: `sendFile` takes an optional `onAccept`, run after
+the receiver accepts and before the first chunk; `createReceiver` takes an optional
+`onPeerLan`; and a paired room has `attachLan`, `sendOverLan` and `onClose`. The
+negotiation is `createLanLink` in `src/transport/lan.js`.
+
 ## 0.6.0 — 2026-09-18
 
 **A transfer could die before it started, with "Out-of-order frame: expected 0, got

@@ -44,7 +44,8 @@
     "web": "node scripts/build-site.mjs && node src/cli.js web",
     "cli": "node src/cli.js",
     "test:e2e": "npm run build && node e2e/transfer.e2e.mjs",
-    "test:e2e:interop": "npm run build && node e2e/interop.e2e.mjs"
+    "test:e2e:interop": "npm run build && node e2e/interop.e2e.mjs",
+    "test:e2e:interop:lan": "npm run build && node e2e/interop.e2e.mjs --lan"
   },
   "dependencies": {
     "@trystero-p2p/nostr": "0.25.3",

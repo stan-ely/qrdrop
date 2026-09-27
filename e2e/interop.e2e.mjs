@@ -22,6 +22,15 @@
  * test cannot skip it either is the point -- if a future change let --yes
  * through that gate, this file would still pass, so it also asserts the
  * prompt was actually shown.
+ *
+ * TWO MODES, BECAUSE THE FILE CAN TAKE TWO ROUTES. By default both CLIs are
+ * pinned to QRDROP_LAN_LISTEN=none, so the file goes over WebRTC on every OS.
+ * Left to itself, the run would take the local-network fast path on Linux
+ * and not on Windows, which would make one suite test two different things.
+ * With --lan (npm run test:e2e:interop:lan) the receiver says 'quiet' and
+ * listens, the sender dials it, and the run fails unless the sender reports
+ * the direct connection. On Windows the first listen may raise a firewall
+ * prompt for node.exe.
  */
 
 import { spawn } from 'node:child_process'
@@ -39,6 +48,8 @@ const TIMEOUT = 120_000
 // settled delivery at a time, which is the condition ordering bugs need.
 const PAYLOAD_BYTES = 300 * 1024
 
+const LAN = process.argv.includes('--lan')
+
 /** @param {Buffer} buf */
 const sha = buf => createHash('sha256').update(buf).digest('hex')
 
@@ -48,14 +59,15 @@ const sha = buf => createHash('sha256').update(buf).digest('hex')
  *
  * @param {string[]} args
  * @param {string} label
+ * @param {LanListenMode} listen What this CLI claims about listening (see the header).
  */
-function launch(args, label) {
+function launch(args, label, listen) {
   const child = spawn(process.execPath, [CLI, ...args], {
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     // Force the non-TTY path: progress becomes plain lines instead of \r
     // redraws, which is what makes the output parseable here.
-    env: { ...process.env, NO_COLOR: '1' },
+    env: { ...process.env, NO_COLOR: '1', QRDROP_LAN_LISTEN: listen },
   })
 
   let output = ''
@@ -113,7 +125,7 @@ async function main() {
 
   console.log(`payload ${PAYLOAD_BYTES} bytes, sha256 ${sha(payload)}`)
 
-  const sender = launch(['send', source, '--no-qr'], 'send')
+  const sender = launch(['send', source, '--no-qr'], 'send', LAN ? 'prompt' : 'none')
   let receiver
 
   try {
@@ -121,7 +133,7 @@ async function main() {
     const [, code] = await sender.waitFor(/(qrdrop:[A-Za-z0-9_-]{43})/)
     console.log(`\ncode: ${code}\n`)
 
-    receiver = launch(['receive', code, '--out', outDir], 'recv')
+    receiver = launch(['receive', code, '--out', outDir], 'recv', LAN ? 'quiet' : 'none')
 
     // Both sides show the SAS and stop. Neither moves until a human -- here,
     // this harness -- says the emoji match.
@@ -159,7 +171,14 @@ async function main() {
       throw new Error(`digest mismatch: ${senderDigest} vs ${receiverDigest}`)
     }
 
-    console.log(`\nPASS  ${written[0]} (${landed.length} bytes) matched, digest ${senderDigest}`)
+    const direct = /direct connection on the local network/.test(sender.output)
+    if (direct !== LAN) {
+      throw new Error(LAN
+        ? 'the transfer stayed on WebRTC: the sender never reported the direct connection'
+        : 'the transfer took the local-network path with both sides pinned to none')
+    }
+
+    console.log(`\nPASS  (${LAN ? 'local network' : 'WebRTC'}) ${written[0]} (${landed.length} bytes) matched, digest ${senderDigest}`)
   } finally {
     sender.child.kill()
     receiver?.child.kill()
