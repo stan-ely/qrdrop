@@ -22,7 +22,8 @@ not the network, is now the limit. The file is encrypted exactly as before, and 
 symbols are confirmed. The Android and Linux apps accept the connection. The Windows and
 macOS apps never listen, because that is where a firewall dialog would appear, but they
 connect out to a phone or a Linux machine that does. Two Windows machines, and anything
-paired with the website, stay on WebRTC.
+paired with the website, stay on WebRTC. A phone offers every address it has on the
+network, so a VPN running on it does not hide its Wi-Fi address from the other device.
 
 ## 1.1.0 -- 2026-09-17
 

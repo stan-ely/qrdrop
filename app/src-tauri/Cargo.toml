@@ -71,6 +71,12 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 tokio = { version = "1", features = ["rt", "macros"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect"] }
 
+# lan.rs lists every interface's address for the fast path's offer through
+# getifaddrs, and only where the relay listens (Android, Linux). Already in
+# Cargo.lock at this version through tokio, so no new crate reaches the build.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Windows and Linux deliver a deep link by launching a SECOND copy of the app
 # with the URL in argv; single-instance forwards that to the running window
 # instead (its `deep-link` feature wires the two plugins together). macOS and

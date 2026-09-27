@@ -2723,6 +2723,7 @@ version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
+ "libc",
  "serde",
  "serde_json",
  "tauri",

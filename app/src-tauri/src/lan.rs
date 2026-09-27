@@ -82,7 +82,7 @@ pub async fn lan_listen(state: tauri::State<'_, LanState>, token: String) -> Res
     let listening = Listening {
         port: lan.local_addr().map_err(|e| e.to_string())?.port(),
         local_port: local.local_addr().map_err(|e| e.to_string())?.port(),
-        addrs: primary_address().into_iter().collect(),
+        addrs: offered_addresses(),
     };
     let task = tauri::async_runtime::spawn(relay(lan, local, token));
     if let Some(previous) = state.0.lock().unwrap().replace(task) {
@@ -111,21 +111,89 @@ fn parse_token(hex: &str) -> Result<[u8; TOKEN_BYTES], String> {
     Ok(token)
 }
 
-/// This machine's address on its default route, when that is a private IPv4
-/// address. A connected UDP socket sends nothing: `connect` only asks the
-/// routing table which local address would be used, and 192.0.2.1 is
-/// TEST-NET-1, reserved never to be routed anywhere real. One address and not
-/// every interface's, because that needs a crate for what is, on a phone, one
-/// Wi-Fi address. A phone whose default route is mobile data gets a CGNAT
-/// address here, which is not private, so it offers nothing and the session
-/// stays on WebRTC, which is the right answer for that phone anyway.
-fn primary_address() -> Option<String> {
+/// Most addresses one offer carries. Mirrors `MAX_ADDRS` in
+/// src/transport/lan.js, which drops any past it, so a ninth would never be
+/// dialled.
+const MAX_ADDRS: usize = 8;
+
+/// This machine's private IPv4 addresses, for the offer: the default route's
+/// first, then every other interface's. The peer dials them all at once and
+/// keeps whichever answers (`dial` in src/transport/lan.js), so an address
+/// that leads nowhere costs one failed connect and nothing else.
+///
+/// Every interface and not only the default route's, because the default
+/// route is exactly the wrong one on a phone running a VPN: it goes through
+/// the tunnel, whose address is often private (10.x), so that address alone
+/// was offered and the Wi-Fi one the peer could reach never was, and the
+/// session stayed on WebRTC without a word. src/node/lan-server.js has always
+/// offered every interface.
+fn offered_addresses() -> Vec<String> {
+    offer_list(default_route_address(), interface_addresses())
+}
+
+/// The filter, kept apart from the OS calls so a desktop host can test it.
+/// Private only, as `parseOffer` on the other end demands. A mobile-data
+/// address is CGNAT and not private, so a phone with no Wi-Fi offers nothing
+/// and the session stays on WebRTC, which is the right answer for that phone.
+fn offer_list(primary: Option<Ipv4Addr>, all: Vec<Ipv4Addr>) -> Vec<String> {
+    let mut out: Vec<Ipv4Addr> = Vec::new();
+    for ip in primary.into_iter().chain(all) {
+        if ip.is_private() && !out.contains(&ip) {
+            out.push(ip);
+        }
+    }
+    out.truncate(MAX_ADDRS);
+    out.into_iter().map(|ip| ip.to_string()).collect()
+}
+
+/// The address the routing table would use to reach the internet, the
+/// likeliest to work and so first in the offer. A connected UDP socket sends
+/// nothing: `connect` only asks the routing table, and 192.0.2.1 is
+/// TEST-NET-1, reserved never to be routed anywhere real.
+fn default_route_address() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
     socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
     match socket.local_addr().ok()?.ip() {
-        IpAddr::V4(ip) if ip.is_private() => Some(ip.to_string()),
-        _ => None,
+        IpAddr::V4(ip) => Some(ip),
+        IpAddr::V6(_) => None,
     }
+}
+
+/// Every up interface's IPv4 address, through `getifaddrs`. libc is already
+/// in the build through tokio, and bionic has had `getifaddrs` since API 24,
+/// which is this app's minSdk. Unix only: the relay listens on Android and
+/// Linux alone (`MODE`), so elsewhere the default route is all there is.
+#[cfg(unix)]
+fn interface_addresses() -> Vec<Ipv4Addr> {
+    let mut out = Vec::new();
+    let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs fills `head` with a list that is only read here and
+    // then handed back to freeifaddrs exactly once. Each ifa_addr is checked
+    // for null and for AF_INET before it is read as a sockaddr_in.
+    unsafe {
+        if libc::getifaddrs(&mut head) != 0 {
+            return out;
+        }
+        let mut cursor = head;
+        while let Some(ifa) = cursor.as_ref() {
+            let up = ifa.ifa_flags & (libc::IFF_UP as libc::c_uint) != 0;
+            if up
+                && !ifa.ifa_addr.is_null()
+                && (*ifa.ifa_addr).sa_family as libc::c_int == libc::AF_INET
+            {
+                let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+                out.push(Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)));
+            }
+            cursor = ifa.ifa_next;
+        }
+        libc::freeifaddrs(head);
+    }
+    out
+}
+
+#[cfg(not(unix))]
+fn interface_addresses() -> Vec<Ipv4Addr> {
+    Vec::new()
 }
 
 /// No early exit, so how long a comparison takes says nothing about how much
@@ -229,6 +297,22 @@ mod tests {
         assert!(!same_token(&token[..15], &token));
         assert!(parse_token("short").is_err());
         assert!(parse_token("zz0102030405060708090a0b0c0d0e0f").is_err());
+    }
+
+    #[test]
+    fn offers_every_private_address_default_route_first() {
+        let ip = |s: &str| s.parse::<Ipv4Addr>().unwrap();
+        // A phone on a VPN: the default route is the tunnel, and the Wi-Fi
+        // address must still be offered.
+        let interfaces = ["127.0.0.1", "10.8.0.2", "192.168.1.7", "100.72.1.9", "169.254.3.3"];
+        let got = offer_list(Some(ip("10.8.0.2")), interfaces.iter().map(|s| ip(s)).collect());
+        assert_eq!(got, vec!["10.8.0.2", "192.168.1.7"]);
+        // Mobile data only: CGNAT is not private, so nothing is offered.
+        assert!(offer_list(Some(ip("100.72.1.9")), vec![ip("100.72.1.9")]).is_empty());
+        let many = (1..=20).map(|n| Ipv4Addr::new(10, 0, 0, n)).collect();
+        assert_eq!(offer_list(None, many).len(), MAX_ADDRS);
+        // Whatever this host has, the real call keeps to the same rules.
+        assert!(offered_addresses().iter().all(|a| ip(a).is_private()));
     }
 
     /// The whole relay, over loopback: the page and the peer each present the
