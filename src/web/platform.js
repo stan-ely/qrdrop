@@ -27,6 +27,10 @@ import { createSink as webCreateSink, canStreamToDisk as webCanStreamToDisk } fr
  * @typedef {object} Platform
  * @property {typeof webCreateSink} createSink
  * @property {() => boolean} canStreamToDisk
+ * @property {LanPlatform} [lan] The local-network fast path
+ *   (transport/lan.js). Absent here and on the deployed website, which
+ *   never takes that path -- a page has no listener, and the site's CSP
+ *   names no ws: origin. Only app/src/main.js registers one.
  */
 
 /** @type {Platform} */

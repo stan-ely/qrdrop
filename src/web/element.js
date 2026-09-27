@@ -40,10 +40,11 @@ import {
   generateSecret, encodeSecret, encodeSecretURL, decodeSecret, deriveTopic, derivePassword,
 } from '../core/secret.js'
 import { openRoom, RELAYED_MAX_BYTES, combinePaths } from '../transport/room.js'
-import { createControlStream } from '../core/control.js'
+import { createControlStream, sendControl } from '../core/control.js'
+import { createLanLink } from '../transport/lan.js'
 import { createReceiver, sendPathVerdict } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
-import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED, pathDescription } from '../core/messages.js'
+import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED, LAN_CLOSED, pathDescription } from '../core/messages.js'
 import { bytes } from '../core/format.js'
 import { getPlatform } from './platform.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
@@ -1428,6 +1429,7 @@ export class QRDropElement extends HTMLElement {
    * @param {Parameters<typeof createReceiver>[0]['onOffer']} [args.onOffer]
    * @param {(p: ReceiveProgress) => void} [args.onProgress]
    * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
+   * @param {Parameters<typeof createReceiver>[0]['onPeerLan']} [args.onPeerLan]
    */
   _attachReceiver({
     room,
@@ -1440,6 +1442,7 @@ export class QRDropElement extends HTMLElement {
     // right answer. Silently dropping the manifest would leave the offering
     // peer waiting on a reply that is never coming.
     onOffer = () => { throw new Error('Peer offered a file while we were sending one') },
+    onPeerLan,
   }) {
     const control = createControlStream()
     let controlOut = 0
@@ -1462,6 +1465,7 @@ export class QRDropElement extends HTMLElement {
       onFileDone,
       onError: e => this._failTransfer(e),
       onPeerPath: path => this._mergePeerPath(path),
+      onPeerLan,
       createSink: getPlatform().createSink,
     })
 
@@ -1562,7 +1566,25 @@ export class QRDropElement extends HTMLElement {
       throw new Error(relayCapMessage({ name: file.name, size: file.size, limit: RELAYED_MAX_BYTES }))
     }
 
-    const { control, nextControlIndex, receiver } = this._attachReceiver({ room })
+    /** @type {ReturnType<typeof createLanLink> | null} */
+    let lan = null
+    const { control, nextControlIndex, receiver } = this._attachReceiver({
+      room,
+      onPeerLan: msg => lan?.handle(msg),
+    })
+    // The local-network fast path, where a native shell lends one (only
+    // app/src/main.js registers getPlatform().lan, so the website never
+    // has it). Created here and silent until Confirm below: start() is what
+    // says anything, and it runs only after the SAS.
+    const lanPlatform = getPlatform().lan
+    if (lanPlatform) {
+      lan = createLanLink({
+        role: 'sender',
+        platform: lanPlatform,
+        room,
+        send: msg => sendControl({ channel: room.channel, key: room.session.sendKey, nextControlIndex }, msg),
+      })
+    }
 
     // Set on Confirm. From then on sendFile's catch below is what reports a
     // failure, so the leave handler must not report it a second time -- nor at
@@ -1612,6 +1634,10 @@ export class QRDropElement extends HTMLElement {
 
       this._setState({ screen: 'transfer', status: '', progress: { moved: 0, total: file.size } })
 
+      // After the SAS, before the manifest: the hello and the manifest share
+      // one ordered control queue, so the peer reads this first.
+      lan?.start()
+
       try {
         const result = await sendFile({
           channel: room.channel,
@@ -1621,6 +1647,8 @@ export class QRDropElement extends HTMLElement {
           control,
           nextControlIndex,
           onProgress: this._trackProgress('Sent'),
+          // The one moment the channel may move (transport/lan.js).
+          onAccept: async () => { await lan?.ready() },
         })
 
         this._sessionEnded = true
@@ -1646,10 +1674,14 @@ export class QRDropElement extends HTMLElement {
     const room = await this._establish({ secret, role: 'guest' })
     this._setState({ pairing: false })
 
+    /** @type {ReturnType<typeof createLanLink> | null} */
+    let lan = null
+
     // Handlers go on before anything is drawn, so a manifest arriving the
     // instant the sender is ready has somewhere to land.
-    const { receiver } = this._attachReceiver({
+    const { receiver, nextControlIndex } = this._attachReceiver({
       room,
+      onPeerLan: msg => lan?.handle(msg),
 
       onOffer: ({ manifest, accept, decline }) => {
         // onOffer itself is synchronous (see receiver.js); the relay check is
@@ -1756,6 +1788,28 @@ export class QRDropElement extends HTMLElement {
         this._failTransfer(new Error(PEER_DISCONNECTED))
       })
     })
+
+    // The receiver's half of the local-network fast path. It says nothing
+    // until the sender's hello arrives, which the sender sends only after its
+    // own SAS confirm. onLost is the receive side's reason to exist here: a
+    // link that dies mid-file stops the sender's frames while WebRTC may stay
+    // up, so no leave is coming to end the transfer screen. Guarded and
+    // deferred exactly as the leave handler above is, for the same reasons.
+    const lanPlatform = getPlatform().lan
+    if (lanPlatform) {
+      lan = createLanLink({
+        role: 'receiver',
+        platform: lanPlatform,
+        room,
+        send: msg => sendControl({ channel: room.channel, key: room.session.sendKey, nextControlIndex }, msg),
+        onLost: () => {
+          receiver.settled().then(() => {
+            if (this._sessionEnded || this._state.screen !== 'transfer') return
+            this._failTransfer(new Error(LAN_CLOSED))
+          })
+        },
+      })
+    }
 
     this._setState({ screen: 'verify', sas: room.session.sas, sasWords: room.session.sasWords })
   }
