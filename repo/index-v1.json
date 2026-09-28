@@ -1,0 +1,347 @@
+{
+  "repo": {
+    "timestamp": 1790613885000,
+    "version": 20002,
+    "name": "qrdrop",
+    "icon": "icon.png",
+    "address": "https://share.stan-ely.com/fdroid/repo",
+    "description": "Signed builds of the qrdrop Android app, published straight from the release workflow at github.com/stan-ely/qrdrop. The same APK the GitHub Release carries, signed with the same key."
+  },
+  "requests": {
+    "install": [],
+    "uninstall": []
+  },
+  "apps": [
+    {
+      "authorName": "Bevan Stanely",
+      "categories": [
+        "Connectivity"
+      ],
+      "changelog": "https://github.com/stan-ely/qrdrop/blob/main/app/CHANGELOG.md",
+      "suggestedVersionCode": "10020014",
+      "description": "qrdrop moves a file directly between two devices over an encrypted peer\nconnection. Nothing in between ever holds a readable copy.\n\nPairing is a QR code: one device shows it, the other points a camera at it,\nand that scan is the one channel an attacker cannot stand in the middle of.\nBoth ends then show the same four symbols, which you read aloud and match by\nhand, so you can check you are talking to the device you think you are. Only\nthen does the file move.\n\nThere is also Beam, which carries a file as animated QR codes across a camera\nand needs no network at all.\n\nqrdrop sends and receives on Android from the release after 1.0.0. Version\n1.0.0 can send and cannot receive, so update if you still have it.\n\nOn ColorOS phones (Oppo, Realme, OnePlus), choose where to save a received\nfile within about 20 seconds, or allow qrdrop to run in the background. The\nphone freezes an app while the save dialog covers it, and the sending device\ngives up after 30 seconds without a reply.\n\nThis app is built and signed by the project's own release workflow and\npublished here as the identical file the GitHub Release carries.",
+      "issueTracker": "https://github.com/stan-ely/qrdrop/issues",
+      "license": "MIT",
+      "name": "qrdrop",
+      "sourceCode": "https://github.com/stan-ely/qrdrop",
+      "summary": "Send a file straight from one device to another",
+      "webSite": "https://share.stan-ely.com",
+      "added": 1790613879000,
+      "packageName": "com.stan_ely.qrdrop",
+      "lastUpdated": 1790613882000,
+      "localized": {
+        "en-US": {
+          "description": "qrdrop moves a file directly between two devices over an encrypted peer\nconnection. Nothing in between ever holds a readable copy.\n\nPairing is a QR code: one device shows it, the other points a camera at it,\nand that scan is the one channel an attacker cannot stand in the middle of.\nBoth ends then show the same four symbols, which you read aloud and match by\nhand, so you can check you are talking to the device you think you are. Only\nthen does the file move.\n\nThere is also Beam, which carries a file as animated QR codes across a camera\nand needs no network at all.\n\nOn ColorOS phones (Oppo, Realme, OnePlus), choose where to save a received\nfile within about 20 seconds, or allow qrdrop to run in the background. The\nphone freezes an app while the save dialog covers it, and the sending device\ngives up after 30 seconds without a reply.\n\nEvery copy of this app, from any store or from the GitHub Releases page, is\nbuilt by the project's own release workflow and signed with the same key.\n",
+          "featureGraphic": "featureGraphic_doHLgmuLL1s_C_vCKOlNN8MnkxglMs36bGGty5z4JjM=.png",
+          "icon": "icon_PX6PwOqLDZp34vsCOuX7-plsvfUJES2slXMfuQTY8Lo=.png",
+          "name": "qrdrop",
+          "phoneScreenshots": [
+            "1-choose.png",
+            "2-send.png",
+            "3-verify.png",
+            "4-done.png",
+            "5-beam.png"
+          ],
+          "sevenInchScreenshots": [
+            "1-choose.png",
+            "2-send.png",
+            "3-verify.png",
+            "4-done.png",
+            "5-beam.png"
+          ],
+          "summary": "Send a file straight from one device to another",
+          "tenInchScreenshots": [
+            "1-choose.png",
+            "2-send.png",
+            "3-verify.png",
+            "4-done.png",
+            "5-beam.png"
+          ]
+        }
+      }
+    }
+  ],
+  "packages": {
+    "com.stan_ely.qrdrop": [
+      {
+        "added": 1790613882000,
+        "apkName": "qrdrop-1.2.1-x86_64.apk",
+        "hash": "0d849706b4fa2e6da525fd73009ad78c0248801faee02338a2d1a544e1e201fc",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "x86_64"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 14568884,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10020014,
+        "versionName": "1.2.1"
+      },
+      {
+        "added": 1790613882000,
+        "apkName": "qrdrop-1.2.1-arm64-v8a.apk",
+        "hash": "90ca4d050cff903d5dee3910bc9899fe12c3fca99d9aba9f9187eb8af65c03b3",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "arm64-v8a"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 14901671,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10020012,
+        "versionName": "1.2.1"
+      },
+      {
+        "added": 1790613882000,
+        "apkName": "qrdrop-1.2.1-armeabi-v7a.apk",
+        "hash": "81497a59360a02079537dcfece0640fab953a3b6784c30d17bf9be63cf7899cd",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "armeabi-v7a"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 11505597,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10020011,
+        "versionName": "1.2.1"
+      },
+      {
+        "added": 1790613881000,
+        "apkName": "qrdrop-1.2.0-x86_64.apk",
+        "hash": "7e706272668b751a03361aa0e0165046fb3ebe830cc409a135891e315ed507b2",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "x86_64"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 14568444,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10020004,
+        "versionName": "1.2.0"
+      },
+      {
+        "added": 1790613881000,
+        "apkName": "qrdrop-1.2.0-arm64-v8a.apk",
+        "hash": "e1919a1be072dc5b0c5723e78ae557b78211dfc10e55ba36101d742e9db9ec9e",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "arm64-v8a"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 14900967,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10020002,
+        "versionName": "1.2.0"
+      },
+      {
+        "added": 1790613881000,
+        "apkName": "qrdrop-1.2.0-armeabi-v7a.apk",
+        "hash": "b0f266424131af8876ef20802ee0827b4279f7d42b33145534fe095a95b3b17c",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "armeabi-v7a"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 11505521,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10020001,
+        "versionName": "1.2.0"
+      },
+      {
+        "added": 1790613880000,
+        "apkName": "qrdrop-1.1.0-x86_64.apk",
+        "hash": "e9c4a45f9b865332b9f6db68ef0d93e3a253e47b739fd3c68e2282156e1a4e25",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "x86_64"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 14107956,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10010004,
+        "versionName": "1.1.0"
+      },
+      {
+        "added": 1790613879000,
+        "apkName": "qrdrop-1.1.0-arm64-v8a.apk",
+        "hash": "2db68309a28c72e6a20def0c45cc619cfa0d206f212d23707e895261a2ea7abb",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "arm64-v8a"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 14410167,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10010002,
+        "versionName": "1.1.0"
+      },
+      {
+        "added": 1790613880000,
+        "apkName": "qrdrop-1.1.0-armeabi-v7a.apk",
+        "hash": "d67a1297221ecd206f1288f75909ed0a0b6a2a237ff3e8379032e445932d6995",
+        "hashType": "sha256",
+        "minSdkVersion": 24,
+        "nativecode": [
+          "armeabi-v7a"
+        ],
+        "packageName": "com.stan_ely.qrdrop",
+        "sig": "ed9fd3c459e0b6abcba1896f7beb182e",
+        "signer": "0d6f1046d7de856ea557dc48ddf3e7df938be7ba0a5693151a1d1fccd3531a44",
+        "size": 11138865,
+        "targetSdkVersion": 36,
+        "uses-permission": [
+          [
+            "android.permission.INTERNET",
+            null
+          ],
+          [
+            "android.permission.CAMERA",
+            null
+          ],
+          [
+            "com.stan_ely.qrdrop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            null
+          ]
+        ],
+        "versionCode": 10010001,
+        "versionName": "1.1.0"
+      }
+    ]
+  }
+}
