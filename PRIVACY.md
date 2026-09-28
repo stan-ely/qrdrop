@@ -1,7 +1,7 @@
 # Privacy policy
 
-This covers qrdrop in every form it ships in: the app (Microsoft Store, the
-Releases page, Homebrew, Scoop, winget, F-Droid), the website at
+This covers qrdrop in every form it ships in: the app (Google Play, Microsoft
+Store, the Releases page, Homebrew, Scoop, winget, F-Droid), the website at
 share.stan-ely.com, and the `qrdrop` command-line tool.
 
 **The short version:** qrdrop has no accounts, no analytics and no server of its
@@ -60,9 +60,11 @@ and no record of it.
 
 ## Where qrdrop is installed from
 
-The Microsoft Store, GitHub, Homebrew, Scoop, winget, F-Droid and GitHub Pages
-(which serves the website) each handle downloads under their own privacy
-policies. qrdrop receives no information about who installed it.
+Google Play, the Microsoft Store, GitHub, Homebrew, Scoop, winget, F-Droid and
+GitHub Pages (which serves the website) each handle downloads under their own
+privacy policies. qrdrop receives no information about who installed it. Google
+Play gives developers aggregate install and crash statistics; qrdrop adds nothing
+to them and uses them only to see whether a release is broken.
 
 ## Children
 
