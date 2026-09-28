@@ -32,6 +32,21 @@ spent per piece. It now redraws at most ten times a second. The same phone's sen
 command line went from about 12 MB/s to a median of 15.5 over eight runs, with a wide spread
 between runs.
 
+**Beam's code fills the screen.** The sending screen used to stack a heading, a two-sentence
+warning and three more lines under the animated code, and the code was what gave way, often
+shrinking to its smallest size. The warning that Beam is not encrypted is now said once, in
+full, before each end's decision: on a sheet after the sender picks a file, where Start
+beaming is the only way to begin, and on the receiver's sheet before Accept saves anything.
+The live screens carry a "Not encrypted" tag beside the filename instead. Tapping the code
+enlarges it to the largest square the screen holds; tapping again, Back or Escape shrinks it.
+
+**One of the pairing relays had moved.** relay.mostr.pub now redirects every connection to
+relay.ditto.pub, which a WebSocket does not follow, so it had been tried and discarded on
+every pairing. The app uses relay.ditto.pub directly.
+
+**Small phones fit.** On a 360x640 screen, the smallest Android still ships, the send
+screen's text scrolled by a couple of pixels. The spacing there is tighter now.
+
 ## 1.1.0 -- 2026-09-17
 
 **A smaller Android download.** Each release now has an APK per processor type beside the
