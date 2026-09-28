@@ -11,7 +11,7 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
-## Unreleased
+## 1.2.1 -- 2026-09-28
 
 **No changes to the app.** This is 1.2.0 under a new number. Google Play never lets a
 version code be used twice, and 1.2.0's was taken by an upload that was interrupted, so the
