@@ -11,7 +11,7 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
-## Unreleased
+## 1.2.0 -- 2026-09-28
 
 **Much faster between the app and another native device on the same Wi-Fi.** When the
 other end is the qrdrop app or the command line, the file now moves over a direct
