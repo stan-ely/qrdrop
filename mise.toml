@@ -177,7 +177,7 @@ run = "actionlint"
 # they do not bury the everyday tasks above in `mise tasks`.
 
 [tasks."img:og"]
-description = "Render site/og.png (run when the wordmark, palette, or card copy changes)"
+description = "Render site/og.png and the Play feature graphic (run when the wordmark, palette, or card copy changes)"
 run = "node scripts/make-og.mjs"
 
 # Renders the app mark and the site favicon. The fan-out to every platform
@@ -198,7 +198,7 @@ depends = ["build"]
 run = "node scripts/make-screenshots.mjs"
 
 [tasks."img:store"]
-description = "Render the Android store listing's phone screenshots"
+description = "Render the Android store listing's phone and tablet screenshots"
 depends = ["app:build-site"]
 run = "node scripts/make-store-screenshots.mjs"
 

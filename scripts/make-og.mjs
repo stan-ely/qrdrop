@@ -1,5 +1,16 @@
 /**
- * Renders site/og.png, the 1200x630 social-preview card.
+ * Renders site/og.png, the 1200x630 social-preview card, and the same card
+ * as Google Play's 1024x500 feature graphic, into
+ * fastlane/metadata/android/en-US/images/featureGraphic.png -- the fastlane
+ * name, so f-droid.org and this project's own F-Droid repository show it too.
+ *
+ * One card and not two designs, because the two are the same job: a banner
+ * for the thing, seen somewhere other than the thing. The feature graphic is
+ * the card's HTML laid out at 1280x625 CSS px and rendered at 0.8x, which is
+ * exactly 1024x500. Laying it out at the pixel size instead would mean a
+ * second set of font and QR sizes typed in here, and scaling the output
+ * afterwards would be a resample. 625 rather than the card's 630 is what
+ * makes both dimensions whole at one scale; 5px of height moves nothing.
  *
  * WHY THIS IS A SEPARATE, HAND-RUN SCRIPT and not a step in
  * scripts/build-site.mjs: it needs a headless browser. `npm run build` runs
@@ -41,11 +52,18 @@ import { chromium } from 'playwright'
 import { tokensCSS } from '../src/web/tokens.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const OUT = path.join(ROOT, 'site', 'og.png')
-
 const ORIGIN = 'https://share.stan-ely.com'
-const WIDTH = 1200
-const HEIGHT = 630
+
+/** Layout size in CSS px, and the scale that turns it into the output's real pixels. */
+const CARDS = [
+  { out: path.join(ROOT, 'site', 'og.png'), width: 1200, height: 630, scale: 1 },
+  {
+    out: path.join(ROOT, 'fastlane', 'metadata', 'android', 'en-US', 'images', 'featureGraphic.png'),
+    width: 1280,
+    height: 625,
+    scale: 0.8,
+  },
+]
 
 /**
  * @param {string} text
@@ -72,8 +90,8 @@ const html = `
   :root { color-scheme: light; }
   * { box-sizing: border-box; margin: 0; }
   body {
-    width: ${WIDTH}px;
-    height: ${HEIGHT}px;
+    width: 100vw;
+    height: 100vh;
     display: flex;
     align-items: center;
     gap: 72px;
@@ -130,19 +148,23 @@ const html = `
 
 const browser = await chromium.launch()
 try {
-  // deviceScaleFactor 1 with the viewport already at the card's true pixel
-  // size: OG images are specified in real pixels, and rendering at 2x then
-  // letting a crawler downscale is both larger on the wire and softer than
-  // rendering at the size the tags declare.
-  const page = await browser.newPage({
-    viewport: { width: WIDTH, height: HEIGHT },
-    deviceScaleFactor: 1,
-    colorScheme: 'light',
-  })
-  await page.setContent(html, { waitUntil: 'load' })
-  const png = await page.screenshot({ type: 'png' })
-  await writeFile(OUT, png)
-  console.log(`Wrote ${path.relative(ROOT, OUT)} (${WIDTH}x${HEIGHT}, ${(png.length / 1024).toFixed(1)} kB)`)
+  for (const card of CARDS) {
+    // The OG card at deviceScaleFactor 1, with the viewport already at its
+    // true pixel size: OG images are specified in real pixels, and rendering
+    // at 2x then letting a crawler downscale is both larger on the wire and
+    // softer than rendering at the size the tags declare.
+    const page = await browser.newPage({
+      viewport: { width: card.width, height: card.height },
+      deviceScaleFactor: card.scale,
+      colorScheme: 'light',
+    })
+    await page.setContent(html, { waitUntil: 'load' })
+    const png = await page.screenshot({ type: 'png' })
+    await writeFile(card.out, png)
+    const size = `${card.width * card.scale}x${card.height * card.scale}`
+    console.log(`Wrote ${path.relative(ROOT, card.out)} (${size}, ${(png.length / 1024).toFixed(1)} kB)`)
+    await page.close()
+  }
 } finally {
   await browser.close()
 }
