@@ -51,7 +51,7 @@ on both devices. Everything else, by where you are:
 | **Browser UI, run locally** | `npx qrdrop web` — serves this copy on `127.0.0.1` |
 | **Windows app** | [Microsoft Store](https://apps.microsoft.com/detail/9NWB4J802031) · `scoop install stan-ely/qrdrop-app` · [Releases](https://github.com/stan-ely/qrdrop/releases) |
 | **macOS app** (Apple silicon) | `brew install --cask stan-ely/tap/qrdrop-app` · [Releases](https://github.com/stan-ely/qrdrop/releases) |
-| **Android app** | [F-Droid repository](docs/app.md#install) (this project's own, same signed APK) · [Releases](https://github.com/stan-ely/qrdrop/releases) |
+| **Android app** | [F-Droid repository](docs/app.md#install) (this project's own, same signed APK) · [Releases](https://github.com/stan-ely/qrdrop/releases) · Google Play is in closed testing — [join as a tester](https://github.com/stan-ely/qrdrop/discussions/7) |
 | **Linux app** | `.deb` and AppImage on [Releases](https://github.com/stan-ely/qrdrop/releases) — Beam only; the webview has no WebRTC |
 
 A file sent from the CLI can be received in a browser, and the other way round.
