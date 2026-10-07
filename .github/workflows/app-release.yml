@@ -717,10 +717,9 @@ jobs:
   #
   # FULL MANIFESTS, generated here and handed to `wingetcreate submit`, rather
   # than `wingetcreate update`. update copies the previous version's manifests
-  # and rewrites the URL and hash, but AppsAndFeaturesEntries.DisplayVersion and
-  # ReleaseNotesUrl come along untouched -- and a stale DisplayVersion does not
-  # break `winget install`, it breaks `winget upgrade`, silently, a release
-  # later. update also fails outright on a package winget-pkgs does not have
+  # and rewrites the URL and hash, but ReleaseNotesUrl comes along untouched,
+  # pointing every later version at the first one's notes. update also fails
+  # outright on a package winget-pkgs does not have
   # yet, where submit opens a new-package PR. So these are written in full every
   # release, the same posture as the cask and the scoop manifest.
   #
@@ -781,6 +780,11 @@ jobs:
       #   No Publisher in AppsAndFeaturesEntries -- the installer writes
       #     "stan-ely" (from the bundle identifier) and the locale says
       #     "Bevan Stanely"; ProductCode alone correlates exactly.
+      #   No DisplayVersion either -- the installer registers exactly
+      #     PackageVersion, and winget-pkgs' moderation asks for the field to
+      #     be removed when the two are equal (microsoft/winget-pkgs#433008).
+      #     It is for an installer that reports a version winget cannot
+      #     compare; add it back only if the NSIS DisplayVersion ever diverges.
       - name: Write the manifests
         id: manifests
         shell: bash
@@ -823,7 +827,6 @@ jobs:
             `ReleaseDate: ${q(new Date().toISOString().slice(0, 10))}`,
             'AppsAndFeaturesEntries:',
             '  - DisplayName: qrdrop',
-            `    DisplayVersion: ${q(VERSION)}`,
             '    ProductCode: qrdrop',
             '    InstallerType: nullsoft',
             'Installers:',
