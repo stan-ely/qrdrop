@@ -77,8 +77,9 @@ That interoperability is the reason this is one package rather than three.
   secret. WebCrypto only. [Protocol](docs/protocol.md) ·
   [Threat model](docs/threat-model.md)
 - **A fountain code for no network at all.** Beam animates LT-coded QR frames, so
-  a receiver needs *enough* frames rather than *particular* ones — 1.48 × N
-  frames at 10% loss, against 8.3 × N for numbered chunks on a loop.
+  a receiver needs *enough* frames rather than *particular* ones — 1.58 × N
+  frames at 10% loss, against 3.89 × N for numbered chunks on a loop, measured
+  by `scripts/bench-beam.mjs`.
   [Beam](docs/beam.md)
 - **No framework, four runtime dependencies.** The UI is a custom element over a
   hand-rolled virtual DOM, laid out to never scroll, and checked by a script that

@@ -37,6 +37,15 @@ which paired two peers on every attempt, and the app's content security policy f
 every 16 KB frame, which on a phone was a measurable share of the time spent per frame; see
 the app changelog for the numbers. The final 100% is always drawn.
 
+**Beam's loss numbers are measured, and one was wrong.** Since 0.2.0 the docs, the README
+and this changelog have said a numbered loop needs 8.3×N frames at 10% loss (10.7×N at
+30%). That is what chunks picked at random cost, not an in-order loop like qrbeam's, which
+measures 3.89×N at 10% and 7.02×N at 30%. The fountain code's own figures move slightly
+too, to 1.58×N and 2.06×N as the mean of 20 seeds. `node scripts/bench-beam.mjs` now
+produces every one of these numbers, including losses that arrive in runs and the decoder
+overhead the systematic prefix costs (about 1.35 distinct frames per block, against 1.13
+for a pure LT code). The codec itself is unchanged.
+
 ## 0.6.0 — 2026-09-18
 
 **A transfer could die before it started, with "Out-of-order frame: expected 0, got

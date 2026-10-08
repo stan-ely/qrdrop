@@ -52,27 +52,43 @@ it solves; that is not built.
 ## Why a fountain code
 
 The obvious design is to number the chunks and loop them forever, as [qrbeam](https://www.npmjs.com/package/qrbeam)
-does. That is a coupon-collector problem: gathering the last few of N chunks
-means re-watching the whole loop repeatedly, so completion costs about `N·ln(N)`
-frames. Frames *are* dropped — jsQR needs 50–100 ms per frame, so a Firefox
-phone manages about ten decodes a second against a display emitting exactly
-that.
+does. That is a coupon-collector problem run in laps: every lap offers each
+missing chunk one more chance, and the transfer ends only when the unluckiest of
+N chunks has finally been seen, which takes about `ln(N) / ln(1/loss)` laps. A
+missed frame costs a lap, not a frame. Frames *are* dropped — jsQR needs
+50–100 ms per frame, so a Firefox phone manages about ten decodes a second
+against a display emitting exactly that.
 
 The transfer is an LT code instead, so a frame does not care *which* frames were
 missed, only how many arrived. Measured over 1748 blocks (a 1 MiB payload),
-frames the sender must emit before the receiver has the file:
+frames the sender must emit before the receiver has the file, as the mean of 20
+seeds with the lowest and highest in brackets:
 
-| frame loss | this codec | numbered chunks on a loop |
-| --- | --- | --- |
-| 0% | **1.05 × N** | 1.00 × N |
-| 10% | **1.48 × N** | 8.3 × N |
-| 30% | **2.08 × N** | 10.7 × N |
-| 50% | **2.81 × N** | 14.9 × N |
+| frame loss | this codec | this codec, bursty | numbered loop | loop, bursty |
+| --- | --- | --- | --- | --- |
+| 0% | **1.05×** | **1.05×** | 1.00× | 1.00× |
+| 10% | **1.58×** (1.46–1.73) | **1.61×** (1.47–1.82) | 3.89× (2.90–5.87) | 3.12× (1.96–5.96) |
+| 30% | **2.06×** (1.96–2.13) | **2.05×** (1.88–2.17) | 7.02× (5.41–10.14) | 6.01× (4.27–8.41) |
+| 50% | **2.79×** (2.66–2.90) | **2.75×** (2.58–2.90) | 11.22× (8.70–14.52) | 11.08× (8.35–17.85) |
+
+`node scripts/bench-beam.mjs` produces every number here. An earlier version of
+this table gave the loop as 8.3 / 10.7 / 14.9 × N, which is what chunks picked
+*at random* cost, not an in-order loop; the script measures that model too, so
+the difference stays visible.
+
+"Bursty" is losses that arrive in runs averaging eight frames, at the same
+overall rate — what a phone camera does when it hands the decoder only its
+newest frame. The fountain code does not notice, because it only counts
+arrivals, and a random run of lost chunks costs the loop nothing extra either.
+What does break the loop is rhythm: a decoder that stalls on a fixed beat whose
+period divides N misses the same chunks on every lap and **never finishes**
+(one frame in every four, against N = 1748, in all 20 runs), while the fountain
+code completes at 1.96 × N.
 
 The first N frames are the source blocks sent plain, and only then does the
 fountain start. txqr does not do this, and the trade is real rather than a free
-win: the decoder then needs ~1.3 distinct frames per block under loss, against
-the ~1.15 a pure LT code reaches, because most blocks are already solved by the
+win: the decoder then needs ~1.35 distinct frames per block under loss, against
+the ~1.13 a pure LT code reaches (both measured by the same script), because most blocks are already solved by the
 time the fountain begins and a degree-d frame therefore carries fewer unknowns
 than its degree suggests. What it buys is the common case — a clean capture
 costs exactly N frames and nothing more. Which side of that is right depends on

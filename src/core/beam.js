@@ -29,11 +29,14 @@
  * manifest -- each noted where it happens.
  *
  * WHY A FOUNTAIN CODE. The obvious design -- number the chunks and loop them
- * forever, as qrbeam does -- is a coupon-collector problem:
- * to gather the last few of N chunks you re-watch the whole loop many times
- * over, so completion costs about N*ln(N) frames rather than N. At N=1500 that
- * is a twelve-minute transfer instead of a two-minute one, and every dropped
- * frame costs a full extra lap. An LT code makes a dropped frame cost very
+ * forever, as qrbeam does -- is a coupon-collector problem run in laps: every
+ * lap offers each missing chunk one more chance, and the transfer ends only
+ * when the unluckiest of N chunks has been seen, about ln(N)/ln(1/loss) laps.
+ * At N=1748 and ten frames a second, 10% loss turns a three-minute transfer
+ * into an eleven-minute one, because every dropped frame costs a full extra
+ * lap. (Not N*ln(N) frames: that is chunks picked at RANDOM, a different and
+ * worse design, and confusing the two is how an 8.3x once got into the table
+ * below.) An LT code makes a dropped frame cost very
  * little, and -- the part that matters -- it does not matter WHICH frames
  * arrived, only how many. That property is the entire reason this file exists
  * rather than a fifty-line chunk-and-cycle loop, because a phone camera
@@ -41,20 +44,25 @@
  * Firefox tops out near ten decodes a second against a display emitting
  * exactly that.
  *
- * MEASURED, not hoped for. Frames the sender must emit before the receiver has
- * the whole file, at 1748 blocks (a 1 MiB payload):
+ * MEASURED, not hoped for -- by scripts/bench-beam.mjs, which is where these
+ * come from and the only place they should be updated from. Frames the sender
+ * must emit before the receiver has the whole file, at 1748 blocks (a 1 MiB
+ * payload), mean of 20 seeds:
  *
  *     loss     this codec      chunk-and-cycle
  *       0%     1.05 x N        1.00 x N
- *      10%     1.48 x N        8.3 x N
- *      30%     2.08 x N       10.7 x N
- *      50%     2.81 x N       14.9 x N
+ *      10%     1.58 x N        3.89 x N
+ *      30%     2.06 x N        7.02 x N
+ *      50%     2.79 x N       11.22 x N
  *
- * Note the shape rather than the constants: cycling falls off a cliff the
- * moment anything at all is lost, because ln(N) is the price of collecting the
- * last few coupons; this stays inside a small factor. The decoder's own
- * overhead -- distinct frames needed per block -- settles near 1.3x under
- * loss, not the ~1.05x a textbook LT code reaches, because the systematic
+ * Note the shape rather than the constants: cycling nearly quadruples the
+ * moment anything at all is lost, because it pays for the unluckiest chunk as
+ * soon as there is one; this stays inside a small factor. Losses in runs, as a
+ * phone camera produces them, leave both about where they are -- but a decoder
+ * stalling on a beat whose period divides N makes cycling never finish at all.
+ * The decoder's own overhead -- distinct frames needed per block -- settles
+ * near 1.35x under loss, not the ~1.13x a pure LT code reaches (both measured
+ * by the same script), because the systematic
  * prefix means most blocks are already solved by the time the fountain starts,
  * so a degree-d frame drawn against all N carries fewer unknowns than its
  * degree suggests. That is a genuine cost of the prefix and it is still worth
@@ -63,7 +71,7 @@
  *
  * WHY THE FIRST N FRAMES ARE SYSTEMATIC. This is the main departure from txqr,
  * and it is a trade rather than an improvement -- see the table below, where
- * the cost is a decoder overhead of ~1.3x under loss against the ~1.15x a pure
+ * the cost is a decoder overhead of ~1.35x under loss against the ~1.13x a pure
  * LT code reaches. A pure fountain pays its overhead
  * even when nothing is lost, and for small N a robust soliton distribution is
  * genuinely bad at it -- 1.3-1.5x for a handful of blocks. Sending the N
