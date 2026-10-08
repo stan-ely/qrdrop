@@ -5,8 +5,9 @@
  * machinery to justify, and the justification is precisely that a transfer
  * survives a camera missing a third of what it was shown -- so that is the
  * property pinned here, not just "the bytes round-trip". The naive
- * chunk-and-cycle design it replaced would need N*ln(N) frames to close the
- * same gap; the bound below is what stops that regressing back in.
+ * chunk-and-cycle design it replaced pays a whole lap for every chunk it
+ * misses; the bound below is what stops that regressing back in. The measured
+ * numbers live in scripts/bench-beam.mjs, not here.
  *
  * Every case is seeded. A flaky erasure-code test is worse than none: it
  * trains people to re-run the suite until it passes, which is exactly how a
@@ -113,9 +114,12 @@ test('survives losing 30% of frames, without re-watching the loop', async () => 
 
   assert.deepEqual(await decoder.assemble(), original)
 
-  // The bound is the whole point. Cycling indexed chunks would need about
-  // N*ln(N) frames to close the same gap, so a regression back to that shows
-  // up here as a failure rather than as a user complaining it takes forever.
+  // The bound is the whole point. N*ln(N)/2 is a loose ceiling -- N*ln(N) is
+  // what chunks picked at random would cost, not an in-order loop -- but it
+  // still separates the two designs cleanly: here it is 2.9x N, an in-order
+  // loop under this exact drop sequence needs 7.8x N, and this codec 2.1x N.
+  // A regression back to cycling shows up as a failure rather than as a user
+  // complaining it takes forever.
   const naive = encoder.frameCount * Math.log(encoder.frameCount)
   assert.ok(emitted < naive / 2, `${emitted} frames for ${encoder.frameCount} blocks`)
 })

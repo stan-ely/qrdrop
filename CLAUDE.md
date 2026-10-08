@@ -28,6 +28,8 @@ mise run lint:workflows                    # actionlint, with shellcheck on ever
 
 node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
+
+node scripts/bench-beam.mjs                # beam loss/overhead tables, ~3 min; the ONLY source for docs/beam.md's numbers
 ```
 
 Five image generators, all hand-run and none of them in `npm run build` — that
