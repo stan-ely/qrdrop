@@ -14,7 +14,15 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["app"]
+exclude = ["app", "vendor"]
+
+# Patched crates, kept inside this tree because a patch outside the workspace
+# root is hashed by its absolute path into every symbol, and the Android .so
+# then differs between two checkouts (phase 1 measured exactly that). They are
+# excluded above, so --workspace never lints or tests someone else's code.
+# vendor/README.md says what each patch is and when it can go.
+[patch.crates-io]
+str0m-rust-crypto = { path = "vendor/str0m-rust-crypto" }
 
 # Shared by every member. Not `version`: each crate is versioned on its own,
 # since tryst is meant to be published apart from the rest (phase 10).

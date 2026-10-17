@@ -9,8 +9,8 @@ session that works on it starts by reading the **Status** section and ends by up
 |---|---|---|---|
 | 0. Groundwork | done, 2026-10-17 | `4c8508f`, `2498dac`, `f12c883`, `19a0184` | CI runs the Rust tests; workspace and vectors in; see "Phase 0: what it found" |
 | 1. WebRTC spike and stack choice | done, 2026-10-17 | `a631f1f` | str0m chosen, TLS on ring; the spikes stayed in the scratchpad; see "Phase 1: what it found" |
-| 2. `qrdrop-protocol` | done, 2026-10-17 | | every phase 0 vector passes; see "Phase 2: what it found" |
-| 3. `tryst`, sans-IO core and WebRTC peer | not started | | |
+| 2. `qrdrop-protocol` | done, 2026-10-17 | `d935920` | every phase 0 vector passes; see "Phase 2: what it found" |
+| 3. `tryst`, sans-IO core and WebRTC peer | done, 2026-10-18 | | every Trystero vector and both recordings pass; two str0m peers join in-process; see "Phase 3: what it found" |
 | 4. `tryst` signalling clients | not started | | |
 | 5. `qrdrop-session` and LAN | not started | | |
 | 6. Rust CLI and the cross-implementation suite | not started | | |
@@ -19,9 +19,9 @@ session that works on it starts by reading the **Status** section and ends by up
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 3, `tryst`'s sans-IO core: topics, signal crypto, the action wire, the room
-frame and the handshake, against `trystero.json` and the two recordings, then the str0m peer behind
-it. It is also where `crates/**` joins the path filters in `app.yml` and `app-reproducible.yml`.
+**Next step:** Phase 4, `tryst`'s Nostr and torrent clients on tokio, driving the phase 3
+`Signaller`, with the relay rules from phase 4 below. Its gate is a Rust peer and a Node Trystero
+peer joining one room over the public relays.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -171,8 +171,10 @@ is a risk to measure, not assume. The crate choices:
   gain.
 
 `scripts/android-env.mjs` remaps the whole repo root and `CARGO_HOME`, so path dependencies under
-`crates/` are covered. From phase 3, the path filters in `app.yml` and `app-reproducible.yml` must
-include `crates/**`.
+`crates/` are covered. From the app's first dependency on `crates/` (phase 7), the path filters in
+`app.yml` and `app-reproducible.yml` must include `crates/**`, `vendor/**` and the root
+`Cargo.toml`. Not before: until then nothing under `crates/` reaches the app, and the filters would
+spend five runners per commit proving that, which is `app.yml`'s own argument for leaving out `src/`.
 
 ### Invariants carried over
 
@@ -661,6 +663,86 @@ The user-facing copy in `messages.js`, apart from the two shared constants, is p
 
 Test all of it against the phase 0 recordings, then put the WebRTC peer behind it on the chosen
 stack. Add `crates/**` to the path filters in `app.yml` and `app-reproducible.yml`.
+
+### Phase 3: what it found
+
+Done on 2026-10-18. `crates/tryst` has 21 tests, in 0.05 s; 20 of them need no feature.
+
+**The core, four modules and no features:**
+- **`crypto`:** `sha1_b36`, `Topics` (root, peer topic, info hash, room token), `nostr_kind`,
+  `SignalCipher` (AES-256-GCM with a 16-byte IV), `handshake_response` and `gen_id`.
+- **`wire`:** `encode_action`, `decode_chunk`, a bounded `Reassembler`, and the room and
+  presence frames.
+- **`room`:** a `Room` over channels that are already open. It runs the `@_hsdata` / `@_hsready`
+  handshake, `@_leave` and `@_ping`, and passes messages to and from joined peers. Like phase 2's
+  `Session`, it is driven by `add_peer`, `handle_data`, `remove_peer`, `send`, `leave` and
+  `handle_timeout`, and drained by `poll_transmit` and `poll_event`.
+- **`signal`:** a `Signaller` per strategy. It holds the announce, nudge, offer, answer, glare and
+  candidate rules, and each offer's and answer's timers. Connections are made through a
+  `Connector` trait that the caller passes to each call. That trait is synchronous because str0m
+  is, so Trystero's half-made-offer states (`offerInitPromise`, the offer pool's leases) have no
+  counterpart. The tracker's outstanding offers are `pooled_offer` and `reclaim`; keeping them
+  under offer IDs is the torrent client's job, in phase 4.
+
+**Behind `webrtc`: `WebRtc`**, a `Connector` over str0m that is still sans-IO.
+- **Sockets.** Datagrams from any of the driver's sockets go in through `handle_datagram`, which
+  finds their connection by `Rtc::accepts`, and come out through `poll_transmit`.
+- **Channel.** The offerer creates the one `"data"` channel; `BUFFERED_LOW` is 65535; each
+  association's send buffer is 8 MiB.
+- **ICE.** Every local candidate goes in the SDP, so nothing trickles out. JS candidates trickle in.
+- **Crypto.** The crypto provider is set per connection, so the crate never installs a process
+  default.
+- **Vendored backend.** `str0m-rust-crypto` is vendored at `vendor/`, wired in through
+  `[patch.crates-io]`, excluded from the workspace and described in `vendor/README.md`.
+- **Pure Rust.** `cargo tree` shows no aws-lc, cc, cmake, ring or rcgen under `tryst`.
+
+**Tested against the recordings:**
+- **The room.** `room_replays_both_sides_of_every_recording` puts a Rust `Room` in each side's
+  place in all four recorded runs, the stand-in and live recordings, Nostr and torrent. It feeds that
+  side's inbound channel messages in order, and every Trystero-action message it sends is byte-equal
+  to the recorded one, in the same order. Where the recorded side was the initiator, the test supplies
+  its recorded challenge.
+- **The signaller.** The Nostr replays feed each side the events its relay delivered. Everything the
+  Rust signaller publishes, the recorded side published too, keyed by topic and field set. The lower
+  ID offers and never answers; the higher one answers exactly once, and every trickled candidate
+  reaches that answer's connection.
+- **Torrent.** The higher ID answers the lower one's relayed offer, naming its `offer_id`. The lower
+  ID ignores the higher one's offer.
+- **Decryption.** Every offer, answer and candidate in both recordings opens under the recording's
+  password, and every topic, kind and info hash is the derived one.
+
+**Both layers together:** `two_rust_peers_signal_connect_handshake_and_move_a_frame` runs two
+complete peers in one process (signaller, str0m and room) with datagrams moved in memory on a
+simulated clock. It goes from an announce to a joined room through real ICE, DTLS, SCTP and DCEP,
+then moves a full 16348-byte frame, a string and a 300 KB multi-chunk message, then a leave. The
+JS-facing check on the same stack is phase 4's gate.
+
+**Found on the way:**
+- **`serde_json` sorts object keys unless `preserve_order` is on**, and Trystero's JSON payloads are
+  compared byte for byte. The first `json` action vector failed on exactly that. `tryst` turns the
+  feature on. It unifies across the workspace, so phase 2's crate builds with it too: its 69 tests
+  pass either way, because its frames come from derived structs, which serialise in field order
+  regardless.
+- **An empty payload with metadata is one chunk, not two.** `ceil(0 / size) + 1 || 1` is 1, so the
+  metadata chunk is marked last and carries no data chunk after it. The natural Rust reading,
+  `max(ceil, 1) + 1`, sends two.
+- **Every chunk carries its payload's type bits, the metadata chunk included.** So metadata on a
+  JSON payload is `0x0A`, not `0x02`. Only the string case is in the vectors; this follows the code.
+- **`x509-cert`'s builder needs `sha2`'s `oid` feature** to name its signature algorithm. Without
+  it the error is a trait bound on `OidSha256`, two crates away from the cause. The `webrtc` feature
+  turns it on.
+- **Deliberately stricter than Trystero, in ways a JS peer cannot observe:**
+  - A reassembled message is capped at 16 MiB, where the JS has no cap at all.
+  - Callers cannot send on `@_` actions, so nothing can forge a leave.
+  - At most 64 early candidates are held per offer.
+  - Data for another room's token is dropped rather than held, since this room is the connection's
+    only one.
+- **Left out because qrdrop's wire never uses them:** passive rooms, rooms sharing one connection,
+  media, and renegotiation over `@_signal`. Supporting any of them is phase 10's question, for the
+  published crate.
+
+**The CI path filters did not move**, against the original plan for this phase. Nothing under
+`crates/` reaches the app until phase 7, so the filters move then. See "Dependency rules".
 
 ### Phase 4: `tryst` signalling clients
 

@@ -29,6 +29,24 @@ categories = ["network-programming"]
 default = ["nostr", "torrent", "webrtc"]
 nostr = []
 torrent = []
-webrtc = []
+# sha2/oid: the certificate builder names its signature algorithm by OID.
+webrtc = ["dep:str0m", "dep:p256", "dep:x509-cert", "sha2/oid"]
 
 [dependencies]
+# The sans-IO core. The same RustCrypto generation as qrdrop-protocol, for
+# the reason its Cargo.toml gives: str0m's DTLS stack is built on it.
+aes-gcm = "0.10.3"
+base64 = "0.22.1"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+# preserve_order: a JS peer writes object keys in insertion order, and an
+# action payload is compared byte for byte; serde_json sorts them without it.
+serde_json = { version = "1.0.145", features = ["preserve_order"] }
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+
+# webrtc: str0m on its pure-Rust crypto backend, which the root Cargo.toml
+# patches to drop aws-lc-sys (vendor/README.md), and what it takes to make
+# the DTLS certificate that the patch leaves to the caller.
+str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"], optional = true }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
+x509-cert = { version = "0.2.5", features = ["builder"], optional = true }
