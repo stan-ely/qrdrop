@@ -35,8 +35,9 @@ on its first run (run 39016489083, 3 min 17 s), app host tests included.
   mature enough to publish on its own.
 - **Crate names.** `tryst` for the Trystero-compatible rooms, named apart from Trystero so a later
   crates.io release does not read as upstream's own; then `qrdrop-protocol`, `qrdrop-session` and
-  `qrdrop-cli` (binary `qrdrop`). All four were free on crates.io on 2026-10-17. Phase 10 can still
-  revisit `tryst` with upstream.
+  `qrdrop-cli` (binary `qrdrop`). All four were free on crates.io on 2026-10-17, and `tryst` 0.0.1 was
+  published that day, empty, to hold the name; the other three stay `publish = false`. Phase 10 can
+  still revisit the name with upstream. Anything published after 0.0.1 bumps the version.
 - **Feature flags.** Optional transports (the signalling strategies, WebRTC, LAN listen and dial,
   QUIC, file IO, the CLI's extras) are Cargo features, so each platform builds only what it uses.
   See "Feature flags".
