@@ -1,0 +1,801 @@
+{
+  "about": "Real traffic between two qrdrop peers over Trystero 0.25.4, one run per strategy, written by scripts/record-trystero.mjs (the relay and tracker answers are a minimal stand-in run by the script; every client message is Trystero's). relay[] is every WebSocket message in order, from each peer's side; channel[] is every data-channel message. t_ms is milliseconds since the run started. Messages over 256 bytes are kept as head (the first 160 bytes), length and sha256. Peer connections were bound to 127.0.0.1 with no ICE servers, so every candidate is a loopback one.",
+  "trystero_version": "0.25.4",
+  "relays": "stand-in",
+  "app_id": "qrdrop",
+  "secret": "6141fa33173faa878140d9345046bc0e1cf77a24de1377c33d9577fd73c2c05a",
+  "code": "qrdrop:YUH6Mxc_qoeBQNk0UEa8Dhz3eiTeE3fDPZV3_XPCwFo",
+  "topic": "Hvs_L90l0Yqx-S5ihGsOXw",
+  "password": "Oi0lEZK4wB8XI0Oon-t2Q9r3Wv60zzrM4lKn0EBuZI8",
+  "file": {
+    "mod251": 32641
+  },
+  "runs": [
+    {
+      "strategy": "nostr",
+      "peers": {
+        "host": {
+          "self_id": "tvEstjKzkUjMXtuiykHy",
+          "paired_with": "hZ6VqsHSXjIjyt9zNLGF",
+          "sas": "⚡ 🧩 🥚 🐝"
+        },
+        "guest": {
+          "self_id": "hZ6VqsHSXjIjyt9zNLGF",
+          "paired_with": "tvEstjKzkUjMXtuiykHy",
+          "sas": "⚡ 🧩 🥚 🐝"
+        }
+      },
+      "relay": [
+        {
+          "t_ms": 271,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"REQ\",\"zsHIDyCJfv6VgRJJdU4lRkXjeacvIWKOsThKB7WZIzuw6VgVAidAbUP9wHusn43S\",{\"kinds\":[22924,22833],\"since\":1792224229,\"#x\":[\"123ih3c5a4r2w3p6c5y3e5t313u3n4z4a2x1112\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]}]"
+        },
+        {
+          "t_ms": 272,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EOSE\",\"zsHIDyCJfv6VgRJJdU4lRkXjeacvIWKOsThKB7WZIzuw6VgVAidAbUP9wHusn43S\"]"
+        },
+        {
+          "t_ms": 280,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22833,\"tags\":[[\"x\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"3370c8d8733bf4886a8454c0bf56107d6699c308505f0e63b93ec97e68c67e1d\",\"sig\":\"7f5bf8777e60aaf6cec1942ec06efd4ad152223fc1d741836cf446d29910886130a1bfd5b556d3f0e2f2e7246f190e37bd4d56d517dc28ab39e14701bf745d15\"}]"
+        },
+        {
+          "t_ms": 280,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"3370c8d8733bf4886a8454c0bf56107d6699c308505f0e63b93ec97e68c67e1d\",true,\"\"]"
+        },
+        {
+          "t_ms": 280,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",\"zsHIDyCJfv6VgRJJdU4lRkXjeacvIWKOsThKB7WZIzuw6VgVAidAbUP9wHusn43S\",{\"kind\":22833,\"tags\":[[\"x\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"3370c8d8733bf4886a8454c0bf56107d6699c308505f0e63b93ec97e68c67e1d\",\"sig\":\"7f5bf8777e60aaf6cec1942ec06efd4ad152223fc1d741836cf446d29910886130a1bfd5b556d3f0e2f2e7246f190e37bd4d56d517dc28ab39e14701bf745d15\"}]"
+        },
+        {
+          "t_ms": 282,
+          "peer": "guest",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"REQ\",\"5Jb9HYHUel66AoBdKumM6qCfHakUAhAEcu65ZT8BBJOOT8JhVSGKuyShsC93K9Bp\",{\"kinds\":[22737,22833],\"since\":1792224229,\"#x\":[\"5p304l64t4n3j682l2k5h6c6p501128d3h6k2d\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]}]"
+        },
+        {
+          "t_ms": 282,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EOSE\",\"5Jb9HYHUel66AoBdKumM6qCfHakUAhAEcu65ZT8BBJOOT8JhVSGKuyShsC93K9Bp\"]"
+        },
+        {
+          "t_ms": 290,
+          "peer": "guest",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22833,\"tags\":[[\"x\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"hZ6VqsHSXjIjyt9zNLGF\\\"}\",\"pubkey\":\"2f991091383d6798fd5809ef35695d70fcc8b2f90ece305ba1e4b9e8eb4d0b0a\",\"id\":\"a2c95157a2c7474f56892f2ee638c59d869c1e40c50e214cb3cb2b0df530c158\",\"sig\":\"15a4daea8e5fd87765cfc1fe52271f9ce29fcbc6489ac679d505a2c99955be7186eb6ff71700b0425c51fe68fed73d5dc8705eec061fb4236e00896b670d3e43\"}]"
+        },
+        {
+          "t_ms": 290,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"a2c95157a2c7474f56892f2ee638c59d869c1e40c50e214cb3cb2b0df530c158\",true,\"\"]"
+        },
+        {
+          "t_ms": 291,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",\"zsHIDyCJfv6VgRJJdU4lRkXjeacvIWKOsThKB7WZIzuw6VgVAidAbUP9wHusn43S\",{\"kind\":22833,\"tags\":[[\"x\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"hZ6VqsHSXjIjyt9zNLGF\\\"}\",\"pubkey\":\"2f991091383d6798fd5809ef35695d70fcc8b2f90ece305ba1e4b9e8eb4d0b0a\",\"id\":\"a2c95157a2c7474f56892f2ee638c59d869c1e40c50e214cb3cb2b0df530c158\",\"sig\":\"15a4daea8e5fd87765cfc1fe52271f9ce29fcbc6489ac679d505a2c99955be7186eb6ff71700b0425c51fe68fed73d5dc8705eec061fb4236e00896b670d3e43\"}]"
+        },
+        {
+          "t_ms": 291,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",\"5Jb9HYHUel66AoBdKumM6qCfHakUAhAEcu65ZT8BBJOOT8JhVSGKuyShsC93K9Bp\",{\"kind\":22833,\"tags\":[[\"x\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"hZ6VqsHSXjIjyt9zNLGF\\\"}\",\"pubkey\":\"2f991091383d6798fd5809ef35695d70fcc8b2f90ece305ba1e4b9e8eb4d0b0a\",\"id\":\"a2c95157a2c7474f56892f2ee638c59d869c1e40c50e214cb3cb2b0df530c158\",\"sig\":\"15a4daea8e5fd87765cfc1fe52271f9ce29fcbc6489ac679d505a2c99955be7186eb6ff71700b0425c51fe68fed73d5dc8705eec061fb4236e00896b670d3e43\"}]"
+        },
+        {
+          "t_ms": 328,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22737,\"tags\":[[\"x\",\"5p304l64t4n3j682l2k5h6c6p501128d3h6k2d\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"d13954fe925fc8a340eaef12cae1c3afd8a9cd1606f1eab7bd6f1d1cb86e2ad3\",\"sig\":\"3c80b09f3f46c31a3617b2455a1dc6caf662bedb2759987c2df1d1f35b3fbc10fead4c6322846545625df43dcaf6f397b0e5d61db4efcb2aca849d388b8a816e\"}]"
+        },
+        {
+          "t_ms": 329,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"d13954fe925fc8a340eaef12cae1c3afd8a9cd1606f1eab7bd6f1d1cb86e2ad3\",true,\"\"]"
+        },
+        {
+          "t_ms": 329,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",\"5Jb9HYHUel66AoBdKumM6qCfHakUAhAEcu65ZT8BBJOOT8JhVSGKuyShsC93K9Bp\",{\"kind\":22737,\"tags\":[[\"x\",\"5p304l64t4n3j682l2k5h6c6p501128d3h6k2d\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"d13954fe925fc8a340eaef12cae1c3afd8a9cd1606f1eab7bd6f1d1cb86e2ad3\",\"sig\":\"3c80b09f3f46c31a3617b2455a1dc6caf662bedb2759987c2df1d1f35b3fbc10fead4c6322846545625df43dcaf6f397b0e5d61db4efcb2aca849d388b8a816e\"}]"
+        },
+        {
+          "t_ms": 357,
+          "peer": "guest",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22924,\"tags\":[[\"x\",\"123ih3c5a4r2w3p6c5y3e5t313u3n4z4a2x1112\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"hZ6VqsHSXjIjyt9zNLGF\\\",\\\"offerId\\\":\\\"Y8ROq7Y1Ct3q\\\",\\\"offer\\\":\\\"114,11,80,178,219,91,109,213,185,177,78,202,102,48,135,18$toMLNjYDRTkBvFWJOI0rNHFqhyri405SEOhvbwiD7sYiqto3c1nrAPW3MpAAlCKM82X4bjAuNEXFwZjK/EiL9C5XLkk1KXER7sLr1G8KDykccFSWmN+ZWOP9Med4xTyRPsvDAQCBJXPTYhcsWHbmweDs0S83rJ7QC5DhptWkJ7riimLhelyGN2NqPh4gX2hnVyGW5RifKwuKoqDOfl6Qkmmwhe96zblx7yekRRvGwHTEvBzKPu7FKxR3XS9L+UR+/jDP2fg/ysM6fNl2zJ4FBGPt/+yD+Gj6cKufUjWMsJ0NCisWJgBDc5jkUesEuL4pGG2FSrme+ZZnpEURi7y1BdtksW3i3ZyBiduxo0ymX7ph2IyfGXN/KuklE1mfpnxrmjTaEevkxBkklvRV0ow6wIvgDuIq6Dc26P3Apk/wWinkOBlexcU+wj9TWcP0U5naVWLcgIiBJNJsRe4vQa6iqgWCqe/R24veuUTz+CYlPiu7XwO3Vta1BhcD8eWZQyr3LxZ+rMY1yZFYBezjXYX50HkoIgt3DMdfWB1nIlJeqWCF1A16avxw8uH/+suydnz1F0XLaDtHzg4WMORHy9zzhZqAFy5B3wrlJ/58CGVH2yHL7fYjOK1LtUMBs578v/yI6mLB4b6rwSfWRq6/Zg687vnLQS0rKGcaNmjV7vn9Vcw5B4piz8swRVIqGN7Wfy/iMiDDSbJemqWPxIAjPaZijz8=\\\"}\",\"pubkey\":\"2f991091383d6798fd5809ef35695d70fcc8b2f90ece305ba1e4b9e8eb4d0b0a\",\"id\":\"ddc741ef92e2ccbd8763388a3533db0b31284c6e920f9f747ed72b3a201efa07\",\"sig\":\"9d1c2dc4845685283f5f8228430fc17f1817c2274e268405f179818a168354e4db871e5c354ee7f7b0a31bab6bf5b3839aa98732cc85b3976aff677fa87c78a2\"}]"
+        },
+        {
+          "t_ms": 357,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"ddc741ef92e2ccbd8763388a3533db0b31284c6e920f9f747ed72b3a201efa07\",true,\"\"]"
+        },
+        {
+          "t_ms": 358,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",\"zsHIDyCJfv6VgRJJdU4lRkXjeacvIWKOsThKB7WZIzuw6VgVAidAbUP9wHusn43S\",{\"kind\":22924,\"tags\":[[\"x\",\"123ih3c5a4r2w3p6c5y3e5t313u3n4z4a2x1112\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"hZ6VqsHSXjIjyt9zNLGF\\\",\\\"offerId\\\":\\\"Y8ROq7Y1Ct3q\\\",\\\"offer\\\":\\\"114,11,80,178,219,91,109,213,185,177,78,202,102,48,135,18$toMLNjYDRTkBvFWJOI0rNHFqhyri405SEOhvbwiD7sYiqto3c1nrAPW3MpAAlCKM82X4bjAuNEXFwZjK/EiL9C5XLkk1KXER7sLr1G8KDykccFSWmN+ZWOP9Med4xTyRPsvDAQCBJXPTYhcsWHbmweDs0S83rJ7QC5DhptWkJ7riimLhelyGN2NqPh4gX2hnVyGW5RifKwuKoqDOfl6Qkmmwhe96zblx7yekRRvGwHTEvBzKPu7FKxR3XS9L+UR+/jDP2fg/ysM6fNl2zJ4FBGPt/+yD+Gj6cKufUjWMsJ0NCisWJgBDc5jkUesEuL4pGG2FSrme+ZZnpEURi7y1BdtksW3i3ZyBiduxo0ymX7ph2IyfGXN/KuklE1mfpnxrmjTaEevkxBkklvRV0ow6wIvgDuIq6Dc26P3Apk/wWinkOBlexcU+wj9TWcP0U5naVWLcgIiBJNJsRe4vQa6iqgWCqe/R24veuUTz+CYlPiu7XwO3Vta1BhcD8eWZQyr3LxZ+rMY1yZFYBezjXYX50HkoIgt3DMdfWB1nIlJeqWCF1A16avxw8uH/+suydnz1F0XLaDtHzg4WMORHy9zzhZqAFy5B3wrlJ/58CGVH2yHL7fYjOK1LtUMBs578v/yI6mLB4b6rwSfWRq6/Zg687vnLQS0rKGcaNmjV7vn9Vcw5B4piz8swRVIqGN7Wfy/iMiDDSbJemqWPxIAjPaZijz8=\\\"}\",\"pubkey\":\"2f991091383d6798fd5809ef35695d70fcc8b2f90ece305ba1e4b9e8eb4d0b0a\",\"id\":\"ddc741ef92e2ccbd8763388a3533db0b31284c6e920f9f747ed72b3a201efa07\",\"sig\":\"9d1c2dc4845685283f5f8228430fc17f1817c2274e268405f179818a168354e4db871e5c354ee7f7b0a31bab6bf5b3839aa98732cc85b3976aff677fa87c78a2\"}]"
+        },
+        {
+          "t_ms": 413,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22737,\"tags\":[[\"x\",\"5p304l64t4n3j682l2k5h6c6p501128d3h6k2d\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\",\\\"answer\\\":\\\"177,175,218,131,208,190,84,206,193,255,100,183,229,4,134,126$0zhH+zNG/S1B3/zaHjdSGZ25Rf0ox2SNlq5y8UXqsBTyQz5L0FI3CJF2MBAnc+ZkykHIRRqA7ppyksQPGX2tNo/NlbpRHjSrtyj9wEkwhfdluAn0m7E+eKaX0a6ghXI2jylpTmgOdLGUSd+j2oRcbQD8YyqO/qGOjlbwA/7nrx/A4vcbofL8Nlz3IiS89HpeydUoMvGmNBmRwOIUXGm7sQ38OQf1ze1LNIzKFtfimxVS8kPOr6bLakv3HnS8Qw5sxTj7eigYqfygbz3Ou/dt/p/tmo4iUSgrY6zSg7c6825I/Si3KxIVkYEgYInvsCIibNLWoBdlAY+I2sL4lUlaReq6GiP86VDEpfTO+LB8DJgpAke97L2Rzj5Z4segU0Yxj3bErKOXTF3Bqs6qspsR5QC9/75h8pSIetf9B3AJuKkfPjHhTcSD71QIoaGxYDiNMFUeYv/rMZ922HIWYXgDoX2Cpl+P+FPbR27irXsZYqEfgxSRtyvjzuq5+Jyy+8XFoUlu5eOCpncbogn1qY0oWL02qZrre6AX8M5iTMonGwx1WCmOGR8eAC0vQLRnm5ZLNB0eNVEUmA3e7fpg5SraQiMv6pt6rlw6WCVFFmm3iQTdamv/FGAfhFsUGtD7Fy4Q3AO2ePHluKKmP1vGv4RsaKtP7TTJBCM6g2cz8Rr+TZ17pIkrDSobVQvjJT/h6BNsAhQoE4zTvMcBag2oWJqsbA==\\\",\\\"offerId\\\":\\\"Y8ROq7Y1Ct3q\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"57c42943065fb0d406b659661f0db70d37f4e97eb3e98af6654745b9b03c3754\",\"sig\":\"aba157b8e522f5023be5efaf7e96c51efcd9ad67e92968269909d0293804d2b0011c3064646b3deedcd8f8d2fbfe81f2c3b5a448834aad97b01548f5a170b29d\"}]"
+        },
+        {
+          "t_ms": 414,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"57c42943065fb0d406b659661f0db70d37f4e97eb3e98af6654745b9b03c3754\",true,\"\"]"
+        },
+        {
+          "t_ms": 414,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",\"5Jb9HYHUel66AoBdKumM6qCfHakUAhAEcu65ZT8BBJOOT8JhVSGKuyShsC93K9Bp\",{\"kind\":22737,\"tags\":[[\"x\",\"5p304l64t4n3j682l2k5h6c6p501128d3h6k2d\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\",\\\"answer\\\":\\\"177,175,218,131,208,190,84,206,193,255,100,183,229,4,134,126$0zhH+zNG/S1B3/zaHjdSGZ25Rf0ox2SNlq5y8UXqsBTyQz5L0FI3CJF2MBAnc+ZkykHIRRqA7ppyksQPGX2tNo/NlbpRHjSrtyj9wEkwhfdluAn0m7E+eKaX0a6ghXI2jylpTmgOdLGUSd+j2oRcbQD8YyqO/qGOjlbwA/7nrx/A4vcbofL8Nlz3IiS89HpeydUoMvGmNBmRwOIUXGm7sQ38OQf1ze1LNIzKFtfimxVS8kPOr6bLakv3HnS8Qw5sxTj7eigYqfygbz3Ou/dt/p/tmo4iUSgrY6zSg7c6825I/Si3KxIVkYEgYInvsCIibNLWoBdlAY+I2sL4lUlaReq6GiP86VDEpfTO+LB8DJgpAke97L2Rzj5Z4segU0Yxj3bErKOXTF3Bqs6qspsR5QC9/75h8pSIetf9B3AJuKkfPjHhTcSD71QIoaGxYDiNMFUeYv/rMZ922HIWYXgDoX2Cpl+P+FPbR27irXsZYqEfgxSRtyvjzuq5+Jyy+8XFoUlu5eOCpncbogn1qY0oWL02qZrre6AX8M5iTMonGwx1WCmOGR8eAC0vQLRnm5ZLNB0eNVEUmA3e7fpg5SraQiMv6pt6rlw6WCVFFmm3iQTdamv/FGAfhFsUGtD7Fy4Q3AO2ePHluKKmP1vGv4RsaKtP7TTJBCM6g2cz8Rr+TZ17pIkrDSobVQvjJT/h6BNsAhQoE4zTvMcBag2oWJqsbA==\\\",\\\"offerId\\\":\\\"Y8ROq7Y1Ct3q\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"57c42943065fb0d406b659661f0db70d37f4e97eb3e98af6654745b9b03c3754\",\"sig\":\"aba157b8e522f5023be5efaf7e96c51efcd9ad67e92968269909d0293804d2b0011c3064646b3deedcd8f8d2fbfe81f2c3b5a448834aad97b01548f5a170b29d\"}]"
+        },
+        {
+          "t_ms": 420,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22737,\"tags\":[[\"x\",\"5p304l64t4n3j682l2k5h6c6p501128d3h6k2d\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\",\\\"candidate\\\":\\\"71,101,140,30,224,251,149,171,170,227,129,49,250,64,193,5$SxjhzFwfH1Y0HtkGjtNx0fsaQcldgGdj+MXQTDZiK+b6IB9yYUVjfS8o3gA0pJ7taVhv17n50w5qW2lVRZzC4Vh8rf1axe/7BiwFYyjXWACQiDgcqlci6sih7VEPgBaEvcRAWjqBd5KZ9h+r3IyQtH/27+j/FAbsEqZNbEMxdwWBgAesS85HZWQDjfSsu98sHw==\\\",\\\"offerId\\\":\\\"Y8ROq7Y1Ct3q\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"0bdccc996a8b638c0613b9799358cbe7a4cba1189ac79cf98cd6d53b6f1055a5\",\"sig\":\"705fda2d5a71266300cd36950a2b74077fdec66f2dd369bd30a0c343af3b0699334fca81dac41d343a5e745db88cb5b758f65b5bcf30b09bae008362baf6f8bb\"}]"
+        },
+        {
+          "t_ms": 420,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"0bdccc996a8b638c0613b9799358cbe7a4cba1189ac79cf98cd6d53b6f1055a5\",true,\"\"]"
+        },
+        {
+          "t_ms": 420,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",\"5Jb9HYHUel66AoBdKumM6qCfHakUAhAEcu65ZT8BBJOOT8JhVSGKuyShsC93K9Bp\",{\"kind\":22737,\"tags\":[[\"x\",\"5p304l64t4n3j682l2k5h6c6p501128d3h6k2d\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\",\\\"candidate\\\":\\\"71,101,140,30,224,251,149,171,170,227,129,49,250,64,193,5$SxjhzFwfH1Y0HtkGjtNx0fsaQcldgGdj+MXQTDZiK+b6IB9yYUVjfS8o3gA0pJ7taVhv17n50w5qW2lVRZzC4Vh8rf1axe/7BiwFYyjXWACQiDgcqlci6sih7VEPgBaEvcRAWjqBd5KZ9h+r3IyQtH/27+j/FAbsEqZNbEMxdwWBgAesS85HZWQDjfSsu98sHw==\\\",\\\"offerId\\\":\\\"Y8ROq7Y1Ct3q\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"0bdccc996a8b638c0613b9799358cbe7a4cba1189ac79cf98cd6d53b6f1055a5\",\"sig\":\"705fda2d5a71266300cd36950a2b74077fdec66f2dd369bd30a0c343af3b0699334fca81dac41d343a5e745db88cb5b758f65b5bcf30b09bae008362baf6f8bb\"}]"
+        },
+        {
+          "t_ms": 568,
+          "peer": "guest",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"CLOSE\",\"5Jb9HYHUel66AoBdKumM6qCfHakUAhAEcu65ZT8BBJOOT8JhVSGKuyShsC93K9Bp\"]"
+        },
+        {
+          "t_ms": 572,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"CLOSE\",\"zsHIDyCJfv6VgRJJdU4lRkXjeacvIWKOsThKB7WZIzuw6VgVAidAbUP9wHusn43S\"]"
+        },
+        {
+          "t_ms": 581,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22833,\"tags\":[[\"x\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"tvEstjKzkUjMXtuiykHy\\\"}\",\"pubkey\":\"37d53469bc6d5183387b54f1acec04b474b3a6d9096da69443ec011271fa8b41\",\"id\":\"3370c8d8733bf4886a8454c0bf56107d6699c308505f0e63b93ec97e68c67e1d\",\"sig\":\"eccd66ff22cc53cf428ba69005e56d3f5cd02f53602c39257c33422a8bd8e943829ad22dfd414ae65b73c88ccc488d336bd1681912b0a23e432cbb31fd390553\"}]"
+        },
+        {
+          "t_ms": 582,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"3370c8d8733bf4886a8454c0bf56107d6699c308505f0e63b93ec97e68c67e1d\",true,\"\"]"
+        },
+        {
+          "t_ms": 582,
+          "peer": "guest",
+          "dir": "out",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"EVENT\",{\"kind\":22833,\"tags\":[[\"x\",\"176e4q51411yt355y4x2l311f5m6s4h6j331n1h\"]],\"created_at\":1792224229,\"content\":\"{\\\"peerId\\\":\\\"hZ6VqsHSXjIjyt9zNLGF\\\"}\",\"pubkey\":\"2f991091383d6798fd5809ef35695d70fcc8b2f90ece305ba1e4b9e8eb4d0b0a\",\"id\":\"a2c95157a2c7474f56892f2ee638c59d869c1e40c50e214cb3cb2b0df530c158\",\"sig\":\"0e0d58d7eb23e5d2eda75c57819a388cfd973fd1af42ae8b981937e56e9fb2079cdc04467db0c1ce68592f205b8a27754fc42f3b6b3f0066bc52e9ef074b2a4b\"}]"
+        },
+        {
+          "t_ms": 582,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://relay.vectors.invalid",
+          "data": "[\"OK\",\"a2c95157a2c7474f56892f2ee638c59d869c1e40c50e214cb3cb2b0df530c158\",true,\"\"]"
+        }
+      ],
+      "channel": [
+        {
+          "t_ms": 438,
+          "peer": "host",
+          "dir": "out",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 438,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 438,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a226368616c6c656e6765222c2263223a223643477a69354647554b50356a506d4b5474505076696947566752486b57753563475738227d"
+        },
+        {
+          "t_ms": 439,
+          "peer": "host",
+          "dir": "in",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 439,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 439,
+          "peer": "host",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a226368616c6c656e6765222c2263223a223643477a69354647554b50356a506d4b5474505076696947566752486b57753563475738227d"
+        },
+        {
+          "t_ms": 440,
+          "peer": "host",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a22726573706f6e7365222c2268223a2237623833306361346461323435313736356631353031636239396331323338303734643834636139636336613961653938666637653432613234386434653766227d"
+        },
+        {
+          "t_ms": 440,
+          "peer": "host",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 441,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a22726573706f6e7365222c2268223a2237623833306361346461323435313736356631353031636239396331323338303734643834636139636336613961653938666637653432613234386434653766227d"
+        },
+        {
+          "t_ms": 441,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 441,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 442,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff424c53466e624944444a4633354b533538303264655f34706369757871347145397033494d5643394c4d575154495a4c42524c714a6c75576d7a513244684f522d39704c64344176524773574a6c357264724568346b45"
+        },
+        {
+          "t_ms": 442,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff424b4f75694e54735154644f454b7341705a4b5f714b65396e50326f534b7042394b6e7a46686a72527572543343484f6f78674b477330504d446f39357746456f7a5746625668494c65434a504434446d3642694f5959"
+        },
+        {
+          "t_ms": 442,
+          "peer": "host",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 442,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff424c53466e624944444a4633354b533538303264655f34706369757871347145397033494d5643394c4d575154495a4c42524c714a6c75576d7a513244684f522d39704c64344176524773574a6c357264724568346b45"
+        },
+        {
+          "t_ms": 442,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff424b4f75694e54735154644f454b7341705a4b5f714b65396e50326f534b7042394b6e7a46686a72527572543343484f6f78674b477330504d446f39357746456f7a5746625668494c65434a504434446d3642694f5959"
+        },
+        {
+          "t_ms": 448,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff0000000000000000006b0cf78e7c8a7e54be376d175d8c840abd2b895c719e5d4704a2bcabaa1bb1a98c23cbed57d2b28c6986f2"
+        },
+        {
+          "t_ms": 448,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff0000000000000000003e2b8082de52281f15a05c18bdde1961a3491cd85b5baa5fd41ad90b78d08f0b5cd6a706ddf9371579e485"
+        },
+        {
+          "t_ms": 448,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff0000000000000000003e2b8082de52281f15a05c18bdde1961a3491cd85b5baa5fd41ad90b78d08f0b5cd6a706ddf9371579e485"
+        },
+        {
+          "t_ms": 451,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff0000000000000000006b0cf78e7c8a7e54be376d175d8c840abd2b895c719e5d4704a2bcabaa1bb1a98c23cbed57d2b28c6986f2"
+        },
+        {
+          "t_ms": 451,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff000000000000000100c3e685701749b956eac483d8c6c1ce4bde01194ff7b0306bbc4d162fd67c0910e560200b56881f2bf06670054b51b3e66c1c60a8b4cd0dc231038e48ffe47420d0a97cc813f691dd3372c6b77e5567abc8a4281c357dab1d2d4efd10e6f61976a216b93e98bd0c0c0d3dad75d8e27e9f7388c18c39da3d"
+        },
+        {
+          "t_ms": 452,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff000000000000000100c3e685701749b956eac483d8c6c1ce4bde01194ff7b0306bbc4d162fd67c0910e560200b56881f2bf06670054b51b3e66c1c60a8b4cd0dc231038e48ffe47420d0a97cc813f691dd3372c6b77e5567abc8a4281c357dab1d2d4efd10e6f61976a216b93e98bd0c0c0d3dad75d8e27e9f7388c18c39da3d"
+        },
+        {
+          "t_ms": 452,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff00000000000000010092f3581541f9d0571d575c9175f2038410bbffc624cb1f3167309936779b01891083c4676431"
+        },
+        {
+          "t_ms": 453,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff00000000000000010092f3581541f9d0571d575c9175f2038410bbffc624cb1f3167309936779b01891083c4676431"
+        },
+        {
+          "t_ms": 454,
+          "peer": "host",
+          "dir": "out",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff0100000000000000000000000000b3e061db3ad17648f0b7e6b0e3c8d8e5f5fdcc9678635d775e431a842d11126af5463fb89ed6a8d46d6889",
+          "length": 16451,
+          "sha256": "402a5d0cd4a405f6b0b6cbb91e394e73941b48ff9b9b34e753f730878456e22f"
+        },
+        {
+          "t_ms": 456,
+          "peer": "host",
+          "dir": "out",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000030dff010000000000000000000000010002074d473da9cda61b1516467d3bc63fe583c6bc53ac7dd30e5428ab0c162eeafb5726ef6a2aeea8b5d149",
+          "length": 16451,
+          "sha256": "62c5fd2983b7059fd04981bcb129e94f3b9dc81e6ad436b25fbabe7469a1695f"
+        },
+        {
+          "t_ms": 456,
+          "peer": "guest",
+          "dir": "in",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff0100000000000000000000000000b3e061db3ad17648f0b7e6b0e3c8d8e5f5fdcc9678635d775e431a842d11126af5463fb89ed6a8d46d6889",
+          "length": 16451,
+          "sha256": "402a5d0cd4a405f6b0b6cbb91e394e73941b48ff9b9b34e753f730878456e22f"
+        },
+        {
+          "t_ms": 457,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000040dff0100000000000000000000000201a89069e811cc754266503c4449f827668ba0fc21f3"
+        },
+        {
+          "t_ms": 457,
+          "peer": "guest",
+          "dir": "in",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000030dff010000000000000000000000010002074d473da9cda61b1516467d3bc63fe583c6bc53ac7dd30e5428ab0c162eeafb5726ef6a2aeea8b5d149",
+          "length": 16451,
+          "sha256": "62c5fd2983b7059fd04981bcb129e94f3b9dc81e6ad436b25fbabe7469a1695f"
+        },
+        {
+          "t_ms": 457,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000050dff00ffffffff000000000000000200cd84b9bfa337463dca1b5f902718f1e25d45fe620abf20f015cb3cceec3b7affaa449902120c216337155de22b236f273c7c5137310cdfc5d2a99063368b60fc1ce45f1d3cc81ffead12b388ce62997ba073ee73cac87054a2212f5c72f43b85b1ed141bbd6fe0551504f3978a50ded4faeb2b4124834d5eee93293607a445"
+        },
+        {
+          "t_ms": 457,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000040dff0100000000000000000000000201a89069e811cc754266503c4449f827668ba0fc21f3"
+        },
+        {
+          "t_ms": 458,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000050dff00ffffffff000000000000000200cd84b9bfa337463dca1b5f902718f1e25d45fe620abf20f015cb3cceec3b7affaa449902120c216337155de22b236f273c7c5137310cdfc5d2a99063368b60fc1ce45f1d3cc81ffead12b388ce62997ba073ee73cac87054a2212f5c72f43b85b1ed141bbd6fe0551504f3978a50ded4faeb2b4124834d5eee93293607a445"
+        },
+        {
+          "t_ms": 459,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff00ffffffff0000000000000002000f130a4ae1b12918b2ede805f9ad3b771e14895936dfd23e251581d96529a001259ff0f4"
+        },
+        {
+          "t_ms": 460,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff00ffffffff0000000000000002000f130a4ae1b12918b2ede805f9ad3b771e14895936dfd23e251581d96529a001259ff0f4"
+        },
+        {
+          "t_ms": 460,
+          "peer": "host",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f6c6561766500000000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 462,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f6c6561766500000000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 562,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 564,
+          "peer": "host",
+          "dir": "out",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 572,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 582,
+          "peer": "host",
+          "dir": "in",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        }
+      ]
+    },
+    {
+      "strategy": "torrent",
+      "peers": {
+        "guest": {
+          "self_id": "cmqb4hGsPZbX3mMYjjuD",
+          "paired_with": "mLJOC82SFbQbyzrwTA5H",
+          "sas": "🌴 🚀 🌡️ 🐬"
+        },
+        "host": {
+          "self_id": "mLJOC82SFbQbyzrwTA5H",
+          "paired_with": "cmqb4hGsPZbX3mMYjjuD",
+          "sas": "🌴 🚀 🌡️ 🐬"
+        }
+      },
+      "relay": [
+        {
+          "t_ms": 267,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://tracker.vectors.invalid",
+          "data": "{\"action\":\"announce\",\"info_hash\":\"n603b25y60705w4234b2\",\"peer_id\":\"mLJOC82SFbQbyzrwTA5H\",\"numwant\":3,\"offers\":[{\"offer_id\":\"AUY4i8iQv9MFfoi4tSnK\",\"offer\":{\"type\":\"offer\",\"sdp\":\"223,106,195,128,35,19,190,61,42,89,97,85,14,110,167,40$0v3ckSqVZ/k2rb5RKKy3YE6yDLvs0AfOFPApUBUCDkpXkMQPL/JU4wWF0iqorCo1l40pC4Yzqbi45kXD/e/7uoRv6P4JMQe3xp8gpU3YOSw36cx4IdsfhPaUQtqniu+WFl0Q3naPRY3TlNmYV22pIIelwfNQgxO59cNJJohKjjq85jeVWJgYQbeL0oC7anBFnqv1F1eSjaZYW4BvLAcM/rjFYX5tOSoJuCtz/WAJDwcqDyNfTx/2C7AI6EUf3bWbtbdfagJx/HSWNsXGFgLDyArcePG9i2iWAZkENODpgiX9Q/FvqVaD41WXI8FRQcKD2pvvr0FJfhXSwK7ITxK+Om9jDu+cFsaaR5kUxZQB14Ih3RI9pL2eTWf/DDIqtuNRgO8NKZo/METmZUqiE+b1iwoPHQAfvbdFgbMrLt317C0+F0SQeI+/FTln3fzrGtXJnIebxbCgUMPl0MDl1PFNtZ2XJEhtAqQ7lLOM2dC51il7S5vMkOIROZ8CEgyOUsJmJJtY3iwVw2s0TPiXQ0CS7WEToL2OuoPyyfEQsE99+FvJgOdgAwsSeChT0Rc1hY+WW8JnBN2kRhFyYeM5FepBMss2HzLCOy/ELdzdp7V4nv9F2ILHij2tEMufox626iGgC2XlwgAdFbO9qN2L6QqkG8JkKU2Q6HCX2ZwIraOQzvlPowjChNXTusgDHiZGqWFTYfuKDQkBEF0cZzkV3jcHAdI=\"}},{\"offer_id\":\"8W4Evzva4rdvO3yeYesd\",\"offer\":{\"type\":\"offer\",\"sdp\":\"147,111,44,226,153,189,95,60,182,176,74,4,136,32,136,240$aPGq2cvFs5n4wznkqOANTYTXlwhPN1aTAYGeq1fi3DkARE4VTnMD7dVjpiRRueVgfTM7hBwqL5tqGrXdCefnKqPpyAe25Av5g6D9np9crYjaH2x3nMqhU/6l/JKiegQUthy3Fpfv2399vWGkWNcQvb3KFGfLaSVnXmYknMmfyeK6BN9pLeT930iTtoPEaLYsL6HvXiNc4lEf7h0uVa2PG7teqghkx/efjtRjnSo5BjJ8PRXUQu2onol0+vGhFBJR/m+pmxdahfpj2l+Qm88Pf6aKJe9LzOszVHuVf7AnfNgKv1513mQU6Inajsk0+udl8sQfxJauu65cBRFkdcqs5xXbI68Q2obeQiTpovt36mZw8+XBePgzfc4L/xoKp12cVAKmIkO/ocoLJlpGLHsWyF69yPS7RH/2QaxVoxqYcd+Za3Hq+QrC78gbWtfhcZz4VK11+vGSfwzGRZjashVM+Pp8yPq+NKS5cVdaTbC3LvUqrjzvQsjt5/tSJFbHq5Jp7jPDMmfEY4Yc7zJxMEWEt1WTASG8gJKMkjViErvBFZI4ZDxe4+0lH8qfXbgOM84KByeFD/5iwvdCnIjnrnMeRft7PNfoZ3P+Ewnb0n9+oxR6bVDZmEyJt4WgjLwcKpJrlcMZ+AIdSMVJrZ8WuIYZwy9HOrthN044S3c8tYvSkSChTPEczKZ98Ro3ev+Q3ycqeMrCbiLE7B7VrNgw+XuCiBA=\"}},{\"offer_id\":\"zkRfL4Gf0goS20pNoJqZ\",\"offer\":{\"type\":\"offer\",\"sdp\":\"91,143,1,51,94,55,222,45,165,28,74,175,164,129,96,71$FxZP3ZS2+b+HSTQSGVkq3tdbgtrkbBGjC/vBPnZIaXUcSjS9FGw1I8ZiRXwUioFBuxHJTrq107lIeFATkyiid1JUmJJbK5D/kwzRiRfsU/ayOhmzGJLL3rT4j91HzGGha0tBLQpEgn+JfTynQ2i/MgcNAjX8PRxVBwzg6fW4dWT9Hsr7Fsve+9QV2T/4QHyyHQ7/gZsRrF7skv0wP6Mvh74hs+BwiWk6UPt1i11kEHI04RaSQNVuHEVX97Iet5K8A69B2/E34oQbEey0+dM8s0Ayl7gEvUKbjpOraO4fPokM/T124PvVnkla4mGjsUSuRmCQhsbeoHasjEzBTVttLe78qr2Sa5rh5UwcFBQvHxm/pI3nVPCZoX2LnuZdsOL365QW1ezIgbHVYVDGbYFIFlkbBOEl1gJev3JY0g67lLQ3yXKonlvNUAP2oTal7B7OnjSeFUMvMfUyVYV+GSXC/n0fhUbn3B5IqBd5I385mreUjBPGlgJmreYWofvoGsCjmVyW2HOCVzaSZgEGAd9dtjCeJoQaFRDXrA8Oyr17rPwvGaRPtuG6Be3/7uq7X5kxL81fsctYCnfqOeWoxvSHlhJRIvl+hZ5d4ZPvpuJIGESVml2mXBhQZtyWUED5yHWKW4VxRlA0kcAch91o2V3I2UiGw28nE/4ZeuPGolCAGTlm+BYoN7Ckh1tFBe1nvu+1mbLx3uZRTnnhjR4/dqdbSPA=\"}}]}"
+        },
+        {
+          "t_ms": 267,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://tracker.vectors.invalid",
+          "data": "{\"action\":\"announce\",\"interval\":120,\"info_hash\":\"n603b25y60705w4234b2\",\"complete\":0,\"incomplete\":1}"
+        },
+        {
+          "t_ms": 272,
+          "peer": "guest",
+          "dir": "out",
+          "url": "wss://tracker.vectors.invalid",
+          "data": "{\"action\":\"announce\",\"info_hash\":\"n603b25y60705w4234b2\",\"peer_id\":\"cmqb4hGsPZbX3mMYjjuD\",\"numwant\":3,\"offers\":[{\"offer_id\":\"XN1Qo2Xo2HIU1268Yku6\",\"offer\":{\"type\":\"offer\",\"sdp\":\"150,252,254,142,121,102,197,169,177,212,15,210,19,76,195,114$ERsYB84fon1mxpxgaPV36viVfBzKs5F6v+yHcjaur9nY0dq5XdUDZbwhZbfd2VUJ/BwuJ9+nQfwdnV1B4D8808Hoieh6uux1poCi5/Q1jrb2Co5r1ao4UDOxH9bcB9HA6ElAQc/26vjFD26vMsnkDoAi29wDYR8olnNdaMO7YnImztk2ZSR7rCT1uTEHzwJiG1l0s4i6uR32TxIVBysdfOP3LCt9BuqRQ3uYlP89Mv1CCjd+PTAJv1OoW5u/TposBzvVJCHKfEm9Kr6t22AjHOTd/YVJOSpR8laHukpP/Y2HCoKKzLOoBQiHzllCv54bT6EcpE3gWOHGb4yEd77O4icZbNaieM2CBnS9S1lYkiZyH0CzMtsKJ6a96pRDpQujGnco5BOKnvDq0fu8s8qYjjy3j6SDdptJnSJuca+qMAc4MELa2gOk+n/Cjnxra1FsSj6PAPmuO9M4/ShQrnwfWjYxSNaTx0zRztggY3duSnFof8QQmA6iagjJTH/LEK3Xsq6LAoH96btF1Z0PTAxE7LhXgMd7jakHu23E4GXg7ahPBjDgQu5rWlFNNpwRNoihImqD64vcIa4F9Bac5acjIXMgxCRtuHOVajzUwgr/2SyC3Mu0ERjX1gj5wyHORUeGw8nmyJlke355E+o0szW8RW9FIvUj4Oe4lPCPcy/AwIAT3VRt7+9Jfj3swnIs1HLfp4WRd6wpqbmlewDP3zRfUw==\"}},{\"offer_id\":\"xhDHR1pp33VfOKQXTeCe\",\"offer\":{\"type\":\"offer\",\"sdp\":\"196,19,238,125,235,1,83,123,64,168,149,168,121,46,15,61$eQCNxgW0TBMYBrY9etF4Imh1DDgHYt63i608b7mXibVDmQyltPhHmi2O7gcDEJj7qayJSe91OtPSgYG8MRT0DBgfz4bNZt6pY9b1pLLnuL6b3aBD9qiH8FkrUsBMIzmJYYgca+CvBqKxqCwxoCchKXa6NeiVYBloFaAW/e0G1i363sqEo0N3RrqilFkl4pqbI4A7zqA+ElEvploLzcZsxUzPTq8s0GhRoOzve1xPDILXa+sQL012rOfqc2PFIQAZ4b4j9KZTx5nWYpQRkG4/EMHAhnEyNQZhP47O1WUCCFspyLSOL9q2F5dBVYduHYUzQ4RqwSgHn+kurJWZh3fC9UvQ28pBQ9R/U6dKR4sAA/JONVGijuahIMzwGCTBEgXFk8idFDcgxLUNNjpgk87xnfTeguxvo/DRCIFwndbNe/zyWWWl7GTUX4jIRpolxBddHPomg+4UFBcE/JjEkyILw29R7dT71lP8tbyoPG8Zto06oVg7JVdsIwtcA45NAGTF0J3eEn26ZUMVACE59faXlWLJeg9O4U2WVXwZx3D8nSAOx8NXTvGik+UXGh3ma69prh0dl6StIQ05lhjVXATryJA7J3fPD3T334XuKTwTZEZvOdd5yL/5nktpNPDl1JpG1Yhi9fwv8CGo3GB3vMI/+KlVeP4VsEHLcoFDFtjrZ//EW75N0HlRUlqTgnEMioGrtROwIyi3zr2BtUz2ZK65eQ==\"}},{\"offer_id\":\"1W3pFsMAFFGS5E1Ry1od\",\"offer\":{\"type\":\"offer\",\"sdp\":\"56,207,52,66,44,122,253,79,245,81,135,112,216,232,253,7$WxSatA8SAsJUjCfe6mW1XhMmZC81lVHyXpz3ndJiFHnYU/PeCvXzAclHCQl+4f5KmIqStUZA4dfik+3FVm+p9Pzkuhnq/AmgxLjdt7SywCD//hQrvmxuljCQ5nOmDxGnB7dq3zutrrwnFOAskFQRKNvSm9U/5NX9sZ7EyeMXdy9QeqQTL2fVz9TkWAM7+HYRnoS8KYxbR0arm62dLdoW3hvRBhr+bvFNzPKE/HCQ12TBREWm351NWsEkxu6QgdNnGOte2NMyz54XYiozwqBKn1om4DuyF52wgVfbMAYU/GCuNh9ORz84hsqaveZ+lL8ZE5TFy+eT7m3NYV6UEqBO+Vx/xbQ0RSWdqy3EVsx73x0LUdXY3vI4f3Jkyj6tmEPzOSudBMKLCL1dwCDjgeNPRP3f3KvkoLZlbXVFMJbUbj2R80E+c+mhsYYe+raLR3gZIGR6QgHcDj7BFv8UmsGKO5Wwak/H1/RpKrG5YrAszsR0WTZBL6pBudYr2NJUctO3berlNg1ahIT8ncolusy5wvJoOWOEOQnWmW913ygSMX1X96ig2WE6aqsGG7Lxer9cWnw4wexRcKm9d1yoQApWk6OYUH7IhIH5v+kEGKJbZBz4t0s5mZqJ9GdZ4KOnCnx24EttKjU2znJfY95Bcbc620TvFiOjLK+Y6sjb6ResyQ7Md5Zvz7yi0E28NbxpHL9yuB7S/1w+dk7e92VvxZOjnTU=\"}}]}"
+        },
+        {
+          "t_ms": 272,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://tracker.vectors.invalid",
+          "data": "{\"action\":\"announce\",\"interval\":120,\"info_hash\":\"n603b25y60705w4234b2\",\"complete\":0,\"incomplete\":2}"
+        },
+        {
+          "t_ms": 272,
+          "peer": "host",
+          "dir": "in",
+          "url": "wss://tracker.vectors.invalid",
+          "data": "{\"action\":\"announce\",\"info_hash\":\"n603b25y60705w4234b2\",\"peer_id\":\"cmqb4hGsPZbX3mMYjjuD\",\"offer_id\":\"XN1Qo2Xo2HIU1268Yku6\",\"offer\":{\"type\":\"offer\",\"sdp\":\"150,252,254,142,121,102,197,169,177,212,15,210,19,76,195,114$ERsYB84fon1mxpxgaPV36viVfBzKs5F6v+yHcjaur9nY0dq5XdUDZbwhZbfd2VUJ/BwuJ9+nQfwdnV1B4D8808Hoieh6uux1poCi5/Q1jrb2Co5r1ao4UDOxH9bcB9HA6ElAQc/26vjFD26vMsnkDoAi29wDYR8olnNdaMO7YnImztk2ZSR7rCT1uTEHzwJiG1l0s4i6uR32TxIVBysdfOP3LCt9BuqRQ3uYlP89Mv1CCjd+PTAJv1OoW5u/TposBzvVJCHKfEm9Kr6t22AjHOTd/YVJOSpR8laHukpP/Y2HCoKKzLOoBQiHzllCv54bT6EcpE3gWOHGb4yEd77O4icZbNaieM2CBnS9S1lYkiZyH0CzMtsKJ6a96pRDpQujGnco5BOKnvDq0fu8s8qYjjy3j6SDdptJnSJuca+qMAc4MELa2gOk+n/Cjnxra1FsSj6PAPmuO9M4/ShQrnwfWjYxSNaTx0zRztggY3duSnFof8QQmA6iagjJTH/LEK3Xsq6LAoH96btF1Z0PTAxE7LhXgMd7jakHu23E4GXg7ahPBjDgQu5rWlFNNpwRNoihImqD64vcIa4F9Bac5acjIXMgxCRtuHOVajzUwgr/2SyC3Mu0ERjX1gj5wyHORUeGw8nmyJlke355E+o0szW8RW9FIvUj4Oe4lPCPcy/AwIAT3VRt7+9Jfj3swnIs1HLfp4WRd6wpqbmlewDP3zRfUw==\"}}"
+        },
+        {
+          "t_ms": 292,
+          "peer": "host",
+          "dir": "out",
+          "url": "wss://tracker.vectors.invalid",
+          "data": "{\"action\":\"announce\",\"info_hash\":\"n603b25y60705w4234b2\",\"peer_id\":\"mLJOC82SFbQbyzrwTA5H\",\"answer\":{\"type\":\"answer\",\"sdp\":\"152,60,203,194,142,102,184,103,129,100,141,64,71,55,139,142$iZ5Fdfr42tZTARPJPISfn3yv3dohw92y3Nnhz5kY3xAvYleTG4VGIM/c/7evLO13eMKFw56wl3cLcDhheBMTbd7F601KHS2Yp0IrWmDSu0RuFeRiyfFQjOHFRi52bUoNTPbhrvTfIS8xBLSbwScWCah+jcQ7Odr+jKJq28ABoHQZ1d4z43xoxLkk+JZ64/brIQ0j50HPoZvhwmM0CduJK0ELrCgTh5De1URSJZkdgmRRmnXl/NLSQJlcHIocOGnLuT3p5TovLYWsQg6iqBah77TgzXC8tUp9gFMEloVnATGvOWEt0McoFDCGIEKTkyanhqiDJGVmfNIBXkewoHsNcfEAN+/vRjQt2QXgu23GP3u7HWmdDMEIqA4B5S2kpwjwQ+R+6FqIat8WuO20VnozQQUpxZNypOutRvDxibDpkq7datiyCq/uyWTyUd4hJCpck3B4dFNsYYjKlsrWcjpANmCcKKA7BbolHi6fq21sXRbw3xsVpntSxHTBN7krqhEz08USfnoP28H0Cs3kp7o85iSzRRKDqxEdCdBCL4RjxERxArgEe1TwSK15CcyDfYVjeEENt667rAuEvr4yvkxlA0hvrVsJaqnLQARqSY8m7grs6iX2E7pMPhhAXvf/4S6hq7wsCrh5Pemp12FGrcPYrgCWki30Yq78BFCajHk2fqKSlaj+LvOMYql+6Tri8VDqGzd42kHBNkbzT/O+GDEI\"},\"offer_id\":\"XN1Qo2Xo2HIU1268Yku6\",\"to_peer_id\":\"cmqb4hGsPZbX3mMYjjuD\"}"
+        },
+        {
+          "t_ms": 292,
+          "peer": "guest",
+          "dir": "in",
+          "url": "wss://tracker.vectors.invalid",
+          "data": "{\"action\":\"announce\",\"info_hash\":\"n603b25y60705w4234b2\",\"peer_id\":\"mLJOC82SFbQbyzrwTA5H\",\"offer_id\":\"XN1Qo2Xo2HIU1268Yku6\",\"answer\":{\"type\":\"answer\",\"sdp\":\"152,60,203,194,142,102,184,103,129,100,141,64,71,55,139,142$iZ5Fdfr42tZTARPJPISfn3yv3dohw92y3Nnhz5kY3xAvYleTG4VGIM/c/7evLO13eMKFw56wl3cLcDhheBMTbd7F601KHS2Yp0IrWmDSu0RuFeRiyfFQjOHFRi52bUoNTPbhrvTfIS8xBLSbwScWCah+jcQ7Odr+jKJq28ABoHQZ1d4z43xoxLkk+JZ64/brIQ0j50HPoZvhwmM0CduJK0ELrCgTh5De1URSJZkdgmRRmnXl/NLSQJlcHIocOGnLuT3p5TovLYWsQg6iqBah77TgzXC8tUp9gFMEloVnATGvOWEt0McoFDCGIEKTkyanhqiDJGVmfNIBXkewoHsNcfEAN+/vRjQt2QXgu23GP3u7HWmdDMEIqA4B5S2kpwjwQ+R+6FqIat8WuO20VnozQQUpxZNypOutRvDxibDpkq7datiyCq/uyWTyUd4hJCpck3B4dFNsYYjKlsrWcjpANmCcKKA7BbolHi6fq21sXRbw3xsVpntSxHTBN7krqhEz08USfnoP28H0Cs3kp7o85iSzRRKDqxEdCdBCL4RjxERxArgEe1TwSK15CcyDfYVjeEENt667rAuEvr4yvkxlA0hvrVsJaqnLQARqSY8m7grs6iX2E7pMPhhAXvf/4S6hq7wsCrh5Pemp12FGrcPYrgCWki30Yq78BFCajHk2fqKSlaj+LvOMYql+6Tri8VDqGzd42kHBNkbzT/O+GDEI\"}}"
+        }
+      ],
+      "channel": [
+        {
+          "t_ms": 329,
+          "peer": "host",
+          "dir": "out",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 330,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 331,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a226368616c6c656e6765222c2263223a2263314c684f5863396b4166476a504359637534577a73424672304a62514239515459724c227d"
+        },
+        {
+          "t_ms": 333,
+          "peer": "host",
+          "dir": "in",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 333,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "0201004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 334,
+          "peer": "host",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a226368616c6c656e6765222c2263223a2263314c684f5863396b4166476a504359637534577a73424672304a62514239515459724c227d"
+        },
+        {
+          "t_ms": 336,
+          "peer": "host",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a22726573706f6e7365222c2268223a2261346530653237383663333733376561326435346261356261636461393834313662653039393564616266303230643531346232646336393634313836396232227d"
+        },
+        {
+          "t_ms": 337,
+          "peer": "host",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 338,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a22726573706f6e7365222c2268223a2261346530653237383663333733376561326435346261356261636461393834313662653039393564616266303230643531346232646336393634313836396232227d"
+        },
+        {
+          "t_ms": 338,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 339,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 340,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff4245677471625f744b33384837626c7a4d637463475a6857624b4d64676678446a6a564f7a39376b744c6535574a466a4b435556564e67586974346d484d483132437730645f615559354e49684177675f44656f515673"
+        },
+        {
+          "t_ms": 340,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff42497a59587a644e5052436a6366316f7a2d735042343043354165593268436c374e3274774f59357854503564545f4345794b7732534470566a6861794646424c42756935307a513948304c79786d5a74687a45396a77"
+        },
+        {
+          "t_ms": 340,
+          "peer": "host",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 341,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff4245677471625f744b33384837626c7a4d637463475a6857624b4d64676678446a6a564f7a39376b744c6535574a466a4b435556564e67586974346d484d483132437730645f615559354e49684177675f44656f515673"
+        },
+        {
+          "t_ms": 341,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346563646800000000000000000000000000000000000000000000000000000000000001ff42497a59587a644e5052436a6366316f7a2d735042343043354165593268436c374e3274774f59357854503564545f4345794b7732534470566a6861794646424c42756935307a513948304c79786d5a74687a45396a77"
+        },
+        {
+          "t_ms": 348,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff000000000000000000fce641bd12e58234010a4871f326f3aca9767e721d41509d42ee788c7c7f431aa2876c9bff19362bd69dc5"
+        },
+        {
+          "t_ms": 348,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff000000000000000000a8f7ba5be855b74c77c415cde77b2044941adcb23fede1523cd40e6650d9405d182fccdb5ae439f938c986"
+        },
+        {
+          "t_ms": 348,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff000000000000000000a8f7ba5be855b74c77c415cde77b2044941adcb23fede1523cd40e6650d9405d182fccdb5ae439f938c986"
+        },
+        {
+          "t_ms": 351,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000000dff00ffffffff000000000000000000fce641bd12e58234010a4871f326f3aca9767e721d41509d42ee788c7c7f431aa2876c9bff19362bd69dc5"
+        },
+        {
+          "t_ms": 352,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff000000000000000100764b05f8cc09dfbe0f7d822a07496ebb9bd2d01ddb77f683026748f9115b1abaec6c8a22fad14fb9165c2f68c7d5357e5a61c8f92c7fe939d2048a34a5051c97786176a26a8742124768554d451e622b5176b5282d93f2ecb016610f8ec61ca2c77db92128a59dede805d4e932c6a33e30f908f12fbbac"
+        },
+        {
+          "t_ms": 353,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff000000000000000100764b05f8cc09dfbe0f7d822a07496ebb9bd2d01ddb77f683026748f9115b1abaec6c8a22fad14fb9165c2f68c7d5357e5a61c8f92c7fe939d2048a34a5051c97786176a26a8742124768554d451e622b5176b5282d93f2ecb016610f8ec61ca2c77db92128a59dede805d4e932c6a33e30f908f12fbbac"
+        },
+        {
+          "t_ms": 353,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff0000000000000001005c26ae88114ab524682c1643330d9c5835ab186ebd7fe79fc48b7a31c12e2e3cde17c506f9be"
+        },
+        {
+          "t_ms": 354,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000010dff00ffffffff0000000000000001005c26ae88114ab524682c1643330d9c5835ab186ebd7fe79fc48b7a31c12e2e3cde17c506f9be"
+        },
+        {
+          "t_ms": 355,
+          "peer": "host",
+          "dir": "out",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff01000000000000000000000000004b4a5d6109cb83624c6f50c7bba6c0edfe4a6a3b8d74f5754e45b4db2609ee84030f5c5c472ffddfe35f27",
+          "length": 16451,
+          "sha256": "02255f83cd9afe62e4930c901098b8a80960c092ac17ac1288074fd006e94e05"
+        },
+        {
+          "t_ms": 357,
+          "peer": "host",
+          "dir": "out",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000030dff0100000000000000000000000100f120c4be9257baa20aa88d6f356f4f5243b7b94a2489261a4546327a9756905b73b55af6ec25d26e7f537e",
+          "length": 16451,
+          "sha256": "3a5c50213f62118d577cd872383ecf56a2431870f8bc2ec823b59a4e7401ebe7"
+        },
+        {
+          "t_ms": 357,
+          "peer": "guest",
+          "dir": "in",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff01000000000000000000000000004b4a5d6109cb83624c6f50c7bba6c0edfe4a6a3b8d74f5754e45b4db2609ee84030f5c5c472ffddfe35f27",
+          "length": 16451,
+          "sha256": "02255f83cd9afe62e4930c901098b8a80960c092ac17ac1288074fd006e94e05"
+        },
+        {
+          "t_ms": 358,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000040dff0100000000000000000000000201a94f810adc5c8af8d2bf1a9f02214ed9d428fb692b"
+        },
+        {
+          "t_ms": 358,
+          "peer": "guest",
+          "dir": "in",
+          "head": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000030dff0100000000000000000000000100f120c4be9257baa20aa88d6f356f4f5243b7b94a2489261a4546327a9756905b73b55af6ec25d26e7f537e",
+          "length": 16451,
+          "sha256": "3a5c50213f62118d577cd872383ecf56a2431870f8bc2ec823b59a4e7401ebe7"
+        },
+        {
+          "t_ms": 358,
+          "peer": "host",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000050dff00ffffffff0000000000000002005087bfc4934cfc16c6be239e8f2b62c69d8a0df2d0010b0b1d9fd64ee99d361b077887acf691264929ef29f351d072d9c1cb53c457d623358c4b28bee458b2fc3c610fd45e7c6689162d0a166c7beb09eabc9824c17f82a9ea3f38a835f858137590721e406c05d0a61edf67f133c98ea8435e1bda4bf15975814e0ef61d0c"
+        },
+        {
+          "t_ms": 359,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000040dff0100000000000000000000000201a94f810adc5c8af8d2bf1a9f02214ed9d428fb692b"
+        },
+        {
+          "t_ms": 359,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000050dff00ffffffff0000000000000002005087bfc4934cfc16c6be239e8f2b62c69d8a0df2d0010b0b1d9fd64ee99d361b077887acf691264929ef29f351d072d9c1cb53c457d623358c4b28bee458b2fc3c610fd45e7c6689162d0a166c7beb09eabc9824c17f82a9ea3f38a835f858137590721e406c05d0a61edf67f133c98ea8435e1bda4bf15975814e0ef61d0c"
+        },
+        {
+          "t_ms": 360,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff00ffffffff0000000000000002000e086651fda8fab912db9971fa84ba4204c6a98ca78c52c5694c8230e47c9fc476578577"
+        },
+        {
+          "t_ms": 361,
+          "peer": "host",
+          "dir": "in",
+          "hex": "010040643263366461623363636431366161326536373335663633386436663363383139623038396134356636636231333231653433616537313265386137336266346672616d6500000000000000000000000000000000000000000000000000000000020dff00ffffffff0000000000000002000e086651fda8fab912db9971fa84ba4204c6a98ca78c52c5694c8230e47c9fc476578577"
+        },
+        {
+          "t_ms": 361,
+          "peer": "host",
+          "dir": "out",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f6c6561766500000000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 362,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "01004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634405f6c6561766500000000000000000000000000000000000000000000000000000001ff"
+        },
+        {
+          "t_ms": 474,
+          "peer": "guest",
+          "dir": "out",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 475,
+          "peer": "host",
+          "dir": "out",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 478,
+          "peer": "guest",
+          "dir": "in",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        },
+        {
+          "t_ms": 481,
+          "peer": "host",
+          "dir": "in",
+          "hex": "0200004064326336646162336363643136616132653637333566363338643666336338313962303839613435663663623133323165343361653731326538613733626634"
+        }
+      ]
+    }
+  ]
+}
