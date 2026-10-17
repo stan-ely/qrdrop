@@ -53,6 +53,52 @@ jobs:
       - run: npm ci --prefix app
       - run: node scripts/build-site.mjs --channel app --out app/dist
 
+  # The Rust tests: the workspace under crates/ (the native session, see
+  # docs/notes/rust-session.md) and app/src-tauri's host tests. Until this job,
+  # nothing ran a Rust test in CI at all -- the ones in lan.rs, share.rs,
+  # sink.rs and storage.rs had only ever run on whichever machine someone
+  # remembered to run them on.
+  #
+  # One job rather than two because both need the same toolchain, and the app
+  # half is the only slow part. It is on every push like the rest of this file,
+  # not path-filtered as app.yml is: the crates under crates/ are where the
+  # protocol is being ported, and a red Rust test there has to arrive with the
+  # JS change that caused it, which is exactly the change a crates/** filter
+  # would not run on.
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The app's setup, because its tests compile the whole Tauri crate:
+      # that needs the Linux webview packages, and generate_context! reads
+      # app/dist and tauri.conf.json, which this action builds. cargo-hack is
+      # added to the tools it installs; it is pinned in mise.toml with the
+      # rest.
+      - uses: ./.github/actions/app-setup
+        with:
+          tools: node rust github:taiki-e/cargo-hack
+          webkit: 'true'
+
+      # The action caches app/src-tauri's target only. The workspace has its
+      # own lock and its own target/ at the repo root, so it gets its own
+      # entry, saved from main only for the reason the action gives.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          key: crates
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The same commands as `mise run rust:test` and `mise run rust:features`,
+      # run directly for the reason the workflows job below gives about
+      # `mise run`. --each-feature is every crate with no features, then each
+      # feature on its own; --all-features is the test run above it.
+      - run: cargo test --workspace --all-features
+      - run: cargo hack check --workspace --each-feature --no-dev-deps
+
+      - run: cargo test
+        working-directory: app/src-tauri
+
   # The workflows themselves, and the shell inside them. publish.yml and
   # app-release.yml execute only on a tag, so without this a mistake in either
   # is found by a failed release -- after an npm publish that cannot be

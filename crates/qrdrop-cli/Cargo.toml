@@ -1,0 +1,24 @@
+[package]
+name = "qrdrop-cli"
+version = "0.0.0"
+description = "The qrdrop command line, in Rust"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# The binary is `qrdrop`, matching src/cli.js's commands, flags, exit codes and
+# stdout contract exactly (phase 6). The JS CLI is what ships until phase 8.
+[[bin]]
+name = "qrdrop"
+path = "src/main.rs"
+
+# Release builds turn both on; a development build can leave them out.
+[features]
+web = []
+qr = []
+
+[dependencies]
+qrdrop-session = { path = "../qrdrop-session" }

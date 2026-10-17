@@ -1,0 +1,25 @@
+[package]
+name = "qrdrop-session"
+version = "0.0.0"
+description = "A qrdrop session: pairing over tryst, the send and receive loops, file IO and the local-network path"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# Nothing on by default: each caller names what its platform uses. The app's
+# Windows and macOS builds leave out lan-listen at the Cargo level, which is a
+# stronger guarantee against a firewall prompt than the runtime MODE constant
+# in app/src-tauri/src/lan.rs. A build without a path says so on the wire --
+# `listen: "none"` -- and never guesses (docs/notes/rust-session.md).
+[features]
+lan-dial = []
+lan-listen = []
+quic = []
+fs = []
+
+[dependencies]
+qrdrop-protocol = { path = "../qrdrop-protocol" }
+tryst = { path = "../tryst", default-features = false }

@@ -1,0 +1,15 @@
+[package]
+name = "qrdrop-protocol"
+version = "0.0.0"
+description = "qrdrop's protocol, sans-IO: secrets and codes, key derivation, the SAS, frames, digests and the transfer state machines"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# No features, and none should be added: this crate does no IO, so it has no
+# optional transport to leave out, and every build tests all of it against the
+# vectors in test/vectors/.
+[dependencies]

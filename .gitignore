@@ -99,3 +99,7 @@ fdroid/metadata/com.stan_ely.qrdrop/
 # the FDROID_KEYSTORE_BASE64 secret and the file itself belongs nowhere near a
 # working tree.
 qrdrop-fdroid-repo.p12
+
+# The Rust workspace at the repo root (Cargo.toml, crates/). Its Cargo.lock is
+# committed, for the reason app/src-tauri's is: a CLI binary is built from it.
+/target/

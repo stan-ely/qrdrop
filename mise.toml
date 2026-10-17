@@ -56,6 +56,15 @@ actionlint = "1.7.12"
 shellcheck = "0.11.0"
 yq = "4.53.6"
 
+# The Rust workspace's feature matrix (see "Feature flags" in
+# docs/notes/rust-session.md): every crate with no features, with each one on
+# its own, and with all of them. A feature that only compiles beside another
+# is the bug it catches, and cargo's own feature unification hides exactly that
+# from an ordinary build. Through the github backend because mise's registry
+# has no entry for it; the release is a prebuilt binary either way, where the
+# cargo backend would compile it on every cold CI runner.
+"github:taiki-e/cargo-hack" = "0.6.45"
+
 # The SDK packages the pin above does NOT carry, named once. NDK_HOME below
 # and the app:android:sdk task both read these, so the version a build links
 # against and the version that gets installed cannot drift apart -- the same
@@ -167,6 +176,17 @@ run = "node scripts/preview-phone.mjs"
 [tasks."lint:workflows"]
 description = "Lint the GitHub workflows, and the shell inside them"
 run = "actionlint"
+
+# The Rust workspace under crates/, as ci.yml's `rust` job runs it. The app's
+# own crate is a separate workspace and is not in this; its host tests are
+# `cargo test` in app/src-tauri, which needs app/dist built first.
+[tasks."rust:test"]
+description = "Test the Rust workspace under crates/"
+run = "cargo test --workspace --all-features"
+
+[tasks."rust:features"]
+description = "Check every crate under crates/ with each feature on its own"
+run = "cargo hack check --workspace --each-feature --no-dev-deps"
 
 # --- committed images and the layout check ---
 #

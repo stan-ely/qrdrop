@@ -1,0 +1,30 @@
+[package]
+# Trystero 0.25-compatible rooms. Named apart from Trystero on purpose: the
+# plain name on crates.io would read as upstream's own crate, and this is a
+# second implementation of its wire, not a release of it.
+name = "tryst"
+version = "0.0.0"
+description = "Rooms that interoperate with Trystero 0.25 peers: signalling, signal crypto, the action wire and the handshake"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# Until phase 10 settles the API and the licence. A `cargo publish` from here
+# today would claim the name with a crate that does nothing.
+publish = false
+
+# Each optional transport is a feature, so a build carries only the paths its
+# platform uses (see "Feature flags" in docs/notes/rust-session.md). Empty
+# until the code behind them exists; declared now so CI's feature matrix runs
+# from the first commit, and a feature that only compiles beside another is
+# caught the day it is written. The sans-IO core -- topics, signal crypto, the
+# action wire, the room frame, the handshake -- is never behind a feature, so
+# the vectors always test all of it.
+[features]
+default = ["nostr", "torrent", "webrtc"]
+nostr = []
+torrent = []
+webrtc = []
+
+[dependencies]

@@ -1,0 +1,26 @@
+# The Rust session: the crates the apps and, later, the CLI run a transfer
+# through. docs/notes/rust-session.md is the plan and its tracking document;
+# read its Status section before changing anything here.
+#
+# A workspace at the repo root rather than inside crates/, because `exclude`
+# only means something from here. Cargo looks upward from a package for a
+# workspace root, so without the exclude app/src-tauri would find this file,
+# discover it is not a member, and refuse to build. With it, app/src-tauri
+# stays its own workspace with its own Cargo.lock and its own target/ -- which
+# keeps every hard-coded `app/src-tauri/target` path in the workflows true, and
+# keeps app-release.yml's `sed` over the first `version =` line of its
+# Cargo.toml reading the app version rather than `version.workspace = true`.
+# The app will depend on these crates by path; it is never a member.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["app"]
+
+# Shared by every member. Not `version`: each crate is versioned on its own,
+# since tryst is meant to be published apart from the rest (phase 10).
+[workspace.package]
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+repository = "https://github.com/stan-ely/qrdrop"
+authors = ["Bevan Stanely"]
