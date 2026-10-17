@@ -8,17 +8,28 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+build = "build.rs"
 
 # The binary is `qrdrop`, matching src/cli.js's commands, flags, exit codes and
-# stdout contract exactly (phase 6). The JS CLI is what ships until phase 8.
+# stdout contract exactly. The JS CLI is what ships until phase 8.
 [[bin]]
 name = "qrdrop"
 path = "src/main.rs"
 
-# Release builds turn both on; a development build can leave them out.
+# Release builds turn both on; a development build can leave them out, and
+# then `qrdrop web` says the UI is not in this build, as the Node CLI does
+# from a checkout that was never built, and `send` prints the code alone.
 [features]
+default = ["qr"]
+# site/dist, embedded by build.rs, for `qrdrop web`.
 web = []
-qr = []
+# The terminal QR code.
+qr = ["dep:qrcodegen"]
 
 [dependencies]
-qrdrop-session = { path = "../qrdrop-session" }
+qrdrop-protocol = { path = "../qrdrop-protocol" }
+qrdrop-session = { path = "../qrdrop-session", features = ["fs", "lan-dial", "lan-listen"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util"] }
+# Nayuki's encoder: pure Rust, no dependencies, and the same standard
+# qrcode-generator implements for the Node CLI.
+qrcodegen = { version = "1.8.0", optional = true }

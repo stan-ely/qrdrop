@@ -31,6 +31,14 @@
  * listens, the sender dials it, and the run fails unless the sender reports
  * the direct connection. On Windows the first listen may raise a firewall
  * prompt for node.exe.
+ *
+ * EITHER SIDE CAN BE THE RUST CLI. QRDROP_SEND_CLI and QRDROP_RECV_CLI pick
+ * each side's launcher: `js` (the default, `node src/cli.js`), `rust` (the
+ * crates/qrdrop-cli binary, from QRDROP_RUST_CLI or target/debug), or a path
+ * to any executable that speaks the same contract. --matrix runs all four
+ * pairings, JS and Rust each way, which is what checks that the two CLIs are
+ * one contract and not two that happen to agree with themselves. Build the
+ * binary first: `mise exec -- cargo build -p qrdrop-cli`.
  */
 
 import { spawn } from 'node:child_process'
@@ -49,6 +57,24 @@ const TIMEOUT = 120_000
 const PAYLOAD_BYTES = 300 * 1024
 
 const LAN = process.argv.includes('--lan')
+const MATRIX = process.argv.includes('--matrix')
+
+const RUST_CLI = process.env.QRDROP_RUST_CLI
+  ?? path.join(ROOT, 'target', 'debug', process.platform === 'win32' ? 'qrdrop.exe' : 'qrdrop')
+
+/**
+ * A launcher name to the command that runs it.
+ * @param {string} which `js`, `rust`, or a path.
+ * @returns {{ name: string, command: string, prefix: string[] }}
+ */
+function launcher(which) {
+  if (which === 'js') return { name: 'js', command: process.execPath, prefix: [CLI] }
+  const command = which === 'rust' ? RUST_CLI : which
+  if (!fs.existsSync(command)) {
+    throw new Error(`no CLI at ${command}: build it with \`mise exec -- cargo build -p qrdrop-cli\``)
+  }
+  return { name: which === 'rust' ? 'rust' : path.basename(command), command, prefix: [] }
+}
 
 /** @param {Buffer} buf */
 const sha = buf => createHash('sha256').update(buf).digest('hex')
@@ -57,12 +83,13 @@ const sha = buf => createHash('sha256').update(buf).digest('hex')
  * Spawns one CLI process, streaming its output into a buffer that `waitFor`
  * can watch. stdin stays open so prompts can be answered as they appear.
  *
+ * @param {ReturnType<typeof launcher>} cli
  * @param {string[]} args
  * @param {string} label
  * @param {LanListenMode} listen What this CLI claims about listening (see the header).
  */
-function launch(args, label, listen) {
-  const child = spawn(process.execPath, [CLI, ...args], {
+function launch(cli, args, label, listen) {
+  const child = spawn(cli.command, [...cli.prefix, ...args], {
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     // Force the non-TTY path: progress becomes plain lines instead of \r
@@ -114,7 +141,12 @@ function launch(args, label, listen) {
   }
 }
 
-async function main() {
+/**
+ * One transfer, `send` driving the sending side and `recv` the receiving.
+ * @param {ReturnType<typeof launcher>} send
+ * @param {ReturnType<typeof launcher>} recv
+ */
+async function run(send, recv) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qrdrop-interop-'))
   const outDir = path.join(dir, 'out')
   fs.mkdirSync(outDir)
@@ -125,7 +157,7 @@ async function main() {
 
   console.log(`payload ${PAYLOAD_BYTES} bytes, sha256 ${sha(payload)}`)
 
-  const sender = launch(['send', source, '--no-qr'], 'send', LAN ? 'prompt' : 'none')
+  const sender = launch(send, ['send', source, '--no-qr'], `send:${send.name}`, LAN ? 'prompt' : 'none')
   let receiver
 
   try {
@@ -133,7 +165,7 @@ async function main() {
     const [, code] = await sender.waitFor(/(qrdrop:[A-Za-z0-9_-]{43})/)
     console.log(`\ncode: ${code}\n`)
 
-    receiver = launch(['receive', code, '--out', outDir], 'recv', LAN ? 'quiet' : 'none')
+    receiver = launch(recv, ['receive', code, '--out', outDir], `recv:${recv.name}`, LAN ? 'quiet' : 'none')
 
     // Both sides show the SAS and stop. Neither moves until a human -- here,
     // this harness -- says the emoji match.
@@ -178,11 +210,23 @@ async function main() {
         : 'the transfer took the local-network path with both sides pinned to none')
     }
 
-    console.log(`\nPASS  (${LAN ? 'local network' : 'WebRTC'}) ${written[0]} (${landed.length} bytes) matched, digest ${senderDigest}`)
+    console.log(`\nPASS  ${send.name} -> ${recv.name} (${LAN ? 'local network' : 'WebRTC'}) ${written[0]} (${landed.length} bytes) matched, digest ${senderDigest}`)
   } finally {
     sender.child.kill()
     receiver?.child.kill()
     fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+async function main() {
+  const pairs = MATRIX
+    ? [['js', 'js'], ['js', 'rust'], ['rust', 'js'], ['rust', 'rust']]
+    : [[process.env.QRDROP_SEND_CLI ?? 'js', process.env.QRDROP_RECV_CLI ?? 'js']]
+  // Resolved up front, so a missing binary fails before any transfer runs.
+  const runs = pairs.map(([send, recv]) => [launcher(send), launcher(recv)])
+  for (const [send, recv] of runs) {
+    console.log(`\n=== ${send.name} -> ${recv.name} ===`)
+    await run(send, recv)
   }
 }
 

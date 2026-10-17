@@ -164,6 +164,25 @@ description = "Run the CLI interop e2e over the local-network fast path"
 depends = ["build"]
 run = "node e2e/interop.e2e.mjs --lan"
 
+# The Rust CLI against the Node one, all four pairings (JS and Rust, each way),
+# then the same over the local-network fast path; and a Chromium tab against
+# the Rust CLI both ways, with the page served by the Rust binary's own
+# `qrdrop web` -- which is why that one builds site/dist before the binary.
+[tasks."rust:cli"]
+description = "Build the Rust CLI with the web UI inside it (target/debug/qrdrop)"
+depends = ["build"]
+run = "cargo build -p qrdrop-cli --features web"
+
+[tasks."test:e2e:interop:matrix"]
+description = "Run the CLI interop e2e JS<->Rust in all four pairings, over WebRTC and then the local network"
+depends = ["rust:cli"]
+run = ["node e2e/interop.e2e.mjs --matrix", "node e2e/interop.e2e.mjs --matrix --lan"]
+
+[tasks."test:e2e:browser-cli"]
+description = "Run a Chromium tab against the Rust CLI, both ways, served by its qrdrop web"
+depends = ["rust:cli"]
+run = "node e2e/browser-cli.e2e.mjs"
+
 [tasks."test:e2e:tryst"]
 description = "Pair the Rust tryst peer with a Node Trystero peer, both ways, over both strategies (--live for the public relays)"
 run = "node e2e/tryst.e2e.mjs"

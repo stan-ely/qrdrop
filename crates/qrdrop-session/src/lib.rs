@@ -29,3 +29,5 @@ pub use io::{Sink, Source};
 pub use networks::Network;
 pub use pair::{OpenConfig, OpenError, Paired, open_room};
 pub use session::{LanConfig, SessionEvent, SessionEvents, SessionHandle, SessionOptions};
+/// Which signalling network a [`Network`] is, from tryst.
+pub use tryst::signal::Strategy;

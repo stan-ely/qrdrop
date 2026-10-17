@@ -13,15 +13,14 @@ session that works on it starts by reading the **Status** section and ends by up
 | 3. `tryst`, sans-IO core and WebRTC peer | done, 2026-10-18 | `228f0f1` | every Trystero vector and both recordings pass; two str0m peers join in-process; see "Phase 3: what it found" |
 | 4. `tryst` signalling clients | done, 2026-10-18 | `a798f24` | a Rust peer and Node Trystero pair over the public relays and trackers, both roles; see "Phase 4: what it found" |
 | 5. `qrdrop-session` and LAN | done, 2026-10-18 | `2982bea` | two Rust sessions pair, verify and move a file over the stand-ins and over the public relays; TURN in `tryst`; see "Phase 5: what it found" |
-| 6. Rust CLI and the cross-implementation suite | not started | | |
+| 6. Rust CLI and the cross-implementation suite | done, 2026-10-18 | | the Rust CLI passes the interop matrix against the Node CLI in all four pairings, WebRTC and LAN, and a Chromium tab both ways; see "Phase 6: what it found" |
 | 7. The apps on the native session | not started | | |
 | 8. CLI distribution switch | not started | | |
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 6, the Rust CLI: `crates/qrdrop-cli` on `qrdrop-session`, matching
-`src/cli.js`'s output contract, then `e2e/interop.e2e.mjs` with a launcher per side so the matrix
-runs JS↔JS, JS→Rust, Rust→JS and Rust↔Rust, with and without the LAN path.
+**Next step:** Phase 7, the apps on the native session. Settle the open question below first: the
+app's path dependency on `crates/` and `app-reproducible.yml`.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -54,8 +53,6 @@ runs JS↔JS, JS→Rust, Rust→JS and Rust↔Rust, with and without the LAN pat
 - **A TURN server that works.** The openrelay entries in `ICE_SERVERS` are dead for the JS and the
   Rust alike (see "Phase 5: what it found"). Replacing them is an operator choice (a hosted service
   with credentials, or one run for qrdrop), not a code change, and it is the owner's to make.
-- **The sink's de-duplicated name.** The Rust `FileSink` steps to `name (1).ext`, as the app's
-  `storage.rs` does; the Node CLI steps to `name (2).ext`. The Rust CLI in phase 6 picks one.
 
 **Open questions:**
 - **The app's path dependencies on `crates/` will break `app-reproducible.yml`.** Cargo hashes a path
@@ -972,6 +969,70 @@ path was Local, and 8 MiB took 3.1 s.
 - **Browser to Rust.** A new e2e drives a Chromium tab against the Rust CLI, which is the real check
   against the website's JS core.
 - **Shipping.** The JS CLI keeps shipping until phase 8.
+
+### Phase 6: what it found
+
+Done on 2026-10-18. `crates/qrdrop-cli` builds the `qrdrop` binary: `send`, `receive` and `web`
+with every flag, exit code and stdout line of `src/cli.js`, on `qrdrop-session`. It brings one new
+crate, `qrcodegen` (pure Rust, no dependencies), behind `qr`.
+
+**How the contract is held, rather than hoped for:**
+- **The text is read from the JS.** `text.rs`'s tests parse `src/cli.js`'s `OPTIONS` table and its
+  `USAGE` template and rebuild the help from them, and check every message against
+  `src/core/messages.js` and the byte format against `format.js`, as `networks.rs` reads `room.js`.
+  A sentence edited on one side fails the Rust tests.
+- **Measured against Node, byte for byte:** `--help`, `--version` (build.rs reads it from
+  `package.json`), `beam`, and the `send` usage error, output and exit code alike. `bytes()` rounds a
+  tie up as `toFixed` does, on integers: Rust's `{:.1}` rounds 1280 bytes, exactly 1.25 KB, to "1.2
+  KB" where the JS prints "1.3 KB".
+- **A decline, both ways against the Node CLI:** the declined send exits 1, the declining receive
+  exits 0, and nothing is written.
+
+**The cross-implementation suite.** `e2e/interop.e2e.mjs` takes `QRDROP_SEND_CLI` and
+`QRDROP_RECV_CLI` (`js`, `rust` or a path), and `--matrix` runs JS→JS, JS→Rust, Rust→JS and
+Rust→Rust (`mise run test:e2e:interop:matrix` builds the binary and runs it over WebRTC, then
+`--lan`). Live over the public relays: **12/12 over WebRTC** (the matrix three times) and **4/4
+over the LAN path**, the sender reporting the direct connection in every one.
+`e2e/browser-cli.e2e.mjs` (`mise run test:e2e:browser-cli`) puts a Chromium tab against the Rust
+CLI both ways, with the page served by the Rust binary's own `qrdrop web` (`--features web` embeds
+`site/dist`): **2/2**, SAS and digest equal on both ends, 1 MiB each way.
+
+**One race found in phase 5's driver, by reading it for the CLI.** `shut()` sent the leave by one
+road (the room task, or straight to the peer's link in memory) while the last frames went by
+another (the writer), so a leave could overtake the frame before it. The CLI closes the moment it
+has its file, which is exactly when the receiver's `done` is still in its writer's queue, and the
+sender would report a finished transfer as a disconnect. `shut()` now puts a barrier in the
+writer's FIFO and leaves only once the writer reaches it, bounded at `LEAVE_TIMEOUT` for a writer
+parked behind a peer already gone. It could not be made to fail in a test: without the barrier, a
+hundred rounds on four threads still passed, because the window is two channel hops wide. So the
+order is now kept by construction rather than by scheduling, and the old test's comment, which
+credited the memory link with an order it never guaranteed, says so.
+
+**And one change to the session's events.** `Path` was emitted when the peer's verdict arrived even
+if this side's was not in yet, reading `mine: Unknown` for a verdict merely pending. It is emitted
+only once this side has its own now, so the first `Path` is `reportPath`'s one announcement.
+
+**Deliberate differences from the Node CLI:**
+- **An unknown option is a usage error, exit 2.** Node's `parseArgs` throws a TypeError there that
+  cli.js does not catch, so the Node CLI exits 1 with a stack trace: an accident, not a contract.
+- **The QR art differs; the code does not.** Forcing each of qrcodegen's eight masks, one
+  reproduces the Node CLI's output exactly for each of three texts, so version, data and error
+  correction are identical. qrcode-generator scores masks with a penalty of its own, on a matrix
+  with the format bits blanked. Nothing parses the art, so porting that penalty was not done.
+- **`--debug` prints the error, not a stack**, since a Rust error has none to print.
+- **The second copy of a name** is `name (2).ext`, the Node CLI's sink's numbering, through
+  `FileSink::create_numbered`; the app's providers keep `(1)`.
+
+**Not verified: Ctrl-C.** The handler cancels the session, leaves the room (bounded at 2 s) and
+exits 130, as `interruptHooks` does. No script here can deliver a console Ctrl-C to one child
+process on Windows without delivering it to every process on that console, the shell included. It
+needs a Linux run or a person at a terminal.
+
+**Found on the way:**
+- **A small send can end before its route is classified**, so the sender prints no path line at
+  all. The JS behaves the same way (`room.path().then(announce)`, and then the process exits); it
+  is the 3 s classification poll against a transfer that takes less.
+- **The suites stay out of CI**, as every e2e here is: they need the public relays.
 
 ### Phase 7: the apps on the native session
 

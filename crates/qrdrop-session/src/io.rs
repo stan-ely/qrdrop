@@ -101,8 +101,16 @@ mod files {
         /// the create one step, so a file appearing between them is not
         /// overwritten either.
         pub fn create(dir: &Path, name: &str) -> io::Result<Self> {
+            Self::create_numbered(dir, name, 1)
+        }
+
+        /// [`FileSink::create`], with the second copy numbered `first`. The
+        /// Node CLI's sink names it `name (2).ext`, and the Rust CLI keeps
+        /// what a script already sorting the Node CLI's output expects.
+        pub fn create_numbered(dir: &Path, name: &str, first: u32) -> io::Result<Self> {
             let name = safe_filename(name);
-            for n in 0..=MAX_SUFFIX {
+            let tries = std::iter::once(0).chain(first..=first + MAX_SUFFIX);
+            for n in tries {
                 let path = dir.join(candidate(&name, n));
                 match fs::OpenOptions::new()
                     .write(true)

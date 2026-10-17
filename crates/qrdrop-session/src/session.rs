@@ -335,6 +335,8 @@ enum Out {
     Frame(Vec<u8>),
     #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
     UseLan(lan::WsTx),
+    /// Answered once every frame queued ahead of it has been handed over.
+    Flushed(oneshot::Sender<()>),
 }
 
 /// The writer: every outbound frame in queue order, to whichever route is
@@ -392,6 +394,9 @@ async fn write(
             }
             #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
             Out::UseLan(tx) => over_lan = Some(tx),
+            Out::Flushed(ack) => {
+                let _ = ack.send(());
+            }
         }
     }
     drop(link);
@@ -803,8 +808,12 @@ impl Driver {
         self.emit_path();
     }
 
+    /// Only once this side has its own verdict. The peer's can arrive first,
+    /// and an event then would say `mine: Unknown` for a verdict that is
+    /// merely not in yet -- indistinguishable from one that came back
+    /// unknown, and the CLI announces the path exactly once, at the first.
     fn emit_path(&mut self) {
-        let mine = self.mine.unwrap_or(NetworkPath::Unknown);
+        let Some(mine) = self.mine else { return };
         let theirs = self.theirs;
         self.emit(SessionEvent::Path {
             mine,
@@ -1113,6 +1122,17 @@ impl Driver {
     async fn shut(&mut self) {
         self.session.cancel();
         self.pump();
+        // The leave goes by another road than the frames -- the room task
+        // for a room, straight to the peer's link for memory -- so it can
+        // overtake the last of them. A receiver closing as soon as it has
+        // its file did exactly that to its own `done`, and the sender called
+        // a finished transfer a disconnect. So wait until the writer has
+        // handed over everything queued before this, bounded, since a peer
+        // already gone can leave the writer parked on backpressure.
+        let (ack, flushed) = oneshot::channel();
+        if self.out.send(Out::Flushed(ack)).is_ok() {
+            let _ = tokio::time::timeout(LEAVE_TIMEOUT, flushed).await;
+        }
         self.source = None;
         self.offered = None;
         if let Some(l) = self.lan.take() {

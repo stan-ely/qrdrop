@@ -247,7 +247,13 @@ async fn a_leave_right_behind_the_done_is_not_a_disconnect() {
     let (s, _, _) = sink(Duration::ZERO);
     g.accept(s);
     until(&mut ge, |e| matches!(e, SessionEvent::Received { .. })).await;
-    // The receiver leaving; Ctl::Memory queues the Left behind its done.
+    // The receiver leaving the moment it has the file, as the CLI does. The
+    // Left goes straight to the peer and the done through the writer, so
+    // what orders them is `shut` waiting for the writer to flush; without
+    // that, only scheduling did. (Measured: removing the flush does not fail
+    // this, even over a hundred rounds on four threads -- the window is two
+    // channel hops wide -- so the order is kept by construction, not by a
+    // test that can see it go.)
     g.close().await;
     let _ = a_in;
     let e = until(&mut he, |e| {

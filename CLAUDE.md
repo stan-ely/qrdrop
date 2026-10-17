@@ -223,7 +223,14 @@ npm run test:e2e          # two real browsers over real relays
 npm run test:e2e:interop  # two Node processes driving the CLI, pinned to WebRTC
 npm run test:e2e:interop:lan  # the same, over the local-network fast path
 npm run test:e2e:tryst    # the Rust tryst peer against a Node Trystero peer; `-- --live` for the public relays
+mise run test:e2e:interop:matrix  # the Node CLI and the Rust CLI in all four pairings, WebRTC then LAN
+mise run test:e2e:browser-cli     # Chromium against the Rust CLI both ways, served by its own `qrdrop web`
 ```
+
+The last two need the Rust binary, which their mise tasks build (`rust:cli`, with
+`site/dist` inside it for `qrdrop web`); the npm scripts of the same names expect it
+built already. `QRDROP_SEND_CLI` / `QRDROP_RECV_CLI` (`js`, `rust` or a path) pick
+each side of a single interop run.
 
 `mise.toml` mirrors every npm script as a task; either runner works.
 
