@@ -80,9 +80,11 @@ jobs:
           tools: node rust github:taiki-e/cargo-hack
           webkit: 'true'
 
-      # The action caches app/src-tauri's target only. The workspace has its
-      # own lock and its own target/ at the repo root, so it gets its own
-      # entry, saved from main only for the reason the action gives.
+      # The action caches app/src-tauri's target only. The crates build into
+      # the target/ at the repo root, so they get an entry of their own, saved
+      # from main only for the reason the action gives. One Cargo.lock serves
+      # both since the app joined the root workspace (the root Cargo.toml
+      # says why it had to).
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: '. -> target'
@@ -92,9 +94,12 @@ jobs:
       # The same commands as `mise run rust:test` and `mise run rust:features`,
       # run directly for the reason the workflows job below gives about
       # `mise run`. --each-feature is every crate with no features, then each
-      # feature on its own; --all-features is the test run above it.
-      - run: cargo test --workspace --all-features
-      - run: cargo hack check --workspace --each-feature --no-dev-deps
+      # feature on its own; --all-features is the test run above it. Both
+      # leave out the app (package `qrdrop`), which the step after this tests
+      # from its own directory -- so into its own target/ -- rather than
+      # compiling the whole Tauri crate a second time into this one.
+      - run: cargo test --workspace --exclude qrdrop --all-features
+      - run: cargo hack check --workspace --exclude qrdrop --each-feature --no-dev-deps
 
       - run: cargo test
         working-directory: app/src-tauri

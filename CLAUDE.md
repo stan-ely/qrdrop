@@ -33,7 +33,7 @@ node scripts/bench-beam.mjs                # beam loss/overhead tables, ~3 min; 
 
 node scripts/make-vectors.mjs              # rewrite test/vectors/ from src/core/ and Trystero; --check exits 1 if stale
 node scripts/record-trystero.mjs           # re-record two real peers over Trystero; --live goes through the public relays
-mise run rust:test                         # the Rust workspace under crates/; the app crate is `cargo test` in app/src-tauri
+mise run rust:test                         # the crates under crates/; the app, a member but not a default one, is `cargo test` in app/src-tauri
 ```
 
 `test/vectors/` is the contract between the JS core and the Rust session
@@ -770,7 +770,12 @@ drives the app while `v*` tags drive npm.
 `buildCSP(SIGNALING_URLS)` — the exact policy the website serves — so a relay added
 to `src/transport/room.js` reaches the app's `connect-src` with no second edit, same
 reasoning as `buildCSP` itself. Hand-editing `tauri.conf.json`'s `connect-src` is the
-drift this exists to prevent. `Cargo.lock` is committed because this is a binary.
+drift this exists to prevent. `Cargo.lock` is committed because this is a binary,
+and it is the **root** one: the app is a member of the root workspace, which is a
+reproducible-build requirement and not tidiness (the root `Cargo.toml` says why). Its
+output still lands in `app/src-tauri/target`, through `app/src-tauri/.cargo/config.toml`,
+and it is not a default member, so a bare `cargo test` at the root is the session crates
+and every `--workspace` run says `--exclude qrdrop`.
 `app/dist/` is *not* committed (it is `dist/`-gitignored); `mise run app:dev` /
 `app:build` rebuild it from `--channel app`.
 

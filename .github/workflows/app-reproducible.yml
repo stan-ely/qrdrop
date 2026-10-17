@@ -31,6 +31,12 @@ on:
     branches: [main]
     paths:
       - 'app/src-tauri/**'
+      # The root workspace the app is a member of: its Cargo.lock is the
+      # app's, and crates/ and vendor/ are compiled into it.
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'vendor/**'
       - 'app/package.json'
       - 'app/package-lock.json'
       - 'scripts/android-env.mjs'

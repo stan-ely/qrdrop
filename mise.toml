@@ -205,11 +205,11 @@ run = "actionlint"
 # `cargo test` in app/src-tauri, which needs app/dist built first.
 [tasks."rust:test"]
 description = "Test the Rust workspace under crates/"
-run = "cargo test --workspace --all-features"
+run = "cargo test --workspace --exclude qrdrop --all-features"
 
 [tasks."rust:features"]
 description = "Check every crate under crates/ with each feature on its own"
-run = "cargo hack check --workspace --each-feature --no-dev-deps"
+run = "cargo hack check --workspace --exclude qrdrop --each-feature --no-dev-deps"
 
 # --- committed images and the layout check ---
 #

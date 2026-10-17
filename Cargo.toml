@@ -1,20 +1,37 @@
-# The Rust session: the crates the apps and, later, the CLI run a transfer
-# through. docs/notes/rust-session.md is the plan and its tracking document;
-# read its Status section before changing anything here.
+# The Rust session: the crates the apps and the CLI run a transfer through.
+# docs/notes/rust-session.md is the plan and its tracking document; read its
+# Status section before changing anything here.
 #
-# A workspace at the repo root rather than inside crates/, because `exclude`
-# only means something from here. Cargo looks upward from a package for a
-# workspace root, so without the exclude app/src-tauri would find this file,
-# discover it is not a member, and refuse to build. With it, app/src-tauri
-# stays its own workspace with its own Cargo.lock and its own target/ -- which
-# keeps every hard-coded `app/src-tauri/target` path in the workflows true, and
-# keeps app-release.yml's `sed` over the first `version =` line of its
-# Cargo.toml reading the app version rather than `version.workspace = true`.
-# The app will depend on these crates by path; it is never a member.
+# The app (app/src-tauri) is a member, and that is the reproducible build's
+# requirement rather than tidiness. Cargo hashes every package into its
+# symbols' metadata, and a path dependency is hashed by its path relative to
+# the workspace root when it sits under that root -- and by its absolute path
+# when it does not. As its own workspace, the app reached crates/ from outside
+# its root, so the APK would have carried the checkout's absolute path in that
+# hash: phase 1 measured exactly this, 128 bytes of difference between two
+# checkouts with no path visible in either binary. That is invisible to
+# --remap-path-prefix, and it is the one difference app-reproducible.yml exists
+# to refuse, because f-droid.org's checkout is never at our path.
+#
+# What the app's own workspace used to protect is kept another way:
+# - Its target/ is still app/src-tauri/target, through app/src-tauri/.cargo/
+#   config.toml, so every path in the workflows and scripts stays true. Cargo
+#   reads that file only when it runs from app/src-tauri, which is where Tauri
+#   runs it.
+# - Its version is still the literal first `version =` in its Cargo.toml, so
+#   app-release.yml's sed and cargo-release read the app's own number.
+# - It is not a default member. A bare `cargo test` or `cargo clippy` here is
+#   the session crates, and CI's `--workspace` runs say `--exclude qrdrop`:
+#   the app needs a webview's system packages and a built app/dist, which only
+#   the app workflows install.
+#
+# One Cargo.lock for both, at this root. Its app half was merged from the
+# app's old lock, version for version, so becoming a member upgraded nothing.
 [workspace]
 resolver = "3"
-members = ["crates/*"]
-exclude = ["app", "vendor"]
+members = ["crates/*", "app/src-tauri"]
+default-members = ["crates/*"]
+exclude = ["vendor"]
 
 # Patched crates, kept inside this tree because a patch outside the workspace
 # root is hashed by its absolute path into every symbol, and the Android .so

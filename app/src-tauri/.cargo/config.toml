@@ -1,0 +1,13 @@
+# The app's build output stays in app/src-tauri/target now that the app is a
+# member of the root workspace (see the root Cargo.toml for why it is one).
+# Every path in app-release.yml, app-reproducible.yml and make-msix.mjs names
+# this directory, and so does Gradle's view of the Rust libraries through the
+# Tauri CLI, which asks `cargo metadata` from here. A relative target-dir is
+# resolved against this .cargo directory's parent, so this is that path.
+#
+# Cargo reads this file only when it runs from app/src-tauri or below: which
+# is where the Tauri CLI, the app workflows and `cargo test` for the app run
+# it. A `cargo build -p qrdrop` from the repository root builds into the root
+# target/ instead, harmlessly and slowly.
+[build]
+target-dir = "target"

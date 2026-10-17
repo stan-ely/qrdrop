@@ -55,16 +55,11 @@ app's path dependency on `crates/` and `app-reproducible.yml`.
   with credentials, or one run for qrdrop), not a code change, and it is the owner's to make.
 
 **Open questions:**
-- **The app's path dependencies on `crates/` will break `app-reproducible.yml`.** Cargo hashes a path
-  dependency outside the building workspace's root by its absolute path into every symbol, and phase
-  1 measured exactly that: a 128-byte difference between two checkouts, with no path in either
-  binary. `app/src-tauri` is its own workspace by design (see "Architecture"). Settle it before the
-  app's first dependency on `crates/` (phase 7, or phase 3 if the path filters move then): make the
-  app a workspace member and rework what that layout protects, or find a way to pin the hash.
-  Moving `tryst` to a repository of its own is on the table (offered 2026-10-17). A git or registry
-  dependency is hashed by its source and version rather than its path, so that does fix `tryst`.
-  But the app also depends on `qrdrop-protocol` and `qrdrop-session`, which would still be path
-  dependencies, so a move settles this only if every crate the app uses goes with it.
+- **Settled in phase 7: the app is a member of the root workspace.** A path dependency outside the
+  building workspace's root is hashed by its absolute path into every symbol (phase 1 measured 128
+  bytes between two checkouts), so the app could not stay its own workspace and depend on
+  `crates/`. Moving `tryst` to its own repository would not have been enough, since the app also
+  needs `qrdrop-protocol` and `qrdrop-session`. See "Phase 7: what it found".
 - **Upstream the `rcgen` fix to str0m** (an optional feature in `str0m-rust-crypto`), so the vendored
   copy can go.
 
@@ -91,11 +86,13 @@ two together. Neither is optional.
 
 ## Architecture
 
-The crates form a Cargo workspace at the repo root, under `crates/`, with its own `Cargo.lock`.
-`app/src-tauri` stays a separate package with its own lock and depends on these crates by path. The
-workspace declares `exclude = ["app"]`. That layout keeps every hard-coded `app/src-tauri/target`
-path working, and so does the `sed` in `app-release.yml` that reads the first `version =` line of
-`app/src-tauri/Cargo.toml`. A `version.workspace = true` there would break that `sed`.
+The crates form a Cargo workspace at the repo root, under `crates/`, and since phase 7
+`app/src-tauri` is a member of it (not a default one), with one `Cargo.lock` at the root. It was a
+separate workspace until then, and that could not survive its first dependency on `crates/`: see
+"Phase 7: what it found". `app/src-tauri/.cargo/config.toml` keeps its output in
+`app/src-tauri/target`, so every hard-coded path there still holds, and its `version` stays a
+literal, so the `sed` in `app-release.yml` that reads the first `version =` line of
+`app/src-tauri/Cargo.toml` still works. A `version.workspace = true` there would break that `sed`.
 
 | Crate | Role | IO | Extractable |
 |---|---|---|---|

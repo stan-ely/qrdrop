@@ -30,6 +30,12 @@ on:
     branches: [main]
     paths:
       - 'app/**'
+      # The root workspace the app is a member of: its Cargo.lock is the
+      # app's, and crates/ and vendor/ are compiled into it.
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'vendor/**'
       - 'scripts/build-site.mjs'
       - 'scripts/generate-tauri-config.mjs'
       - 'mise.toml'
@@ -38,6 +44,12 @@ on:
   pull_request:
     paths:
       - 'app/**'
+      # The root workspace the app is a member of: its Cargo.lock is the
+      # app's, and crates/ and vendor/ are compiled into it.
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'vendor/**'
       - 'scripts/build-site.mjs'
       - 'scripts/generate-tauri-config.mjs'
       - 'mise.toml'
