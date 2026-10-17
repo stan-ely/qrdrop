@@ -29,6 +29,9 @@ session that works on it starts by reading the **Status** section and ends by up
   through a discovery or relay system of its own. iroh is not assumed.
 - **Location.** The code lives in this repo under `crates/` until the Trystero-compatible layer is
   mature enough to publish on its own.
+- **Feature flags.** Optional transports (the signalling strategies, WebRTC, LAN listen and dial,
+  QUIC, file IO, the CLI's extras) are Cargo features, so each platform builds only what it uses.
+  See "Feature flags".
 
 **Still to decide, each in the phase that needs it:**
 - the WebRTC crate (phase 1);
@@ -85,6 +88,45 @@ Reusable today, from `app/src-tauri`:
   taking `&AppHandle`, with thin commands on top.
 - **From `share.rs`:** the share handoff already yields a file *path*, which is exactly what a native
   sender needs.
+
+### Feature flags
+
+Not every build needs every part of the session, so each optional transport is a Cargo feature, and
+a build includes only what its platform uses. That keeps the Android `.so` smaller, which also means
+fewer crates for f-droid.org to rebuild byte for byte. It also lets a platform rule become a build
+property instead of a runtime check.
+
+| Crate | Feature | Pulls in | Who enables it |
+|---|---|---|---|
+| `trystero` | `nostr` | WebSocket + TLS client, `k256` | everyone, by default |
+| `trystero` | `torrent` | WebSocket + TLS client | everyone, by default |
+| `trystero` | `webrtc` | the WebRTC stack chosen in phase 1 | everyone, by default; off only in a Rust-only build |
+| `qrdrop-session` | `lan-dial` | WebSocket client | the CLI, every app target |
+| `qrdrop-session` | `lan-listen` | WebSocket server, getifaddrs | the CLI; the app on Android and Linux only |
+| `qrdrop-session` | `quic` | quinn, rustls | off until phase 9 passes its gate |
+| `qrdrop-session` | `fs` | std file `Source` / `Sink` | the CLI and desktop apps; Android uses its own sink |
+| `qrdrop-cli` | `web` | embedded `site/dist` for `qrdrop web` | release builds |
+| `qrdrop-cli` | `qr` | terminal QR rendering | release builds |
+
+Rules:
+
+- **Features are additive and only ever add a path.** Cargo unifies features across a build, so a
+  feature must never change how an existing path behaves, only whether an extra one exists.
+- **The protocol says what a build lacks; it never guesses.**
+  - A build without `lan-listen` answers `lan-hello` with `listen: "none"` (or `prompt`), exactly
+    as a Windows peer does today.
+  - A build without `quic` never advertises QUIC.
+
+  So a peer cannot tell a missing feature from a peer that declined, and does not need to.
+- **The platform rule moves into `Cargo.toml`.** The app chooses features per target with
+  `[target.'cfg(...)'.dependencies]`. On Windows and macOS, `lan-listen` is simply not built, which
+  is a stronger guarantee against a firewall prompt than today's runtime `MODE` constant in `lan.rs`.
+- **The sans-IO crates have no transport features.** `qrdrop-protocol` and `trystero`'s core compile
+  everywhere, with everything, so the vectors always test all of them.
+- **CI builds a feature matrix:** every crate with `--no-default-features`, each feature on its own,
+  and `--all-features`. A feature that only compiles alongside another is the bug this catches.
+  Phase 0 sets this up; `cargo hack --each-feature` is the obvious tool, if adding it to `mise.toml`
+  is acceptable.
 
 ### Dependency rules
 
@@ -407,7 +449,8 @@ long splits; it does not end half-done without a note here.
 - **Rust in CI.** Add a `cargo test` job to `ci.yml` for `crates/` and for `app/src-tauri`'s host
   tests. Nothing runs Rust tests in CI today, so the existing ones in `lan.rs`, `share.rs`, `sink.rs`
   and `storage.rs` have never run there.
-- **The workspace.** Create the `crates/` skeleton and settle crate names.
+- **The workspace.** Create the `crates/` skeleton, settle crate names, and declare the feature names
+  from "Feature flags" (empty for now). The CI Rust job builds the feature matrix from day one.
 - **Vectors.** Write `scripts/make-vectors.mjs`. It drives the real JS core to write fixed vectors
   into `test/vectors/*.json`:
   - secret to topic and password;
