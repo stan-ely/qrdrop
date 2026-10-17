@@ -26,7 +26,7 @@
 use std::fmt;
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use qrdrop_protocol::{
@@ -52,12 +52,12 @@ pub const PATH_WAIT: Duration = Duration::from_secs(3);
 /// Bytes queued for the writer and not yet handed to the transport. Chunks
 /// are read only while the queue is under this; the transport's own buffer
 /// (4 MiB in tryst) is behind it.
-const OUT_HIGH: usize = 1024 * 1024;
+pub(crate) const OUT_HIGH: usize = 1024 * 1024;
 
 /// Chunks the source thread reads ahead: about 2 MiB, so a read never
 /// stalls the channel and memory stays at two blocks, the bound
 /// `src/web/source.js` chose its read-ahead against.
-const READ_AHEAD: usize = 128;
+pub(crate) const READ_AHEAD: usize = 128;
 
 /// Leave `room`, waiting at most [`LEAVE_TIMEOUT`] for the leave to go.
 pub(crate) async fn leave_bounded(room: RoomHandle) {
@@ -219,7 +219,7 @@ impl Paired {
         } = self;
         let (room, early) = hold.release().await;
         let session = pairing.confirm();
-        let (link_tx, link_rx) = mpsc::unbounded_channel();
+        let (link_tx, link_rx) = inbox();
         for f in early.frames {
             let _ = link_tx.send(LinkIn::Frame(f));
         }
@@ -252,7 +252,7 @@ impl Paired {
 async fn read_room(
     mut room: RoomHandle,
     peer: String,
-    link: mpsc::UnboundedSender<LinkIn>,
+    link: Inbox,
     leave: oneshot::Receiver<oneshot::Sender<()>>,
 ) {
     tokio::pin!(leave);
@@ -302,6 +302,83 @@ pub(crate) enum LinkIn {
     LanClosed,
 }
 
+impl LinkIn {
+    fn frame_len(&self) -> u64 {
+        match self {
+            LinkIn::Frame(f) | LinkIn::Lan(f) => f.len() as u64,
+            LinkIn::Left | LinkIn::LanClosed => 0,
+        }
+    }
+}
+
+/// A session's inbound queue, and the frame bytes waiting in it.
+///
+/// The count is what the pause hears about a queue in front of the session
+/// ([`Session::set_queued`]): receiver.js counts a frame at arrival, and a
+/// frame waiting here has arrived. Every road in -- the room's reader, the
+/// LAN socket's, the memory link -- goes through [`Inbox::send`], so none
+/// can bypass it.
+#[derive(Clone)]
+pub(crate) struct Inbox {
+    tx: mpsc::UnboundedSender<LinkIn>,
+    queued: Arc<AtomicU64>,
+    /// Told whenever a frame is taken, for [`Inbox::wait_for_room`].
+    room: Arc<Notify>,
+}
+
+/// The memory link's receive window. A real channel has one -- SCTP's, under
+/// str0m -- and a sender facing a receiver that has stopped reading stalls
+/// on it. Without one the memory link was a channel of infinite speed, and a
+/// receiver starved of CPU could fall any distance behind: on a two-core
+/// runner the slow-sink test saw backlogs of 7.7 and 9.7 MB, past any bound
+/// flow control can promise, which no deployed transport would allow.
+pub(crate) const MEMORY_WINDOW: u64 = 1024 * 1024;
+
+impl Inbox {
+    pub(crate) fn send(&self, li: LinkIn) -> Result<(), mpsc::error::SendError<LinkIn>> {
+        let n = li.frame_len();
+        self.queued.fetch_add(n, Ordering::Relaxed);
+        self.tx.send(li).inspect_err(|_| {
+            self.queued.fetch_sub(n, Ordering::Relaxed);
+        })
+    }
+
+    /// `li` is out of the queue: what is still in it.
+    fn taken(&self, li: &LinkIn) -> u64 {
+        let n = li.frame_len();
+        let left = self.queued.fetch_sub(n, Ordering::Relaxed) - n;
+        self.room.notify_waiters();
+        left
+    }
+
+    /// Until fewer than `window` bytes of frames are waiting.
+    async fn wait_for_room(&self, window: u64) {
+        loop {
+            let notified = self.room.notified();
+            tokio::pin!(notified);
+            // Registered before the check, so a take between the two is not
+            // missed.
+            notified.as_mut().enable();
+            if self.queued.load(Ordering::Relaxed) < window {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+pub(crate) fn inbox() -> (Inbox, mpsc::UnboundedReceiver<LinkIn>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    (
+        Inbox {
+            tx,
+            queued: Arc::new(AtomicU64::new(0)),
+            room: Arc::new(Notify::new()),
+        },
+        rx,
+    )
+}
+
 /// Where the writer sends frames.
 pub(crate) enum Route {
     Room {
@@ -310,7 +387,7 @@ pub(crate) enum Route {
     },
     /// The other session's inbound channel, for tests.
     #[allow(dead_code)]
-    Memory(mpsc::UnboundedSender<LinkIn>),
+    Memory(Inbox),
 }
 
 /// How the loop leaves, and asks for the selected pair.
@@ -321,13 +398,13 @@ pub(crate) enum Ctl {
         peer: String,
     },
     #[allow(dead_code)]
-    Memory(mpsc::UnboundedSender<LinkIn>),
+    Memory(Inbox),
 }
 
 pub(crate) struct Link {
     pub route: Route,
     pub ctl: Ctl,
-    pub link_tx: mpsc::UnboundedSender<LinkIn>,
+    pub link_tx: Inbox,
     pub link_rx: mpsc::UnboundedReceiver<LinkIn>,
 }
 
@@ -346,7 +423,7 @@ async fn write(
     mut rx: mpsc::UnboundedReceiver<Out>,
     queued: Arc<AtomicUsize>,
     drained: Arc<Notify>,
-    link: mpsc::UnboundedSender<LinkIn>,
+    link: Inbox,
 ) {
     #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
     let mut over_lan: Option<lan::WsTx> = None;
@@ -385,6 +462,7 @@ async fn write(
                                 .await;
                         }
                         Route::Memory(tx) => {
+                            tx.wait_for_room(MEMORY_WINDOW).await;
                             let _ = tx.send(LinkIn::Frame(f));
                         }
                     }
@@ -530,7 +608,7 @@ struct Driver {
         not(any(feature = "lan-dial", feature = "lan-listen")),
         allow(dead_code)
     )]
-    link_tx: mpsc::UnboundedSender<LinkIn>,
+    link_tx: Inbox,
     /// The sender waits here at Accept, for the link, until this.
     lan_wait: Option<Instant>,
     mine: Option<NetworkPath>,
@@ -750,6 +828,8 @@ impl Driver {
 
     fn on_link(&mut self, li: LinkIn) {
         let now = Instant::now();
+        let queued = self.link_tx.taken(&li);
+        self.session.set_queued(queued);
         match li {
             LinkIn::Frame(f) => self.session.handle_frame(&f, now),
             LinkIn::Lan(f) => {

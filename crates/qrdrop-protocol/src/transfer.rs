@@ -306,6 +306,7 @@ pub struct Session {
     incoming: Incoming,
     deferred: VecDeque<Vec<u8>>,
     pending: u64,
+    queued: u64,
     told_paused: bool,
 
     halted: bool,
@@ -340,6 +341,7 @@ impl Session {
             incoming: Incoming::Idle,
             deferred: VecDeque::new(),
             pending: 0,
+            queued: 0,
             told_paused: false,
             halted: false,
             failure: None,
@@ -375,6 +377,22 @@ impl Session {
     /// Plaintext handed out in [`Event::Write`] and not yet written.
     pub fn pending(&self) -> u64 {
         self.pending
+    }
+
+    /// Frames the transport holds for this session and has not handed to
+    /// [`Session::handle_frame`] yet, in bytes. Counted toward the pause with
+    /// [`Session::pending`], because a queue in front of this session is a
+    /// backlog too: receiver.js counts a frame at arrival, before it is
+    /// decrypted, for exactly that reason. Counting only what has been
+    /// opened lets a receiver whose decryption falls behind the channel hold
+    /// an unbounded queue that the pause never hears about. Measured in the
+    /// session's slow-sink test, where on a two-core runner the queue took
+    /// the backlog to 8.4 MB against a 4 MiB pause.
+    ///
+    /// Set before each frame is handed in, and whenever the queue grows.
+    pub fn set_queued(&mut self, bytes: u64) {
+        self.queued = bytes;
+        self.consider_pause();
     }
 
     /// A file is being received into an open sink.
@@ -530,7 +548,7 @@ impl Session {
     /// `bytes` of [`Event::Write`] plaintext are through the sink.
     pub fn write_done(&mut self, bytes: u64) {
         self.pending = self.pending.saturating_sub(bytes);
-        if !self.halted && self.told_paused && self.pending <= RESUME_AT {
+        if !self.halted && self.told_paused && self.pending + self.queued <= RESUME_AT {
             self.told_paused = false;
             self.send_control(Control::Resume);
         }
@@ -862,11 +880,21 @@ impl Session {
         self.pending += len;
         self.events.push_back(Event::Write(opened.plaintext));
         self.events.push_back(progress);
-        if !self.told_paused && self.pending >= PAUSE_AT {
+        self.consider_pause();
+        Ok(())
+    }
+
+    /// Asks the peer to pause once the backlog -- written-but-unflushed and
+    /// queued-but-unopened together -- reaches [`PAUSE_AT`], while a file is
+    /// coming in. Once per pause: [`Session::write_done`] resumes.
+    fn consider_pause(&mut self) {
+        if self.halted || self.told_paused || !matches!(self.incoming, Incoming::Receiving(_)) {
+            return;
+        }
+        if self.pending + self.queued >= PAUSE_AT {
             self.told_paused = true;
             self.send_control(Control::Pause);
         }
-        Ok(())
     }
 
     fn handle_complete(&mut self, seq: u32, chunks: u64, digest: String) -> Result<(), Error> {

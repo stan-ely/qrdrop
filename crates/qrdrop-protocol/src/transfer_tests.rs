@@ -916,6 +916,44 @@ fn a_slow_sink_makes_the_sender_pause_and_the_backlog_stays_bounded() {
 }
 
 #[test]
+fn frames_queued_in_front_of_the_receiver_count_toward_the_pause() {
+    // receiver.js counts a frame at arrival, before it is decrypted, so a
+    // queue in front of the receiver is part of its backlog. Here the queue
+    // is all of it: one chunk opened and written, four MiB still waiting.
+    let size = 2 * 1024 * 1024;
+    let (h, g) = pair();
+    let (mut host, mut guest) = (Side::new(h), Side::new(g));
+    host.s.send_file(offer("queued.bin", size)).unwrap();
+    host.file = bytes(size);
+    let now = Instant::now();
+    // Everything the host sends after its first chunk is held back -- its
+    // `complete` too, or the receiver would rightly call the count short.
+    let mut chunks = 0;
+    run(&mut host, &mut guest, now, |d, f| {
+        if d == Dir::HostToGuest {
+            if chunks >= 1 {
+                return vec![];
+            }
+            chunks += usize::from(f[0] == TYPE_CHUNK);
+        }
+        vec![f]
+    });
+    assert!(guest.s.busy());
+    assert_eq!(guest.s.pending(), 0);
+    let controls = |s: &mut Session| std::iter::from_fn(|| s.poll_transmit()).count();
+    assert_eq!(controls(&mut guest.s), 0);
+
+    guest.s.set_queued(PAUSE_AT);
+    assert_eq!(controls(&mut guest.s), 1, "the pause");
+    // Written down to nothing, but the queue is still there: no resume.
+    guest.s.write_done(0);
+    assert_eq!(controls(&mut guest.s), 0);
+    guest.s.set_queued(RESUME_AT);
+    guest.s.write_done(0);
+    assert_eq!(controls(&mut guest.s), 1, "the resume");
+}
+
+#[test]
 fn a_sender_that_ignores_pause_still_completes_unbounded() {
     // An old JS sender drops 'pause' as an unknown type and keeps going.
     // Stood in for by never delivering the pause (guest index 1, after its

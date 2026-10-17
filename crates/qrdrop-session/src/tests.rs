@@ -9,13 +9,13 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use qrdrop_protocol::{Keypair, NetworkPath, PAUSE_AT, Role, Secret};
-use tokio::sync::mpsc;
+use qrdrop_protocol::{CHUNK_SIZE, Keypair, NetworkPath, PAUSE_AT, Role, Secret};
 use tokio::time::timeout;
 
 use crate::io::{Sink, Source};
 use crate::session::{
-    Ctl, Link, LinkIn, Route, SessionEvent, SessionEvents, SessionHandle, SessionOptions, start,
+    Ctl, Inbox, Link, LinkIn, MEMORY_WINDOW, OUT_HIGH, READ_AHEAD, Route, SessionEvent,
+    SessionEvents, SessionHandle, SessionOptions, inbox, start,
 };
 
 const WAIT: Duration = Duration::from_secs(20);
@@ -24,21 +24,16 @@ type Side = (SessionHandle, SessionEvents);
 
 /// Two sessions on one secret, joined in memory. Each side's inbound sender
 /// is returned too, so a test can put a frame or a leave in the other's way.
-fn pair() -> (
-    Side,
-    Side,
-    mpsc::UnboundedSender<LinkIn>,
-    mpsc::UnboundedSender<LinkIn>,
-) {
+fn pair() -> (Side, Side, Inbox, Inbox) {
     let secret = Secret::generate();
     let (a, b) = (Keypair::generate(), Keypair::generate());
     let (ap, bp) = (a.public_key().to_vec(), b.public_key().to_vec());
     let host = a.establish(&bp, &secret, Role::Host).unwrap();
     let guest = b.establish(&ap, &secret, Role::Guest).unwrap();
     assert_eq!(host.sas(), guest.sas());
-    let (a_tx, a_rx) = mpsc::unbounded_channel();
-    let (b_tx, b_rx) = mpsc::unbounded_channel();
-    let link = |to: &mpsc::UnboundedSender<LinkIn>, own: mpsc::UnboundedSender<LinkIn>, rx| Link {
+    let (a_tx, a_rx) = inbox();
+    let (b_tx, b_rx) = inbox();
+    let link = |to: &Inbox, own: Inbox, rx| Link {
         route: Route::Memory(to.clone()),
         ctl: Ctl::Memory(to.clone()),
         link_tx: own,
@@ -64,6 +59,8 @@ struct Bytes {
     name: String,
     data: Vec<u8>,
     at: usize,
+    /// Bytes read so far, for a test that measures a backlog as it forms.
+    read: Arc<AtomicU64>,
 }
 
 impl Source for Bytes {
@@ -81,6 +78,7 @@ impl Source for Bytes {
             .ok_or(io::ErrorKind::UnexpectedEof)?;
         buf.copy_from_slice(src);
         self.at = end;
+        self.read.fetch_add(buf.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -90,6 +88,7 @@ fn source(len: usize) -> Box<Bytes> {
         name: "report.bin".into(),
         data: (0..len).map(|i| (i % 251) as u8).collect(),
         at: 0,
+        read: Arc::default(),
     })
 }
 
@@ -105,10 +104,18 @@ struct Recording {
     seen: Arc<Seen>,
     delay: Duration,
     written: Arc<AtomicU64>,
+    /// When set, the source's read count: each write records how far the
+    /// reads are ahead of the writes, on this thread and at this moment, so
+    /// neither figure is a stale copy of the other.
+    ahead: Option<(Arc<AtomicU64>, Arc<AtomicU64>)>,
 }
 
 impl Sink for Recording {
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        if let Some((read, worst)) = &self.ahead {
+            let behind = read.load(Ordering::Relaxed) - self.written.load(Ordering::Relaxed);
+            worst.fetch_max(behind, Ordering::Relaxed);
+        }
         if !self.delay.is_zero() {
             std::thread::sleep(self.delay);
         }
@@ -133,6 +140,7 @@ fn sink(delay: Duration) -> (Box<Recording>, Arc<Seen>, Arc<AtomicU64>) {
             seen: seen.clone(),
             delay,
             written: written.clone(),
+            ahead: None,
         }),
         seen,
         written,
@@ -310,39 +318,48 @@ async fn a_frame_that_fails_its_tag_is_dropped_not_fatal() {
     until(&mut ge, |e| matches!(e, SessionEvent::Received { .. })).await;
 }
 
-/// The slow sink: 16 MiB into a sink that takes a millisecond per frame.
-/// Without flow control the receiver's backlog is the whole file; with it,
-/// the sender pauses at 4 MiB written-but-unflushed. The bound checked is
-/// that plus what can be in flight when the pause lands -- the writer's
-/// queue and the channel -- with room to spare, and far under the file.
+/// The slow sink: 32 MiB into a sink that takes half a millisecond per
+/// frame. Without flow control the receiver's backlog is most of the file;
+/// with it, the sender pauses at 4 MiB written-but-unflushed.
+///
+/// The backlog is measured as the source's reads ahead of the sink's writes,
+/// sampled in the sink as each write starts. It used to be a `SendProgress`
+/// event's figure less the sink's count when the test read the event, which
+/// pairs a stale number with a current one: when the test fell behind, the
+/// sink had overtaken the event and the subtraction overflowed. The bound
+/// is the pause plus everything that can sit between the source and the
+/// sink when it lands -- the read-ahead, the writer's queue, the memory
+/// link's window -- and a megabyte of slack for the pause's own trip.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_slow_sink_holds_the_sender_back() {
     let ((h, mut he), (g, mut ge), ..) = pair();
-    let len = 16 * 1024 * 1024;
-    h.send_file(source(len));
+    let len = 32 * 1024 * 1024;
+    let src = source(len);
+    let read = src.read.clone();
+    h.send_file(src);
     until(&mut ge, |e| matches!(e, SessionEvent::Offer(_))).await;
-    let (s, _, written) = sink(Duration::from_micros(500));
+    let (mut s, _, _) = sink(Duration::from_micros(500));
+    let worst = Arc::new(AtomicU64::new(0));
+    s.ahead = Some((read, worst.clone()));
     g.accept(s);
-    let mut worst = 0u64;
     loop {
         let e = timeout(Duration::from_secs(60), he.next())
             .await
             .expect("stalled")
             .expect("ended");
         match e {
-            SessionEvent::SendProgress { sent, .. } => {
-                worst = worst.max(sent - written.load(Ordering::Relaxed));
-            }
             SessionEvent::Sent { .. } => break,
             SessionEvent::Failed(f) => panic!("{f}"),
             _ => {}
         }
     }
+    until(&mut ge, |e| matches!(e, SessionEvent::Received { .. })).await;
+    let in_between = (READ_AHEAD * CHUNK_SIZE + OUT_HIGH) as u64 + MEMORY_WINDOW;
+    let worst = worst.load(Ordering::Relaxed);
     assert!(
-        worst < PAUSE_AT + 3 * 1024 * 1024,
+        worst < PAUSE_AT + in_between + 1024 * 1024,
         "backlog reached {worst}"
     );
-    until(&mut ge, |e| matches!(e, SessionEvent::Received { .. })).await;
 }
 
 /// Accept after the sender has gone: the sink is released, never written.
