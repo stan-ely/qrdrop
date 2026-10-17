@@ -14,35 +14,49 @@
 //! - **A folder the person granted on Android** (a persisted SAF tree grant),
 //!   if one is held. Files are created in it with `DocumentsContract`, through
 //!   the Kotlin half of this module (`gen/.../StoragePlugin.kt`).
-//! - **`Download/qrdrop`**, written with plain `std::fs`: the desktop's
-//!   Downloads folder, or the shared Download folder on Android 11+ (API 30+).
-//!   Scoped storage lets an app create its own files there through a direct
-//!   path with no permission, and the FUSE layer indexes them as they close,
-//!   so the 0 B listing `sink.rs` works around for content URIs cannot arise.
-//! - **Otherwise** -- Android 7 to 10, where neither of those works without a
+//! - **`Download/qrdrop`**. On desktop, the Downloads folder with plain
+//!   `std::fs`. On Android 10+ (API 29+), a `MediaStore.Downloads` entry with
+//!   that relative path, created pending and finished on close.
+//! - **Otherwise** -- Android 7 to 9, which can write to neither without a
 //!   storage permission -- the person picks a folder once, and it becomes the
 //!   first rule from then on. That pick happens on the Receive tap, before any
 //!   pairing exists (`save_prepare`), so a freeze inside the picker has no
 //!   peer to lose.
 //!
-//! `download_dir()` is **not** the shared folder on Android, and that is the
-//! trap here. Tauri resolves it through `getExternalFilesDir(DIRECTORY_DOWNLOADS)`,
-//! which is `Android/data/com.stan_ely.qrdrop/files/Download`: private to the
-//! app, hidden from most file managers since Android 11, and deleted with it.
-//! A received file put there is, for the person who received it, lost. The
-//! shared folder is `home_dir()` (`getExternalStorageDirectory`) plus
-//! `Download`.
+//! WHY MEDIASTORE AND NOT A PATH ON ANDROID. Scoped storage does let an app
+//! create its own files in the shared Download folder by plain path on
+//! Android 11+, and that was the first version of this module. MEASURED on an
+//! Android 15 emulator, it does not index them reliably: FUSE inserts the
+//! MediaStore row at create as `is_pending=1` with no size, and closing the
+//! file does not settle it. Some rows were still pending minutes later, some
+//! settled on their own, one file had no row at all, and an explicit
+//! `MediaScannerConnection.scanFile` straight after close raced the same way.
+//! A pending row is hidden from every other app and purged after about a
+//! week. Inserting through MediaStore is the documented route and settles by
+//! construction: the row exists before a byte is written, and clearing
+//! `IS_PENDING` at close is what makes the provider scan the finished file.
+//! It also reaches Android 10, where a path cannot.
 //!
-//! Nothing is ever overwritten. A direct path is opened `create_new`, which is
-//! atomic, and the next free `name (n).ext` is tried on a collision -- the
-//! scheme Android's own document provider uses, so the two routes name a
-//! second copy alike. `createDocument` always makes a new document and
-//! de-duplicates the name itself.
+//! `download_dir()` is **not** the shared folder on Android, and that is the
+//! trap if anyone reaches for a path again. Tauri resolves it through
+//! `getExternalFilesDir(DIRECTORY_DOWNLOADS)`, which is
+//! `Android/data/com.stan_ely.qrdrop/files/Download`: private to the app,
+//! hidden from most file managers since Android 11, and deleted with it.
+//!
+//! Nothing is ever overwritten. A desktop path is opened `create_new`, which
+//! is atomic, and the next free `name (n).ext` is tried on a collision -- the
+//! scheme Android uses, so every route names a second copy alike. A MediaStore
+//! insert and `createDocument` both always make a new entry and de-duplicate
+//! the name themselves.
 
+#[cfg(not(target_os = "android"))]
 use std::fs;
+#[cfg(not(target_os = "android"))]
 use std::io;
+#[cfg(not(target_os = "android"))]
 use std::path::{Path, PathBuf};
 
+#[cfg(not(target_os = "android"))]
 use tauri::Manager;
 
 /// The subfolder received files land in, under Downloads.
@@ -51,6 +65,7 @@ pub const FOLDER_NAME: &str = "qrdrop";
 /// How far `name (n).ext` may count before giving up. Not a limit anyone
 /// will meet by receiving files; it is what stops a directory that refuses
 /// every name with `AlreadyExists` from looping forever.
+#[cfg(not(target_os = "android"))]
 const MAX_SUFFIX: u32 = 999;
 
 /// How this target decides where a received file goes. Returned to the JS
@@ -78,6 +93,7 @@ pub fn save_mode() -> &'static str {
 /// dot. A leading dot is not an extension (`.bashrc` is all stem), and only
 /// the last dot counts, so `a.tar.gz` becomes `a.tar (1).gz` -- what Android's
 /// provider and most file managers do, and better than inventing a rule.
+#[cfg(not(target_os = "android"))]
 fn split_name(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         None | Some(0) => (name, ""),
@@ -86,6 +102,7 @@ fn split_name(name: &str) -> (&str, &str) {
 }
 
 /// The `n`th name to try: the name itself, then `stem (n).ext`.
+#[cfg(not(target_os = "android"))]
 fn candidate(name: &str, n: u32) -> String {
     if n == 0 {
         return name.to_string();
@@ -98,6 +115,7 @@ fn candidate(name: &str, n: u32) -> String {
 /// `safeFilename` over it; this is the second check rather than the first,
 /// because a name is about to become a path on this side of the boundary and
 /// a separator surviving into `dir.join` would be a path traversal.
+#[cfg(not(target_os = "android"))]
 fn component(name: &str) -> String {
     let last = name
         .split(['/', '\\'])
@@ -115,6 +133,7 @@ fn component(name: &str) -> String {
 
 /// Creates a file in `dir` under `name` or the first free `name (n).ext`, and
 /// never opens one that exists. Returns the file and its path.
+#[cfg(not(target_os = "android"))]
 pub fn create_unique(dir: &Path, name: &str) -> io::Result<(fs::File, PathBuf)> {
     let name = component(name);
     for n in 0..=MAX_SUFFIX {
@@ -131,16 +150,10 @@ pub fn create_unique(dir: &Path, name: &str) -> io::Result<(fs::File, PathBuf)> 
     ))
 }
 
-/// Downloads/qrdrop on this target, created if missing.
+/// Downloads/qrdrop on a desktop, created if missing.
+#[cfg(not(target_os = "android"))]
 pub fn downloads_folder(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    // home_dir + Download, NOT download_dir, on Android -- see the module
-    // comment for where download_dir actually points there.
-    #[cfg(target_os = "android")]
-    let base = app.path().home_dir().map(|home| home.join("Download"));
-    #[cfg(not(target_os = "android"))]
-    let base = app.path().download_dir();
-
-    let dir = base.map_err(|e| e.to_string())?.join(FOLDER_NAME);
+    let dir = app.path().download_dir().map_err(|e| e.to_string())?.join(FOLDER_NAME);
     fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
     Ok(dir)
 }
@@ -148,6 +161,7 @@ pub fn downloads_folder(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// What the done screen says, `Downloads/qrdrop/report (1).pdf`: the last two
 /// folders and the name. The full path is true and too long for a phone, and
 /// the last two components are what a person looks for in a file manager.
+#[cfg(not(target_os = "android"))]
 pub fn display_location(path: &Path) -> String {
     let parts: Vec<_> = path
         .components()
@@ -160,11 +174,15 @@ pub fn display_location(path: &Path) -> String {
 
 /// The destination one receive is about to be written to.
 pub enum Destination {
-    /// A directory std::fs can write into: Downloads/qrdrop.
+    /// A directory std::fs can write into: a desktop's Downloads/qrdrop.
+    #[cfg(not(target_os = "android"))]
     Folder(PathBuf),
     /// A folder the person granted on Android; files go through Kotlin.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[cfg(target_os = "android")]
     Granted,
+    /// Download/qrdrop through MediaStore, Android 10+.
+    #[cfg(target_os = "android")]
+    Downloads,
 }
 
 /// Which destination applies right now. Fails, rather than falling through to
@@ -178,16 +196,20 @@ pub async fn destination(app: &tauri::AppHandle) -> Result<Destination, String> 
         if status.folder.is_some() {
             return Ok(Destination::Granted);
         }
-        if status.sdk < android::DIRECT_DOWNLOADS_SDK {
-            return Err(NO_FOLDER.into());
+        if status.sdk >= android::MEDIASTORE_DOWNLOADS_SDK {
+            return Ok(Destination::Downloads);
         }
+        Err(NO_FOLDER.into())
     }
-    downloads_folder(app).map(Destination::Folder)
+    #[cfg(not(target_os = "android"))]
+    {
+        downloads_folder(app).map(Destination::Folder)
+    }
 }
 
 /// Said when Android has no folder to write into. Reaches the error sheet as
 /// itself, through `accept()`'s reject path, never as "the dialog was closed".
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[cfg(target_os = "android")]
 const NO_FOLDER: &str =
     "The folder qrdrop saves into is no longer available. Start a new receive to choose another.";
 
@@ -195,17 +217,17 @@ const NO_FOLDER: &str =
 /// one moment a picker cannot cost a transfer: no room is joined and no camera
 /// is open yet. Resolves false only when the person dismissed the picker.
 ///
-/// Desktop and Android 11+ have their answer already and return at once, so
+/// Desktop and Android 10+ have their answer already and return at once, so
 /// for nearly everyone this is a no-op on every Receive tap.
 #[tauri::command]
 pub async fn save_prepare(app: tauri::AppHandle) -> Result<bool, String> {
     #[cfg(target_os = "android")]
     {
         let status = android::status(&app).await?;
-        if status.folder.is_some() || status.sdk >= android::DIRECT_DOWNLOADS_SDK {
+        if status.folder.is_some() || status.sdk >= android::MEDIASTORE_DOWNLOADS_SDK {
             return Ok(true);
         }
-        return Ok(android::pick_folder(&app).await?.is_some());
+        Ok(android::pick_folder(&app).await?.is_some())
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -215,9 +237,9 @@ pub async fn save_prepare(app: tauri::AppHandle) -> Result<bool, String> {
 }
 
 /// The done screen's "Change folder": asks for a folder whatever is held now,
-/// and on Android 11+ a chosen folder then overrides Download/qrdrop. Resolves
-/// to the new folder's label, or null when the picker was dismissed and
-/// nothing changed. Android only; the JS side never offers it elsewhere.
+/// and a chosen folder then overrides Download/qrdrop. Resolves to the new
+/// folder's label, or null when the picker was dismissed and nothing changed.
+/// Android only; the JS side never offers it elsewhere.
 #[tauri::command]
 pub async fn save_change_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     #[cfg(target_os = "android")]
@@ -246,20 +268,22 @@ pub mod android {
     use tauri::plugin::{Builder, PluginHandle, TauriPlugin};
     use tauri::{Manager, Wry};
 
-    /// A document created in the granted folder.
+    /// An entry created for one receive, in either Android route.
     #[derive(Deserialize)]
-    pub struct CreatedDocument {
+    pub struct Created {
         /// The `content://` URI, opened by plugin-fs exactly as `save()`'s was.
         pub uri: String,
-        /// The name after the provider's own de-duplication.
+        /// The name after the provider's own de-duplication -- final for a
+        /// document, provisional for a MediaStore download, which is renamed
+        /// on a clash only when published (`finish_download`).
         pub name: String,
-        /// The granted folder's display name.
+        /// The folder's display name: the granted one, or `Download/qrdrop`.
         pub folder: String,
     }
 
-    /// Android 11: the first version whose scoped storage lets an app create
-    /// files in the shared Download folder by path without a permission.
-    pub const DIRECT_DOWNLOADS_SDK: i32 = 30;
+    /// Android 10: the first version with `MediaStore.Downloads`, which
+    /// creates a file in the shared Download folder without a permission.
+    pub const MEDIASTORE_DOWNLOADS_SDK: i32 = 29;
 
     struct Storage(PluginHandle<Wry>);
 
@@ -289,7 +313,7 @@ pub mod android {
     #[derive(Serialize)]
     struct CreateArgs<'a> {
         name: &'a str,
-        mime: &'a str,
+        mime: Option<&'a str>,
     }
 
     #[derive(Serialize)]
@@ -301,42 +325,63 @@ pub mod android {
         app.state::<Storage>().0.clone()
     }
 
-    pub async fn status(app: &tauri::AppHandle) -> Result<Status, String> {
+    async fn call<T: serde::de::DeserializeOwned>(
+        app: &tauri::AppHandle,
+        command: &str,
+        args: impl Serialize,
+    ) -> Result<T, String> {
         handle(app)
-            .run_mobile_plugin_async("status", ())
+            .run_mobile_plugin_async(command, args)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    pub async fn status(app: &tauri::AppHandle) -> Result<Status, String> {
+        call(app, "status", ()).await
     }
 
     pub async fn pick_folder(app: &tauri::AppHandle) -> Result<Option<String>, String> {
-        handle(app)
-            .run_mobile_plugin_async::<Picked>("pickFolder", ())
-            .await
-            .map(|p| p.folder)
-            .map_err(|e| e.to_string())
+        call::<Picked>(app, "pickFolder", ()).await.map(|p| p.folder)
     }
 
-    pub async fn create_file(
+    /// A new document in the granted folder.
+    pub async fn create_in_folder(
         app: &tauri::AppHandle,
         name: &str,
-        mime: &str,
-    ) -> Result<CreatedDocument, String> {
-        handle(app)
-            .run_mobile_plugin_async("createFile", CreateArgs { name, mime })
-            .await
-            .map_err(|e| e.to_string())
+        mime: Option<&str>,
+    ) -> Result<Created, String> {
+        call(app, "createFile", CreateArgs { name, mime }).await
     }
 
-    pub async fn delete_file(app: &tauri::AppHandle, uri: &str) -> Result<(), String> {
-        handle(app)
-            .run_mobile_plugin_async::<serde_json::Value>("deleteFile", UriArgs { uri })
-            .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+    /// A new, pending MediaStore entry in Download/qrdrop.
+    pub async fn create_download(
+        app: &tauri::AppHandle,
+        name: &str,
+        mime: Option<&str>,
+    ) -> Result<Created, String> {
+        call(app, "createDownload", CreateArgs { name, mime }).await
+    }
+
+    #[derive(Deserialize)]
+    struct Finished {
+        name: Option<String>,
+    }
+
+    /// Clears a MediaStore entry's pending flag once its file is closed --
+    /// the update that makes the provider scan it and publish its size -- and
+    /// returns the name it was published under, which the provider settles
+    /// only now (see finishDownload in StoragePlugin.kt).
+    pub async fn finish_download(app: &tauri::AppHandle, uri: &str) -> Result<Option<String>, String> {
+        call::<Finished>(app, "finishDownload", UriArgs { uri }).await.map(|f| f.name)
+    }
+
+    /// Deletes either kind of entry; best effort on the Kotlin side.
+    pub async fn delete(app: &tauri::AppHandle, uri: &str) -> Result<(), String> {
+        call::<serde_json::Value>(app, "deleteFile", UriArgs { uri }).await.map(|_| ())
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::*;
 

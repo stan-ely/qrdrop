@@ -17,7 +17,7 @@
  * Downloads/qrdrop, or a new document in the folder the person granted once on
  * Android -- never an existing file in either. The save dialog this used to
  * open was, on Android, the window in which ColorOS froze the app and lost the
- * sender. The one Android case with nowhere to write (7 to 10, before a folder
+ * sender. The one Android case with nowhere to write (7 to 9, before a folder
  * is granted) is settled by prepareReceive below, before pairing, where a
  * picker cannot cost a transfer. iOS alone still asks, through
  * @tauri-apps/plugin-dialog's save(), whose result reaches sink_open as an
@@ -154,7 +154,8 @@ export async function createTauriSink(manifest) {
       : invoke('sink_write', { data: toBase64(block) }))
   }
 
-  return {
+  /** @type {Sink} */
+  const sink = {
     streaming: true,
     name: opened.name,
     location: opened.location ?? undefined,
@@ -166,7 +167,16 @@ export async function createTauriSink(manifest) {
     close: async () => {
       closed = true
       await flush()
-      await invoke('sink_close')
+      // A MediaStore download is named for good only when it is published, so
+      // a second report.pdf becomes report (1).pdf here and not at open (see
+      // finishDownload in StoragePlugin.kt). receiver.js and the beam path
+      // both read the name and location after close() for this reason.
+      /** @type {{ name: string, location: string } | null} */
+      const final = await invoke('sink_close')
+      if (final) {
+        sink.name = final.name
+        sink.location = final.location
+      }
     },
     // Deletes the partial file, Rust-side (sink_abort), on Android's granted
     // folder as well as a path. The File System Access writable this mirrors
@@ -184,11 +194,12 @@ export async function createTauriSink(manifest) {
       }
     },
   }
+  return sink
 }
 
 /**
  * Makes sure a receive has somewhere to go, before it pairs. A no-op
- * everywhere but Android 7 to 10 with no folder granted yet, where it opens
+ * everywhere but Android 7 to 9 with no folder granted yet, where it opens
  * the folder picker -- the one moment a picker cannot lose a sender, since
  * there is none. Resolves false when the person dismissed it.
  *

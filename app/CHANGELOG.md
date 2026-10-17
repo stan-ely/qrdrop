@@ -15,7 +15,7 @@ generated from commit subjects afterwards.
 
 **Received files are saved straight away, with no save dialog.** Accept now saves the
 file, and the done screen says where it went. On a computer that is a `qrdrop` folder
-in Downloads. On Android 11 and later it is `Download/qrdrop`. Android 7 to 10 asks you
+in Downloads. On Android 10 and later it is `Download/qrdrop`. Android 7 to 9 asks you
 to choose a folder once, the first time you tap Receive, and saves there after that.
 On Android you can pick a different folder with **Change folder** on the screen after
 a file arrives.

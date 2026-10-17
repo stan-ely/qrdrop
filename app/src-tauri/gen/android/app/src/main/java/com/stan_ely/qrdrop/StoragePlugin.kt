@@ -2,11 +2,14 @@ package com.stan_ely.qrdrop
 
 import android.app.Activity
 import android.content.Intent
+import android.content.ContentValues
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.util.Log
+import android.webkit.MimeTypeMap
 import androidx.activity.result.ActivityResult
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
@@ -29,15 +32,16 @@ class DeleteFileArgs {
 }
 
 /**
- * The Kotlin half of src-tauri/src/storage.rs: a folder the person grants
- * once, and the documents a receive creates in it.
+ * The Kotlin half of src-tauri/src/storage.rs: where every received file on
+ * Android is created.
  *
- * Android 11 and later never need this: a received file goes to
- * Download/qrdrop by plain path, from Rust. Android 7 to 10 cannot write there
- * without a storage permission, so on those the person picks a folder ONCE,
- * before their first pairing, and every receive after that is silent. On any
- * version the done screen's "Change folder" lands here too, and a folder
- * picked that way wins over Download/qrdrop.
+ * On Android 10 and later that is a MediaStore download in Download/qrdrop
+ * (createDownload, then finishDownload when the bytes are in). Android 7 to 9
+ * have no MediaStore.Downloads and cannot write to Download without a storage
+ * permission, so on those the person picks a folder ONCE, before their first
+ * pairing, and every receive after that is a document in it (createFile). On
+ * any version the done screen's "Change folder" picks a folder too, and a
+ * folder picked that way wins over Download/qrdrop.
  *
  * WHY A PLUGIN AND NOT MORE MAINACTIVITY. A folder grant is
  * ACTION_OPEN_DOCUMENT_TREE, which is an activity result to wait for and a
@@ -144,7 +148,7 @@ class StoragePlugin(private val activity: Activity) : Plugin(activity) {
         tree, DocumentsContract.getTreeDocumentId(tree)
       )
       val doc = DocumentsContract.createDocument(
-        activity.contentResolver, parent, args.mime ?: "application/octet-stream", args.name
+        activity.contentResolver, parent, mimeFor(args.name, args.mime), args.name
       ) ?: throw IllegalStateException("the folder refused a new file")
       val result = JSObject()
       result.put("uri", doc.toString())
@@ -161,12 +165,93 @@ class StoragePlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
-  /** Removes a partial file after a cancelled receive. Best effort. */
+  /**
+   * A new, pending entry in Download/qrdrop through MediaStore.Downloads.
+   *
+   * NOT a file created by path, though Android 11+ allows one there, and that
+   * was tried first. MEASURED on an Android 15 emulator: FUSE gives a path-
+   * created file a MediaStore row that is is_pending=1 with no size, and
+   * closing it does not settle it -- some were still pending minutes later,
+   * one had no row at all, and an explicit MediaScannerConnection.scanFile
+   * after close raced the same way. A pending row is hidden from every other
+   * app and purged after about a week. Here the row exists, pending, before a
+   * byte is written, and finishDownload clearing IS_PENDING is what makes the
+   * provider scan the finished file -- an ordering this side owns. It also
+   * works on Android 10, where a path does not.
+   *
+   * The provider renames a clash to "name (1).ext" itself, so this never
+   * overwrites. The name reported back here is only provisional: a clash is
+   * renamed when the entry is published, and finishDownload reports the final
+   * one. MIME from the extension, for createFile's reason (see mimeFor).
+   */
+  @Command
+  fun createDownload(invoke: Invoke) {
+    val args = invoke.parseArgs(CreateFileArgs::class.java)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+      invoke.reject("MediaStore.Downloads needs Android 10")
+      return
+    }
+    try {
+      val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, args.name)
+        put(MediaStore.MediaColumns.MIME_TYPE, mimeFor(args.name, args.mime))
+        put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOADS_SUBFOLDER")
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
+      }
+      val uri = activity.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        ?: throw IllegalStateException("MediaStore refused a new download")
+      val result = JSObject()
+      result.put("uri", uri.toString())
+      result.put("name", mediaName(uri) ?: args.name)
+      result.put("folder", "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOADS_SUBFOLDER")
+      invoke.resolve(result)
+    } catch (e: Exception) {
+      Log.w(TAG, "MediaStore insert failed", e)
+      invoke.reject("Could not save into Download/$DOWNLOADS_SUBFOLDER: ${e.message}")
+    }
+  }
+
+  /**
+   * Publishes a download once its bytes are written and its file closed.
+   * Clearing IS_PENDING is the update MediaProvider answers by scanning the
+   * file, which is what puts its real size in the index and makes it visible
+   * to other apps. Best effort: the file is complete either way.
+   *
+   * Resolves with the name it was published under, which is NOT always the
+   * one createDownload reported. A pending entry lives on disk as
+   * ".pending-<expiry>-<name>", and the provider settles the final,
+   * de-duplicated name only at this update. Measured on an Android 15
+   * emulator: the second of two identical names was reported as
+   * "many-big.bin" at insert and published as "many-big (1).bin".
+   */
+  @Command
+  fun finishDownload(invoke: Invoke) {
+    val args = invoke.parseArgs(DeleteFileArgs::class.java)
+    try {
+      val values = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+      activity.contentResolver.update(Uri.parse(args.uri), values, null, null)
+    } catch (e: Exception) {
+      Log.w(TAG, "clearing IS_PENDING failed", e)
+    }
+    val result = JSObject()
+    result.put("name", mediaName(Uri.parse(args.uri)))
+    invoke.resolve(result)
+  }
+
+  /**
+   * Removes a partial file after a cancelled receive, either kind: a document
+   * in the granted folder, or a MediaStore download. Best effort.
+   */
   @Command
   fun deleteFile(invoke: Invoke) {
     val args = invoke.parseArgs(DeleteFileArgs::class.java)
     try {
-      DocumentsContract.deleteDocument(activity.contentResolver, Uri.parse(args.uri))
+      val uri = Uri.parse(args.uri)
+      if (DocumentsContract.isDocumentUri(activity, uri)) {
+        DocumentsContract.deleteDocument(activity.contentResolver, uri)
+      } else {
+        activity.contentResolver.delete(uri, null, null)
+      }
     } catch (e: Exception) {
       Log.w(TAG, "deleteDocument failed", e)
     }
@@ -205,6 +290,33 @@ class StoragePlugin(private val activity: Activity) : Plugin(activity) {
     null
   }
 
+  /**
+   * The MIME type to create a document as: the one Android maps the name's
+   * extension to, and the sender's claim only when Android has none.
+   *
+   * Not cosmetic. The external-storage provider decides what counts as the
+   * extension by comparing the type it is given with the name
+   * (FileUtils.splitFileName): when they disagree it treats the WHOLE name as
+   * the stem. So a second report.pdf sent as application/octet-stream, which
+   * the CLI and most browsers send, came back as "report.pdf (1)" -- measured
+   * on an Android 10 emulator -- and a file manager no longer knows it is a
+   * PDF. Taking the type from the extension makes the two agree by
+   * construction, and the sender's MIME was only ever a hint.
+   */
+  private fun mimeFor(name: String, claimed: String?): String {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    val fromExt = if (ext.isEmpty()) null else MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+    return fromExt ?: claimed?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
+  }
+
+  private fun mediaName(uri: Uri): String? = try {
+    activity.contentResolver.query(
+      uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null
+    )?.use { if (it.moveToFirst()) it.getString(0) else null }
+  } catch (e: Exception) {
+    null
+  }
+
   private fun release(tree: Uri) {
     try {
       activity.contentResolver.releasePersistableUriPermission(
@@ -230,6 +342,7 @@ class StoragePlugin(private val activity: Activity) : Plugin(activity) {
 
   companion object {
     private const val TAG = "QrdropStorage"
+    private const val DOWNLOADS_SUBFOLDER = "qrdrop"
     private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 
     /** storage.rs's NO_FOLDER, said from this side. */

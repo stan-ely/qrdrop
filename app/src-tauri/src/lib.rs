@@ -32,7 +32,8 @@ pub fn run() {
     // The Kotlin half of src/storage.rs: a folder the person grants once on
     // Android, and the documents created in it. Without this registration
     // gen/.../StoragePlugin.kt is compiled into the APK and never loaded, and
-    // Android 7-10 have nowhere to save a received file.
+    // no Android receive has anywhere to save -- MediaStore inserts go
+    // through it as well as the granted folder.
     #[cfg(target_os = "android")]
     {
         builder = builder.plugin(storage::android::init());

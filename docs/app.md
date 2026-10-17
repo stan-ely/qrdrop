@@ -84,8 +84,8 @@ where.** The offer screen shows the file's name and size, and Accept saves it.
 The screen after the transfer says where it went:
 
 - **Computer:** a `qrdrop` folder in Downloads.
-- **Android 11 and later:** `Download/qrdrop`.
-- **Android 7 to 10:** a folder you choose once. These versions do not let an
+- **Android 10 and later:** `Download/qrdrop`.
+- **Android 7 to 9:** a folder you choose once. These versions do not let an
   app write to Downloads without a storage permission. So the first time you tap
   Receive, before anything is paired, the app asks for a folder, and it saves
   there after that.

@@ -1705,6 +1705,12 @@ export class QRDropElement extends HTMLElement {
     /** @type {ReturnType<typeof createLanLink> | null} */
     let lan = null
 
+    // The accepted sink, kept for the done screen: an app sink may settle the
+    // file's final name and location only when it closes (tauri-sink.js), so
+    // the location is read from it then, not copied when the transfer starts.
+    /** @type {Sink | null} */
+    let accepted = null
+
     // Handlers go on before anything is drawn, so a manifest arriving the
     // instant the sender is ready has somewhere to land.
     const { receiver, nextControlIndex } = this._attachReceiver({
@@ -1763,6 +1769,7 @@ export class QRDropElement extends HTMLElement {
             // transfer the user had already accepted, so it says so rather
             // than dropping them on a blank choose screen.
             if (!sink) return this._reset('The save dialog was closed without choosing a location, so nothing was saved.')
+            accepted = sink
 
             this._setState({
               screen: 'transfer',
@@ -1770,7 +1777,6 @@ export class QRDropElement extends HTMLElement {
               file: { name: manifest.name, size: manifest.size },
               status: sink.streaming ? '' : 'This browser buffers the file in memory before saving it.',
               progress: { moved: 0, total: manifest.size },
-              saveLocation: sink.location ?? null,
             })
           }
 
@@ -1787,6 +1793,7 @@ export class QRDropElement extends HTMLElement {
         this._setState({
           screen: 'done', outcome: 'received',
           file: { name: file.name, size: file.size }, digest: file.digest,
+          saveLocation: accepted?.location ?? null,
           canChangeFolder: Boolean(getPlatform().changeSaveLocation),
         })
         room.close()
@@ -2207,9 +2214,9 @@ export class QRDropElement extends HTMLElement {
    * Settles where a received file will go, before anything is paired or the
    * camera opens. A no-op on the website, which has no prepareReceive and asks
    * at Accept because showSaveFilePicker must; and in the app nearly always a
-   * no-op too, since the desktop and Android 11+ save to Downloads/qrdrop.
+   * no-op too, since the desktop and Android 10+ save to Downloads/qrdrop.
    *
-   * It exists for Android 7 to 10, which can write nowhere until the person
+   * It exists for Android 7 to 9, which can write nowhere until the person
    * grants a folder. Asking for that at Accept, as the save dialog used to, is
    * what took the app off the screen mid-session and let ColorOS freeze it
    * until the sender gave up -- here there is no peer yet to give up. Every

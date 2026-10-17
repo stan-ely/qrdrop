@@ -782,7 +782,7 @@ hand edit above, and losing that edit leaves the file inert:
 | Path | What |
 |---|---|
 | `java/com/stan_ely/qrdrop/QrdropTileService.kt` | The Quick Settings tile. |
-| `java/com/stan_ely/qrdrop/StoragePlugin.kt` | The once-only save-folder grant and the documents created in it. Reached through `register_android_plugin` in `src-tauri/src/storage.rs` (via `lib.rs`), not a manifest entry; losing that call leaves Android 7–10 with nowhere to save. |
+| `java/com/stan_ely/qrdrop/StoragePlugin.kt` | The once-only save-folder grant and the documents created in it. Reached through `register_android_plugin` in `src-tauri/src/storage.rs` (via `lib.rs`), not a manifest entry; losing that call leaves every Android receive with nowhere to save. |
 | `res/xml/shortcuts.xml` | The two launcher shortcuts. |
 | `res/values/qrdrop_entry_points.xml` | Their labels, and the tile's. Deliberately **not** in the generated `strings.xml`. |
 | `res/drawable/ic_qrdrop_scan.xml`, `ic_qrdrop_send.xml` | Their icons. |
@@ -1357,14 +1357,27 @@ this took a second session to find. And DocumentsUI cannot be read by `uiautomat
 a screenshot. The full table is in `app/CAPABILITIES.md`.
 
 **So the app no longer opens a save dialog at Accept, and must not grow one back.**
-`src-tauri/src/storage.rs` chooses the destination: `Downloads/qrdrop` on desktop and on
-Android 11+ (plain `std::fs`, which scoped storage allows there with no permission), or a
-folder the person granted once on Android (`StoragePlugin.kt`, an SAF tree grant), which
-wins when held. Android 7–10 can write to neither without a permission, so `save_prepare`
-asks for that folder on the **Receive tap, before pairing** — element.js's
+`src-tauri/src/storage.rs` chooses the destination: `Downloads/qrdrop` on desktop (a plain
+path); on Android 10+ a **MediaStore insert** into `Download/qrdrop`, created pending and
+published at close; or a folder the person granted once on Android (`StoragePlugin.kt`, an
+SAF tree grant), which wins when held. Android 7–9 has neither without a permission, so
+`save_prepare` asks for that folder on the **Receive tap, before pairing** — element.js's
 `_ensureSaveLocation`, at the top of every receive entry point — because a picker there has
 no peer to lose. Nothing is overwritten: a path is opened `create_new` and steps to
-`name (1).ext`, and `createDocument` never returns an existing document. The done screen
+`name (1).ext`, and both providers de-duplicate the name themselves.
+
+Two things about the MediaStore route were measured on emulators and are not obvious. **A
+plain path was tried first and is the wrong answer**, although scoped storage allows an app
+to create files in Download by path on 11+: on an Android 15 emulator such files were
+indexed late, stuck pending or not at all, and an explicit scan raced the close — the 0 B
+listing again by a different road. And **the provider settles a duplicate's name at
+publish, not at insert**: a second `report.pdf` is reported as `report.pdf` by the insert
+and moved to `report (1).pdf` when `IS_PENDING` clears. So `finishDownload` returns the
+published name, `sink_close` hands it to `tauri-sink.js`, which updates the sink, and the
+done screen reads the location from the sink **after** close. Copying it at Accept shows a
+name the file does not have. The mime is derived from the extension too
+(`StoragePlugin.mimeFor`): when it disagrees, the provider treats the whole name as the
+stem and de-duplicates to `report.pdf (1)`. The done screen
 says where the file went, and on Android offers "Change folder". A "Save as…" on the offer
 screen is the tempting addition and is exactly the dialog this removed. The website keeps
 `showSaveFilePicker`, which needs the Accept click's activation and is unaffected.

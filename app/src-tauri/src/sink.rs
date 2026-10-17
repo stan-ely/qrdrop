@@ -64,10 +64,22 @@ pub struct SinkState(Mutex<Option<Open>>);
 struct Open {
     path: FilePath,
     file: fs::File,
-    /// Whether this sink made the file, and so may delete it on abort. A path
-    /// from iOS's `save()` names a file the person chose, possibly one that
-    /// already existed, and is only truncated.
-    created: bool,
+    kind: Kind,
+}
+
+/// What made the destination, which decides what closing and aborting owe it.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// A file the person chose in iOS's `save()`, possibly one that already
+    /// existed: truncated on abort, never deleted.
+    Chosen,
+    /// A file this sink created by path (desktop) or as a document in a
+    /// granted Android folder: deleted on abort.
+    Created,
+    /// A pending MediaStore entry in Download/qrdrop (Android 10+): finished
+    /// on close, which is what publishes it, and deleted on abort.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    Download,
 }
 
 /// What `sink_open` tells tauri-sink.js.
@@ -82,6 +94,15 @@ pub struct Opened {
     /// What the done screen says, `Downloads/qrdrop/report (1).pdf`. None for
     /// a path the person picked in a dialog, which they already know.
     location: Option<String>,
+}
+
+/// What `sink_close` tells tauri-sink.js when the saved name changed on the
+/// way: a MediaStore download is named for good only when it is published, so
+/// a second `report.pdf` becomes `report (1).pdf` at close and not at open.
+#[derive(Serialize)]
+pub struct Closed {
+    name: String,
+    location: String,
 }
 
 /// Creates the destination for one received file and holds it open. The
@@ -117,10 +138,12 @@ pub async fn sink_open(
             let mut options = OpenOptions::new();
             options.write(true).create(true).truncate(true);
             let file = app.fs().open(path.clone(), options).map_err(|e| e.to_string())?;
-            (Open { path, file, created: false }, name, None)
+            (Open { path, file, kind: Kind::Chosen }, name, None)
         }
         None => match storage::destination(&app).await? {
+            #[cfg(not(target_os = "android"))]
             storage::Destination::Folder(dir) => {
+                let _ = &mime;
                 let (file, path) = storage::create_unique(&dir, &name)
                     .map_err(|e| format!("Could not save into {}: {e}", dir.display()))?;
                 let saved = path
@@ -128,31 +151,34 @@ pub async fn sink_open(
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or(name);
                 let location = storage::display_location(&path);
-                (Open { path: FilePath::Path(path), file, created: true }, saved, Some(location))
+                (Open { path: FilePath::Path(path), file, kind: Kind::Created }, saved, Some(location))
             }
-            storage::Destination::Granted => open_granted(&app, &name, mime.as_deref()).await?,
+            #[cfg(target_os = "android")]
+            storage::Destination::Granted => {
+                let created = storage::android::create_in_folder(&app, &name, mime.as_deref()).await?;
+                open_android(&app, created, Kind::Created).await?
+            }
+            #[cfg(target_os = "android")]
+            storage::Destination::Downloads => {
+                let created = storage::android::create_download(&app, &name, mime.as_deref()).await?;
+                open_android(&app, created, Kind::Download).await?
+            }
         },
     };
     *state.0.lock().unwrap() = Some(open);
     Ok(Opened { raw_body: RAW_BODY, name, location })
 }
 
-/// A new document in the folder the person granted, opened the way a
-/// `save()` URI used to be. `createDocument` made it a moment ago, so it is
-/// empty and `"wt"` truncates nothing; the mode is kept for symmetry with the
-/// dialog path rather than because anything here depends on it.
+/// Opens an entry Kotlin just created -- a document in the granted folder or a
+/// pending MediaStore download -- the way a `save()` URI used to be opened.
+/// It is new and empty, so `"wt"` truncates nothing; the mode is kept for
+/// symmetry with the dialog path rather than because anything depends on it.
 #[cfg(target_os = "android")]
-async fn open_granted(
+async fn open_android(
     app: &tauri::AppHandle,
-    name: &str,
-    mime: Option<&str>,
+    created: storage::android::Created,
+    kind: Kind,
 ) -> Result<(Open, String, Option<String>), String> {
-    let created = storage::android::create_file(
-        app,
-        name,
-        mime.filter(|m| !m.is_empty()).unwrap_or("application/octet-stream"),
-    )
-    .await?;
     let Ok(path) = created.uri.parse::<FilePath>();
     let mut options = OpenOptions::new();
     options.write(true).truncate(true);
@@ -160,21 +186,12 @@ async fn open_granted(
         Ok(file) => file,
         Err(e) => {
             // Created and then unopenable: leave nothing empty behind.
-            let _ = storage::android::delete_file(app, &created.uri).await;
+            let _ = storage::android::delete(app, &created.uri).await;
             return Err(e.to_string());
         }
     };
     let location = format!("{}/{}", created.folder, created.name);
-    Ok((Open { path, file, created: true }, created.name, Some(location)))
-}
-
-#[cfg(not(target_os = "android"))]
-async fn open_granted(
-    _app: &tauri::AppHandle,
-    _name: &str,
-    _mime: Option<&str>,
-) -> Result<(Open, String, Option<String>), String> {
-    unreachable!("storage::destination grants a folder only on Android")
+    Ok((Open { path, file, kind }, created.name, Some(location)))
 }
 
 /// Appends one coalesced block: in the invoke request's raw body where the IPC
@@ -233,6 +250,12 @@ pub fn sink_write(
 /// closing rather than detaching, would mean a Tauri plugin of our own or a
 /// patched plugin-fs, for what one open achieves.
 ///
+/// A MediaStore download (Download/qrdrop on Android 10+) takes the other
+/// route to the same end: its row was created pending, and clearing
+/// `IS_PENDING` is the update that makes the provider scan the finished file,
+/// so that is done instead of the reopen. It is also what makes the file
+/// visible to other apps at all.
+///
 /// `async` now, for `sink_open`'s reason: that open is a round-trip into
 /// Kotlin. Best effort, too. The file is complete before the reopen is tried,
 /// and failing a finished transfer because a listing is stale would report the
@@ -241,18 +264,27 @@ pub fn sink_write(
 pub async fn sink_close(
     app: tauri::AppHandle,
     state: tauri::State<'_, SinkState>,
-) -> Result<(), String> {
-    let Some(Open { path, mut file, .. }) = state.0.lock().unwrap().take() else {
-        return Ok(());
+) -> Result<Option<Closed>, String> {
+    let Some(Open { path, mut file, kind }) = state.0.lock().unwrap().take() else {
+        return Ok(None);
     };
     file.flush().map_err(|e| e.to_string())?;
     drop(file);
+    #[cfg(target_os = "android")]
+    if let (Kind::Download, FilePath::Url(url)) = (kind, &path) {
+        let name = storage::android::finish_download(&app, url.as_str()).await.ok().flatten();
+        return Ok(name.map(|name| Closed {
+            location: format!("Download/{}/{name}", storage::FOLDER_NAME),
+            name,
+        }));
+    }
+    let _ = kind;
     if needs_media_rescan(&path) {
         let mut options = OpenOptions::new();
         options.write(true).append(true);
         let _ = app.fs().open(path, options);
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Whether closing `path` leaves Android's media index stale -- a `content://`
@@ -271,8 +303,8 @@ fn needs_media_rescan(path: &FilePath) -> bool {
 /// Truncating through the handle we hold comes first, because it works on
 /// every route, so the partial bytes are gone whatever happens next. Then the
 /// file itself goes, but only one this sink created: a path is unlinked, and
-/// a document in a granted Android folder is deleted through
-/// `DocumentsContract.deleteDocument` (StoragePlugin.kt). That second half
+/// a document in a granted Android folder or a MediaStore download is deleted
+/// through Kotlin (StoragePlugin.kt's `deleteFile`). That second half
 /// could not exist while the destination came from `save()` -- there was no
 /// Kotlin to call -- and a cancelled Android receive left an empty file under
 /// the chosen name. A file the person picked on iOS is left, emptied: it may
@@ -292,7 +324,7 @@ pub async fn sink_abort(
     // top of whatever caused the abort.
     let _ = open.file.set_len(0);
     drop(open.file);
-    if !open.created {
+    if open.kind == Kind::Chosen {
         return Ok(());
     }
     match &open.path {
@@ -301,7 +333,7 @@ pub async fn sink_abort(
         }
         #[cfg(target_os = "android")]
         FilePath::Url(url) => {
-            let _ = storage::android::delete_file(&app, url.as_str()).await;
+            let _ = storage::android::delete(&app, url.as_str()).await;
         }
         #[cfg(not(target_os = "android"))]
         FilePath::Url(_) => {
