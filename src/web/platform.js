@@ -42,6 +42,58 @@ import { createSink as webCreateSink, canStreamToDisk as webCanStreamToDisk } fr
  *   new folder to save into and resolves to its name, or null when nothing
  *   changed. Its presence is what puts "Change folder" on the done screen, so
  *   only a platform with a folder to change (the Android app) registers it.
+ * @property {NativeSession} [session] A transfer run outside this page --
+ *   by qrdrop-session in the app's Rust (app/src/native.js) -- with
+ *   element.js drawing what it reports instead of running room.js itself.
+ *   Only the app registers it, and only when it should run (Linux, whose
+ *   webview has no WebRTC, or an override). The page still owns both safety
+ *   gestures: nothing leaves before its Confirm, nothing is written before
+ *   its Accept.
+ */
+
+/**
+ * A file the native session can open itself: a path, not a `File`.
+ *
+ * @typedef {object} NativeFile
+ * @property {string} path
+ * @property {string} name
+ * @property {number} size
+ */
+
+/**
+ * What the native session reports, in order. `t` names the event.
+ *
+ * @typedef {{ t: 'status', text: string }
+ *   | { t: 'paired', sas: string, words: string[] }
+ *   | { t: 'path', path: NetworkPath }
+ *   | { t: 'offer', name: string, size: number }
+ *   | { t: 'tooLarge', message: string }
+ *   | { t: 'accepted' }
+ *   | { t: 'progress', moved: number, total: number }
+ *   | { t: 'lan' }
+ *   | { t: 'sent', digest: string }
+ *   | { t: 'received', name: string, size: number, digest: string, location: string }
+ *   | { t: 'declined' }
+ *   | { t: 'error', message: string }} NativeEvent
+ */
+
+/**
+ * The person's words to a running native transfer.
+ *
+ * @typedef {'confirm' | 'reject' | 'accept' | 'decline' | 'cancel'} NativeWord
+ */
+
+/**
+ * @typedef {object} NativeSession
+ * @property {(file: NativeFile, onEvent: (e: NativeEvent) => void) =>
+ *   Promise<{ code: string, control: (word: NativeWord) => void }>} send
+ *   Starts a send: the secret is generated on the native side, fresh for
+ *   every call, and the code comes back to be shown.
+ * @property {(code: string, onEvent: (e: NativeEvent) => void) =>
+ *   Promise<{ control: (word: NativeWord) => void }>} receive
+ * @property {() => Promise<NativeFile | null>} [pick] A file picker that
+ *   returns a path. Absent where the platform has none (Android), and a pick
+ *   there keeps the page's own session.
  */
 
 /** @type {Platform} */

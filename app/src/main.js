@@ -31,6 +31,7 @@ import {
 } from './tauri-sink.js'
 import { secretFromDeepLink } from './deep-link.js'
 import { createTauriLan } from './lan.js'
+import { createNativeSession, onNativeDrop, stat } from './native.js'
 
 const APP_LINK_ORIGIN = 'https://share.stan-ely.com/'
 
@@ -40,10 +41,21 @@ registerPlatform({ createSink: createTauriSink, canStreamToDisk, prepareReceive 
 // Downloads/qrdrop and iOS asks every time, so neither has a folder to change.
 // Registered once the shell has said which it is, which is long before any
 // transfer can reach the done screen that offers it.
-saveMode().then(
-  mode => { if (mode === 'android') registerPlatform({ changeSaveLocation }) },
-  error => console.warn('qrdrop: save mode unavailable', String(error)),
-)
+const mode = await saveMode().catch(error => {
+  console.warn('qrdrop: save mode unavailable', String(error))
+  return null
+})
+if (mode === 'android') registerPlatform({ changeSaveLocation })
+
+// The native session (native.js), when this app runs one. Awaited before
+// defineQRDrop, unlike the fast path below, because the choose screen reads
+// it: on Linux it is the only WebRTC there is, and without it the network
+// buttons are not offered at all. Two IPC round trips, a few milliseconds.
+const session = await createNativeSession({ android: mode === 'android' }).catch(error => {
+  console.warn('qrdrop: native session unavailable', String(error))
+  return null
+})
+if (session) registerPlatform({ session })
 
 // The local-network fast path. Registered when the shell has answered, which
 // is a few milliseconds and always before any pairing can finish (see
@@ -58,6 +70,14 @@ defineQRDrop()
 
 const el = document.querySelector('qr-drop')
 el?.setAttribute('base-url', APP_LINK_ORIGIN)
+
+// A desktop drop reaches a native session as a path. Only there: the JS
+// session sends a File, which the page's own drop handler already gives it.
+if (session?.pick) {
+  onNativeDrop(file => el?.sendFile(file)).catch(error => {
+    console.warn('qrdrop: window drop unavailable', String(error))
+  })
+}
 
 // Shared with site/main.js -- see wire-sheets.js's own comment.
 wireInfoSheets()
@@ -140,6 +160,14 @@ async function consumeSharedFile() {
     // nothing was shared in. Not an error and not worth a log line.
     const shared = await invoke('take_shared_file')
     if (!shared) return
+
+    // A native session opens the handoff itself: it is a real path in the
+    // cache directory, so nothing has to cross into this page at all.
+    if (session) {
+      const { size } = await stat(shared.path)
+      el?.sendFile({ path: shared.path, name: shared.name, size })
+      return
+    }
 
     const response = await fetch(convertFileSrc(shared.path))
     if (!response.ok) throw new Error(`asset protocol returned ${response.status}`)

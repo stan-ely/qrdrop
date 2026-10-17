@@ -3268,6 +3268,8 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "libc",
+ "qrdrop-protocol",
+ "qrdrop-session",
  "serde",
  "serde_json",
  "tauri",

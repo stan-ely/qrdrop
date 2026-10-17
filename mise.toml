@@ -183,6 +183,12 @@ description = "Run a Chromium tab against the Rust CLI, both ways, served by its
 depends = ["rust:cli"]
 run = "node e2e/browser-cli.e2e.mjs"
 
+# Windows only: Playwright attaches to the app's WebView2 over CDP.
+[tasks."test:e2e:app-native"]
+description = "Run the desktop app on its native session against the Node CLI, both ways (Windows)"
+depends = ["app:build-site", "app:config"]
+run = ["cd app && npx tauri build --debug --no-bundle", "node e2e/app-native.e2e.mjs"]
+
 [tasks."test:e2e:tryst"]
 description = "Pair the Rust tryst peer with a Node Trystero peer, both ways, over both strategies (--live for the public relays)"
 run = "node e2e/tryst.e2e.mjs"

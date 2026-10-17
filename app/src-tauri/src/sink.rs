@@ -61,9 +61,13 @@ const RAW_BODY: bool = !cfg!(target_os = "android");
 #[derive(Default)]
 pub struct SinkState(Mutex<Option<Open>>);
 
-struct Open {
+/// One open destination. The JS path keeps it in [`SinkState`]; the native
+/// session's sink (src/native.rs) owns one directly. Both close and abort it
+/// through [`finish`] and [`discard`], so the MediaStore publish, the media
+/// rescan and the partial-file delete exist once.
+pub struct Open {
     path: FilePath,
-    file: fs::File,
+    pub file: fs::File,
     kind: Kind,
 }
 
@@ -101,8 +105,8 @@ pub struct Opened {
 /// a second `report.pdf` becomes `report (1).pdf` at close and not at open.
 #[derive(Serialize)]
 pub struct Closed {
-    name: String,
-    location: String,
+    pub name: String,
+    pub location: String,
 }
 
 /// Creates the destination for one received file and holds it open. The
@@ -140,33 +144,44 @@ pub async fn sink_open(
             let file = app.fs().open(path.clone(), options).map_err(|e| e.to_string())?;
             (Open { path, file, kind: Kind::Chosen }, name, None)
         }
-        None => match storage::destination(&app).await? {
-            #[cfg(not(target_os = "android"))]
-            storage::Destination::Folder(dir) => {
-                let _ = &mime;
-                let (file, path) = storage::create_unique(&dir, &name)
-                    .map_err(|e| format!("Could not save into {}: {e}", dir.display()))?;
-                let saved = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or(name);
-                let location = storage::display_location(&path);
-                (Open { path: FilePath::Path(path), file, kind: Kind::Created }, saved, Some(location))
-            }
-            #[cfg(target_os = "android")]
-            storage::Destination::Granted => {
-                let created = storage::android::create_in_folder(&app, &name, mime.as_deref()).await?;
-                open_android(&app, created, Kind::Created).await?
-            }
-            #[cfg(target_os = "android")]
-            storage::Destination::Downloads => {
-                let created = storage::android::create_download(&app, &name, mime.as_deref()).await?;
-                open_android(&app, created, Kind::Download).await?
-            }
-        },
+        None => open_new(&app, name, mime.as_deref()).await?,
     };
     *state.0.lock().unwrap() = Some(open);
     Ok(Opened { raw_body: RAW_BODY, name, location })
+}
+
+/// A new file for one received `name`, where src/storage.rs says: never one
+/// that exists. Returns it open, the name it was saved under, and what the
+/// done screen says about where.
+pub async fn open_new(
+    app: &tauri::AppHandle,
+    name: String,
+    mime: Option<&str>,
+) -> Result<(Open, String, Option<String>), String> {
+    Ok(match storage::destination(app).await? {
+        #[cfg(not(target_os = "android"))]
+        storage::Destination::Folder(dir) => {
+            let _ = mime;
+            let (file, path) = storage::create_unique(&dir, &name)
+                .map_err(|e| format!("Could not save into {}: {e}", dir.display()))?;
+            let saved = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(name);
+            let location = storage::display_location(&path);
+            (Open { path: FilePath::Path(path), file, kind: Kind::Created }, saved, Some(location))
+        }
+        #[cfg(target_os = "android")]
+        storage::Destination::Granted => {
+            let created = storage::android::create_in_folder(app, &name, mime).await?;
+            open_android(app, created, Kind::Created).await?
+        }
+        #[cfg(target_os = "android")]
+        storage::Destination::Downloads => {
+            let created = storage::android::create_download(app, &name, mime).await?;
+            open_android(app, created, Kind::Download).await?
+        }
+    })
 }
 
 /// Opens an entry Kotlin just created -- a document in the granted folder or a
@@ -265,14 +280,20 @@ pub async fn sink_close(
     app: tauri::AppHandle,
     state: tauri::State<'_, SinkState>,
 ) -> Result<Option<Closed>, String> {
-    let Some(Open { path, mut file, kind }) = state.0.lock().unwrap().take() else {
+    let Some(open) = state.0.lock().unwrap().take() else {
         return Ok(None);
     };
+    finish(&app, open).await
+}
+
+/// [`sink_close`]'s work, for an [`Open`] held anywhere.
+pub async fn finish(app: &tauri::AppHandle, open: Open) -> Result<Option<Closed>, String> {
+    let Open { path, mut file, kind } = open;
     file.flush().map_err(|e| e.to_string())?;
     drop(file);
     #[cfg(target_os = "android")]
     if let (Kind::Download, FilePath::Url(url)) = (kind, &path) {
-        let name = storage::android::finish_download(&app, url.as_str()).await.ok().flatten();
+        let name = storage::android::finish_download(app, url.as_str()).await.ok().flatten();
         return Ok(name.map(|name| Closed {
             location: format!("Download/{}/{name}", storage::FOLDER_NAME),
             name,
@@ -319,13 +340,19 @@ pub async fn sink_abort(
     let Some(open) = state.0.lock().unwrap().take() else {
         return Ok(());
     };
+    discard(&app, open).await;
+    Ok(())
+}
+
+/// [`sink_abort`]'s work, for an [`Open`] held anywhere.
+pub async fn discard(app: &tauri::AppHandle, open: Open) {
     // Best effort throughout: the transfer is already being torn down, and a
     // failure to clean up a partial file is not worth surfacing as an error on
     // top of whatever caused the abort.
     let _ = open.file.set_len(0);
     drop(open.file);
     if open.kind == Kind::Chosen {
-        return Ok(());
+        return;
     }
     match &open.path {
         FilePath::Path(path) => {
@@ -333,14 +360,13 @@ pub async fn sink_abort(
         }
         #[cfg(target_os = "android")]
         FilePath::Url(url) => {
-            let _ = storage::android::delete(&app, url.as_str()).await;
+            let _ = storage::android::delete(app, url.as_str()).await;
         }
         #[cfg(not(target_os = "android"))]
         FilePath::Url(_) => {
-            let _ = &app;
+            let _ = app;
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]

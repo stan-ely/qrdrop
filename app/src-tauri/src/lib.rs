@@ -1,4 +1,5 @@
 mod lan;
+mod native;
 mod share;
 mod sink;
 mod storage;
@@ -57,11 +58,19 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(sink::SinkState::default())
         .manage(lan::LanState::default())
+        .manage(native::NativeState::default())
         .invoke_handler(tauri::generate_handler![
             sink::sink_open,
             sink::sink_write,
             sink::sink_close,
             sink::sink_abort,
+            // The native session: a transfer run by qrdrop-session, with the
+            // page drawing what it reports. See src/native.rs.
+            native::native_session_default,
+            native::native_stat,
+            native::native_send,
+            native::native_receive,
+            native::native_control,
             // Where a received file goes, and the Android folder grant
             // behind it. Every target, for share.rs's reason below; the ones
             // that mean nothing off Android say so rather than not existing.

@@ -67,6 +67,21 @@ tokio = { version = "1", features = ["net", "time", "macros"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
+# The native session (src/native.rs): pairing, the SAS, the transfer and the
+# local-network fast path in Rust, for what the webview cannot do well or at
+# all -- Linux's WebKitGTK has no WebRTC, and a phone's main thread is what
+# caps the JS session's send (docs/notes/rust-session.md, "Why"). Path
+# dependencies, which is why the app is a member of the root workspace: see
+# the root Cargo.toml. Dialling the peer's listener is quiet everywhere, so
+# lan-dial is everyone's; listening is not, so lan-listen is below, on the
+# targets where it raises no firewall prompt -- the same line lan.rs draws at
+# run time, drawn here at build time.
+qrdrop-protocol = { path = "../../crates/qrdrop-protocol" }
+qrdrop-session = { path = "../../crates/qrdrop-session", features = ["lan-dial"] }
+
+[target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
+qrdrop-session = { path = "../../crates/qrdrop-session", features = ["lan-dial", "lan-listen"] }
+
 [dev-dependencies]
 # lan.rs's test dials the relay as both the page and the peer would.
 tokio = { version = "1", features = ["rt", "macros"] }

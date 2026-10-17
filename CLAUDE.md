@@ -225,11 +225,14 @@ npm run test:e2e:interop:lan  # the same, over the local-network fast path
 npm run test:e2e:tryst    # the Rust tryst peer against a Node Trystero peer; `-- --live` for the public relays
 mise run test:e2e:interop:matrix  # the Node CLI and the Rust CLI in all four pairings, WebRTC then LAN
 mise run test:e2e:browser-cli     # Chromium against the Rust CLI both ways, served by its own `qrdrop web`
+mise run test:e2e:app-native      # the desktop app on its native session against the Node CLI, over CDP (Windows)
 ```
 
-The last two need the Rust binary, which their mise tasks build (`rust:cli`, with
-`site/dist` inside it for `qrdrop web`); the npm scripts of the same names expect it
-built already. `QRDROP_SEND_CLI` / `QRDROP_RECV_CLI` (`js`, `rust` or a path) pick
+The matrix and browser-cli need the Rust binary, which their mise tasks build
+(`rust:cli`, with `site/dist` inside it for `qrdrop web`); app-native needs the debug
+app, which its task builds (`npx tauri build --debug --no-bundle` in `app/`, which
+embeds `app/dist` at compile time, so a stale binary runs a stale page). The npm
+scripts of the same names expect them built already. `QRDROP_SEND_CLI` / `QRDROP_RECV_CLI` (`js`, `rust` or a path) pick
 each side of a single interop run.
 
 `mise.toml` mirrors every npm script as a task; either runner works.
@@ -1433,6 +1436,37 @@ Do not add a second external entry that reaches past it into `_startSend`.
 `web/sink.js`. `registerPlatform()` is called by `app/src/main.js` and by nothing
 else — never `site/main.js` — so the deployed site cannot regress from a change made
 for the app. `platform.js` imports only `sink.js`; it ships in `qrdrop/web`.
+
+**The native session is a second road to the same screens, and the page still owns both
+safety gestures.** `getPlatform().session` (`src/web/platform.js`) is a transfer run by
+`qrdrop-session` in the app's Rust (`src-tauri/src/native.rs`), with `element.js` drawing
+what it reports through `_startNativeSend` / `_startNativeReceive`. `app/src/main.js`
+registers it only when it should run: `native_session_default` says Linux, whose
+WebKitGTK has no WebRTC (`QRDROP_NATIVE_SESSION=1`/`0` overrides it on a desktop), and a
+`qrdrop:native-session` localStorage key overrides that, so a phone switches without a
+rebuild. Everywhere else the JS session stays the default until the device runs in
+`docs/notes/rust-session.md`'s phase 7 have passed. Three things there are the gestures
+again, in Rust:
+
+- **The sender's `paired.confirm()` waits for the page's `confirm` word**, because
+  confirming is what starts the session, and with it the lan-hello. Calling it at pairing
+  to have the route ready sooner hands the manifest's channel to an unverified key. The
+  relay cap is therefore checked just after Confirm rather than just before it, which is
+  the one visible difference from the JS path; the manifest still never goes out.
+- **The receiver confirms at pairing and writes nothing before `accept`**, which is when
+  `sink::open_new` opens the destination, through the same `storage.rs` choice the JS sink
+  makes.
+- **The secret is generated in `native_send`, fresh per call**, and only `_startSend`
+  reaches it, so the one roll per secret still comes only from choose.
+
+A native send needs a **path**, and a `File` from an `<input>` or an HTML drop has none.
+So the desktop pick is plugin-dialog's `open()`, a desktop drop is the window's
+`onDragDropEvent`, and the share handoff passes its cache path straight through. An
+Android pick is a `content://` URI with no display name short of new Kotlin, so `pick` is
+not offered there and a picked file keeps the JS session. The event names are a contract
+with `platform.js`'s `NativeEvent`, which `native.rs`'s tests read. `npm run
+test:e2e:app-native` (Windows; it attaches to WebView2 over CDP) drives the real debug app
+both ways against the Node CLI, and a decline.
 
 **The native sink's byte path does not use `plugin-fs`, and must not be "simplified"
 back to it.** On WebView2 `@tauri-apps/plugin-fs`'s `write()` moves bytes at ~2 MB/s

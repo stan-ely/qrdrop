@@ -56,6 +56,22 @@ import { copyText } from './copy.js'
 import { STYLES } from './styles.js'
 
 /**
+ * @typedef {import('./platform.js').NativeFile} NativeFile
+ * @typedef {import('./platform.js').NativeSession} NativeSession
+ * @typedef {import('./platform.js').NativeEvent} NativeEvent
+ * @typedef {import('./platform.js').NativeWord} NativeWord
+ */
+
+/**
+ * A path for the native session rather than a `File`. A `File` carries no
+ * `path` in any webview this ships in, and a plain object no Blob methods.
+ *
+ * @param {File | NativeFile} file
+ * @returns {file is NativeFile}
+ */
+const isNativeFile = file => !(typeof Blob !== 'undefined' && file instanceof Blob) && 'path' in file && typeof file.path === 'string'
+
+/**
  * Shown on the choose screen only when this browser cannot stream a
  * download straight to disk (see web/sink.js's canStreamToDisk). Computed
  * once per instance -- the capability does not change mid-session.
@@ -509,7 +525,9 @@ export class QRDropElement extends HTMLElement {
       // Read once per instance, same as cameraAvailable above -- neither
       // capability changes mid-session, and platform.js's registration (if
       // any) has already happened by the time this element is constructed.
-      rtcAvailable: typeof RTCPeerConnection !== 'undefined',
+      // A native session is a WebRTC stack the page does not have to own:
+      // Linux's webview has none, and the app's Rust brings its own.
+      rtcAvailable: typeof RTCPeerConnection !== 'undefined' || Boolean(getPlatform().session),
       capabilityNote: getPlatform().canStreamToDisk() ? null : CAPABILITY_NOTE,
       // NOT read once, unlike the two capabilities above, and that is the
       // whole reason it is state rather than a module constant: a tablet
@@ -745,7 +763,10 @@ export class QRDropElement extends HTMLElement {
    * or a picked file uses, so the sender still confirms the SAS before a
    * manifest goes out.
    *
-   * @param {File} file
+   * A `NativeFile` -- a path, from the app's native session -- is sent by
+   * that session, and still confirms the SAS first.
+   *
+   * @param {File | NativeFile} file
    * @returns {boolean} whether the file was accepted. False means a transfer
    *   was already in progress and nothing was touched.
    */
@@ -900,7 +921,13 @@ export class QRDropElement extends HTMLElement {
    */
   _dispatch(intent, payload) {
     switch (intent) {
-      case 'send:pick': return this._pickFile()
+      case 'send:pick': {
+        // A native session sends a path, which only the platform's own picker
+        // gives up; without one (Android) the page's picker and session stay.
+        const pick = getPlatform().session?.pick
+        if (!pick) return this._pickFile()
+        return void pick().then(file => file && this._startSend(file)).catch(e => this._fail(e))
+      }
       // Same picker, told to open the camera. See _pickFile for why this is a
       // parameter rather than a second function.
       case 'send:photo': return this._pickFile(undefined, { accept: 'image/*', capture: 'environment' })
@@ -1514,7 +1541,7 @@ export class QRDropElement extends HTMLElement {
    * always renders, so the bar never stops short of 100%.
    *
    * @param {string} verb 'Sent' or 'Received'.
-   * @returns {(p: TransferProgress) => void}
+   * @returns {(p: { sent: number, total: number } | { received: number, total: number }) => void}
    */
   _trackProgress(verb) {
     let rendered = -Infinity
@@ -1558,8 +1585,9 @@ export class QRDropElement extends HTMLElement {
     return room
   }
 
-  /** @param {File} file */
+  /** @param {File | NativeFile} file */
   async _startSend(file) {
+    if (isNativeFile(file)) return this._startNativeSend(file)
     const secret = generateSecret()
 
     // The QR and #manual-code deliberately encode different strings when
@@ -1697,6 +1725,7 @@ export class QRDropElement extends HTMLElement {
   /** @param {Bytes} secret */
   async _startReceive(secret) {
     if (!await this._ensureSaveLocation()) return
+    if (getPlatform().session) return this._startNativeReceive(secret)
     this._setState({ screen: 'receive', role: 'receiver', status: 'Starting…', pairing: true })
 
     const room = await this._establish({ secret, role: 'guest' })
@@ -1854,6 +1883,177 @@ export class QRDropElement extends HTMLElement {
     }
 
     this._setState({ screen: 'verify', sas: room.session.sas, sasWords: room.session.sasWords })
+  }
+
+  /**
+   * _startSend on the native session: the same screens, drawn from what
+   * app/src/native.js reports rather than from a room this page holds.
+   *
+   * The two invariants _startSend is written around hold here by the same
+   * construction. The secret is generated on the native side, fresh for every
+   * call, and this method is the only caller -- so the one roll per secret
+   * still comes only from choose. And nothing about the file leaves before
+   * this screen's Confirm: native.rs pairs, reports the SAS and waits, and
+   * only the 'confirm' word starts the session. One difference, which is the
+   * session's shape rather than a choice: the relay cap is checked once the
+   * session is up, so a too-large file on a relayed path fails just after
+   * Confirm rather than just before it. The manifest still never goes out.
+   *
+   * @param {NativeFile} file
+   */
+  async _startNativeSend(file) {
+    const native = /** @type {NativeSession} */ (getPlatform().session)
+    this._setState({
+      screen: 'send', role: 'sender', status: 'Starting…', pairing: true, file: { name: file.name, size: file.size },
+    })
+    const progress = this._trackProgress('Sent')
+    let sending = false
+    let paired = false
+    const { control, live } = this._nativeTeardown()
+
+    const started = await native.send(file, ev => {
+      if (!live()) return
+      switch (ev.t) {
+        case 'paired':
+          paired = true
+          this._setState({ pairing: false, screen: 'verify', sas: ev.sas, sasWords: ev.words })
+          this._onVerifyConfirm = () => {
+            this._onVerifyConfirm = null
+            sending = true
+            this._setState({ screen: 'transfer', status: '', progress: { moved: 0, total: file.size } })
+            control('confirm')
+          }
+          return
+        case 'progress': return progress({ sent: ev.moved, total: ev.total })
+        case 'sent':
+          this._sessionEnded = true
+          return this._setState({ screen: 'done', outcome: 'sent', digest: ev.digest })
+        case 'declined':
+          this._sessionEnded = true
+          return this._setState({ screen: 'done', outcome: 'declined' })
+        case 'error': return this._nativeFailed(new Error(ev.message), sending || paired)
+        default: return this._nativeCommon(ev)
+      }
+    })
+    control.to(started.control)
+    if (!live()) return started.control('cancel')
+
+    const qrText = this._baseURL ? encodeSecretURL(decodeSecret(started.code), this._baseURL) : started.code
+    this._setState({ code: started.code, qrNode: renderQR(qrText), qrIsLink: Boolean(this._baseURL) })
+  }
+
+  /**
+   * _startReceive on the native session. The receiver's Accept is still the
+   * one gesture that answers the SAS and the offer together, and nothing is
+   * written before it: native.rs opens the destination on the 'accept' word.
+   *
+   * @param {Bytes} secret
+   */
+  async _startNativeReceive(secret) {
+    const native = /** @type {NativeSession} */ (getPlatform().session)
+    this._setState({ screen: 'receive', role: 'receiver', status: 'Starting…', pairing: true })
+    const progress = this._trackProgress('Received')
+    let paired = false
+    const { control, live } = this._nativeTeardown()
+
+    const started = await native.receive(encodeSecret(secret), ev => {
+      if (!live()) return
+      switch (ev.t) {
+        case 'paired':
+          paired = true
+          return this._setState({ pairing: false, screen: 'verify', sas: ev.sas, sasWords: ev.words })
+        case 'offer':
+          this._onOfferDecline = () => {
+            this._onOfferDecline = null
+            this._onOfferAccept = null
+            control('decline')
+            this._reset()
+          }
+          this._onOfferAccept = () => {
+            this._onOfferAccept = null
+            this._onOfferDecline = null
+            this._setState({ busy: true })
+            control('accept')
+          }
+          return this._setState({ offer: { name: ev.name, size: ev.size } })
+        case 'tooLarge':
+          this._sessionEnded = true
+          return this._setState({ screen: 'done', outcome: 'too-large', message: ev.message })
+        case 'accepted': {
+          const offer = this._state.offer
+          return this._setState({
+            screen: 'transfer', busy: false, status: '',
+            file: offer && { name: offer.name, size: offer.size },
+            progress: { moved: 0, total: offer?.size ?? 0 },
+          })
+        }
+        case 'progress': return progress({ received: ev.moved, total: ev.total })
+        case 'received':
+          this._sessionEnded = true
+          return this._setState({
+            screen: 'done', outcome: 'received',
+            file: { name: ev.name, size: ev.size }, digest: ev.digest,
+            saveLocation: ev.location,
+            canChangeFolder: Boolean(getPlatform().changeSaveLocation),
+          })
+        case 'error': return this._nativeFailed(new Error(ev.message), paired)
+        default: return this._nativeCommon(ev)
+      }
+    })
+    control.to(started.control)
+    if (!live()) started.control('cancel')
+  }
+
+  /**
+   * This session's teardown, installed before the native call so a Cancel
+   * while it is in flight is not lost, and a way for the event handler to
+   * tell whether it is still the live session's: _reset and _endSession both
+   * replace `_teardown`, and every event after that is a stale session's.
+   *
+   * Words sent before the native side has answered are held and sent once it
+   * has, in order -- the only one that can be is 'cancel'.
+   */
+  _nativeTeardown() {
+    /** @type {((word: NativeWord) => void) | null} */
+    let send = null
+    /** @type {NativeWord[]} */
+    const held = []
+    const control = Object.assign(
+      /** @param {NativeWord} word */ word => { if (send) send(word); else held.push(word) },
+      { to: (/** @type {(word: NativeWord) => void} */ fn) => { send = fn; held.splice(0).forEach(fn) } },
+    )
+    const teardown = () => control('cancel')
+    this._sessionEnded = false
+    this._teardown = teardown
+    return { control, live: () => this._teardown === teardown && !this._sessionEnded }
+  }
+
+  /**
+   * The events both roles draw the same way.
+   *
+   * @param {NativeEvent} ev
+   */
+  _nativeCommon(ev) {
+    switch (ev.t) {
+      case 'status': return this._setState({ status: ev.text })
+      // Already both sides' verdicts combined, by the session.
+      case 'path': return this._announcePath(ev.path)
+      case 'lan': return this._setState({ lan: true })
+    }
+  }
+
+  /**
+   * A native session ended for `error`. Once paired that is a failed
+   * transfer, landing on done as _failTransfer has it; before, it is the
+   * pairing that failed, which the JS path reports from the screen it is on.
+   *
+   * @param {Error} error
+   * @param {boolean} paired
+   */
+  _nativeFailed(error, paired) {
+    if (paired) return this._failTransfer(error)
+    this._endSession()
+    this._fail(error)
   }
 
   /**
