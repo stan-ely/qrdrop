@@ -20,7 +20,8 @@ use crate::crypto::gen_id;
 use crate::relay::{Backoff, Relay, RelayEvent};
 use crate::room::{self, Room, RoomConfig};
 use crate::signal::{ConnId, Output, Signaller, Strategy, TrackerOffer};
-use crate::webrtc::{Config as RtcConfig, PeerEvent, WebRtc};
+use crate::turn::{TurnClient, TurnEvent};
+use crate::webrtc::{Config as RtcConfig, PeerEvent, SelectedPair, WebRtc};
 use crate::wire::{Message, Payload};
 
 /// The bytes a peer's connection may hold queued before [`RoomHandle::send`]
@@ -31,6 +32,9 @@ pub const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the server-reflexive address is waited for before the room is
 /// announced without it.
 pub const STUN_TIMEOUT: Duration = Duration::from_millis(1_500);
+/// How long [`join`] waits for a relay-only room's TURN allocation, which
+/// is the only candidate such a room has.
+pub const TURN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Trystero's leave: the `@_leave` goes out, then 99 ms, then the close.
 pub const LEAVE_LINGER: Duration = Duration::from_millis(99);
 
@@ -60,6 +64,12 @@ pub struct JoinConfig {
     pub relays: Vec<String>,
     /// STUN servers as `host:port` (a `stun:` prefix is accepted).
     pub stun: Vec<String>,
+    /// TURN servers, UDP only.
+    pub turn: Vec<TurnServer>,
+    /// Offer only relayed candidates, as `iceTransportPolicy: 'relay'`: the
+    /// peer never learns this side's own addresses, and nothing connects
+    /// without a TURN allocation.
+    pub relay_only: bool,
     /// The address to bind the UDP socket to. `None` picks the interface
     /// the default route leaves through.
     pub bind: Option<IpAddr>,
@@ -86,12 +96,23 @@ impl JoinConfig {
             password: password.into(),
             relays: relays.iter().map(|s| s.to_string()).collect(),
             stun: vec![],
+            turn: vec![],
+            relay_only: false,
             bind: None,
             self_id: None,
             join_timeout: JOIN_TIMEOUT,
             backoff: Backoff::default(),
         }
     }
+}
+
+/// One TURN server and its long-term credential.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnServer {
+    /// `host:port`; a `turn:` prefix is accepted, and `?transport=udp`.
+    pub url: String,
+    pub username: String,
+    pub credential: String,
 }
 
 #[derive(Debug)]
@@ -155,25 +176,77 @@ enum Cmd {
         done: oneshot::Sender<Result<usize, SendError>>,
     },
     Resume,
+    Path {
+        peer: String,
+        done: oneshot::Sender<Option<SelectedPair>>,
+    },
     Leave(oneshot::Sender<()>),
 }
 
 /// A joined room. Dropping it leaves the room without waiting.
 #[derive(Debug)]
 pub struct RoomHandle {
+    sender: RoomSender,
+    rx: mpsc::UnboundedReceiver<RoomEvent>,
+}
+
+/// The sending half of a [`RoomHandle`], for a task that sends while
+/// another reads events. Cloning it is cheap; the room stays open until the
+/// handle is dropped or left, whatever senders remain.
+#[derive(Clone, Debug)]
+pub struct RoomSender {
     self_id: String,
     tx: mpsc::UnboundedSender<Cmd>,
-    rx: mpsc::UnboundedReceiver<RoomEvent>,
 }
 
 impl RoomHandle {
     pub fn self_id(&self) -> &str {
-        &self.self_id
+        &self.sender.self_id
     }
 
     /// The next thing that happened, or `None` once the room is gone.
     pub async fn next_event(&mut self) -> Option<RoomEvent> {
         self.rx.recv().await
+    }
+
+    pub fn sender(&self) -> RoomSender {
+        self.sender.clone()
+    }
+
+    /// See [`RoomSender::send`].
+    pub async fn send(
+        &self,
+        action: &str,
+        payload: Payload,
+        meta: Option<Value>,
+        to: Option<&str>,
+    ) -> Result<usize, SendError> {
+        self.sender.send(action, payload, meta, to).await
+    }
+
+    /// See [`RoomSender::resume`].
+    pub fn resume(&self) {
+        self.sender.resume();
+    }
+
+    /// See [`RoomSender::selected_pair`].
+    pub async fn selected_pair(&self, peer: &str) -> Option<SelectedPair> {
+        self.sender.selected_pair(peer).await
+    }
+
+    /// Leave: `@_leave` to every peer, [`LEAVE_LINGER`] for it to go, then
+    /// close. Never fails, as Trystero's `leave()` never rejects.
+    pub async fn leave(self) {
+        let (ack, done) = oneshot::channel();
+        if self.sender.tx.send(Cmd::Leave(ack)).is_ok() {
+            let _ = done.await;
+        }
+    }
+}
+
+impl RoomSender {
+    pub fn self_id(&self) -> &str {
+        &self.self_id
     }
 
     /// Send on `action` to one peer or every joined peer. Resolves once each
@@ -204,13 +277,18 @@ impl RoomHandle {
         let _ = self.tx.send(Cmd::Resume);
     }
 
-    /// Leave: `@_leave` to every peer, [`LEAVE_LINGER`] for it to go, then
-    /// close. Never fails, as Trystero's `leave()` never rejects.
-    pub async fn leave(self) {
-        let (ack, done) = oneshot::channel();
-        if self.tx.send(Cmd::Leave(ack)).is_ok() {
-            let _ = done.await;
-        }
+    /// The candidate pair `peer`'s connection is using, once str0m has
+    /// reported one (about a second after it connects). `None` before then,
+    /// and for a peer that is not connected.
+    pub async fn selected_pair(&self, peer: &str) -> Option<SelectedPair> {
+        let (done, wait) = oneshot::channel();
+        self.tx
+            .send(Cmd::Path {
+                peer: peer.into(),
+                done,
+            })
+            .ok()?;
+        wait.await.ok().flatten()
     }
 }
 
@@ -230,42 +308,106 @@ fn default_ip() -> IpAddr {
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
 }
 
-async fn reflexive(socket: &UdpSocket, servers: &[String]) -> Vec<SocketAddr> {
+/// One address for `host:port`, of the socket's own family.
+async fn resolve(socket: &UdpSocket, host: &str) -> Option<SocketAddr> {
+    let v4 = socket.local_addr().is_ok_and(|l| l.is_ipv4());
+    tokio::net::lookup_host(host)
+        .await
+        .ok()?
+        .find(|a| a.is_ipv4() == v4)
+}
+
+/// Ask every STUN server for our mapped address and start an allocation on
+/// every TURN server, on the room's own socket, and wait -- up to
+/// [`STUN_TIMEOUT`], or [`TURN_TIMEOUT`] for a relay-only room, whose only
+/// candidate is an allocation -- for the answers. An allocation still going
+/// at the end goes on in the room's loop, and its relayed address reaches
+/// every connection made after it lands.
+async fn gather(
+    socket: &UdpSocket,
+    stun: &[String],
+    turn: &[TurnServer],
+    relay_only: bool,
+) -> (Vec<SocketAddr>, Vec<TurnClient>) {
     let mut asks = vec![];
-    for s in servers {
-        let host = s.trim_start_matches("stun:");
-        let Ok(addrs) = tokio::net::lookup_host(host).await else {
-            continue;
-        };
-        // One address per server, of the socket's own family.
-        let v4 = socket.local_addr().is_ok_and(|l| l.is_ipv4());
-        if let Some(a) = addrs.into_iter().find(|a| a.is_ipv4() == v4) {
-            let (tid, req) = crate::stun::request();
-            if socket.send_to(&req, a).await.is_ok() {
-                asks.push(tid);
+    if !relay_only {
+        for s in stun {
+            if let Some(a) = resolve(socket, s.trim_start_matches("stun:")).await {
+                let (tid, req) = crate::stun::request();
+                if socket.send_to(&req, a).await.is_ok() {
+                    asks.push(tid);
+                }
             }
         }
     }
+    let mut turns = vec![];
+    for t in turn {
+        let host = t.url.trim_start_matches("turn:");
+        let host = host.split('?').next().unwrap_or(host);
+        if let Some(a) = resolve(socket, host).await {
+            turns.push(TurnClient::new(
+                a,
+                &t.username,
+                &t.credential,
+                Instant::now(),
+            ));
+        }
+    }
+    // The events stay queued for the room's loop, which adds the candidates
+    // of any allocation still landing; here only whether one is settled.
     let mut found = vec![];
-    let deadline = tokio::time::Instant::now() + STUN_TIMEOUT;
-    let mut buf = [0u8; 1500];
-    while !asks.is_empty() {
-        let Ok(Ok((n, _))) = tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await
-        else {
-            break;
-        };
-        if let Some(i) = asks
+    let wait = if relay_only {
+        TURN_TIMEOUT
+    } else {
+        STUN_TIMEOUT
+    };
+    let deadline = tokio::time::Instant::now() + wait;
+    let mut buf = [0u8; 2048];
+    loop {
+        for t in &mut turns {
+            while let Some((to, d)) = t.poll_transmit() {
+                let _ = socket.send_to(&d, to).await;
+            }
+        }
+        let allocating = turns
             .iter()
-            .position(|t| crate::stun::mapped_address(&buf[..n], t).is_some())
-        {
-            let addr = crate::stun::mapped_address(&buf[..n], &asks[i]).expect("matched above");
-            asks.swap_remove(i);
-            if !found.contains(&addr) {
-                found.push(addr);
+            .any(|t| t.relayed_address().is_none() && t.poll_timeout().is_some());
+        if asks.is_empty() && !allocating {
+            break;
+        }
+        let next = turns
+            .iter()
+            .filter_map(TurnClient::poll_timeout)
+            .map(tokio::time::Instant::from_std)
+            .min()
+            .map_or(deadline, |t| t.min(deadline));
+        match tokio::time::timeout_at(next, socket.recv_from(&mut buf)).await {
+            Ok(Ok((n, from))) => {
+                if let Some(t) = turns.iter_mut().find(|t| t.is_from_server(from)) {
+                    t.handle_input(from, &buf[..n], Instant::now());
+                } else if let Some(i) = asks
+                    .iter()
+                    .position(|t| crate::stun::mapped_address(&buf[..n], t).is_some())
+                {
+                    let addr =
+                        crate::stun::mapped_address(&buf[..n], &asks[i]).expect("matched above");
+                    asks.swap_remove(i);
+                    if !found.contains(&addr) {
+                        found.push(addr);
+                    }
+                }
+            }
+            // A reset from an ICMP unreachable, on Windows: keep waiting.
+            Ok(Err(_)) => {}
+            Err(_) if tokio::time::Instant::now() >= deadline => break,
+            Err(_) => {
+                for t in &mut turns {
+                    t.handle_timeout(Instant::now());
+                }
             }
         }
     }
-    found
+    (found, turns)
 }
 
 /// Join a room. Resolves once a relay is up and the room has been
@@ -285,12 +427,28 @@ pub async fn join(cfg: JoinConfig) -> Result<RoomHandle, JoinError> {
         .await
         .map_err(JoinError::Socket)?;
     let local = socket.local_addr().map_err(JoinError::Socket)?;
-    let mut rtc_cfg = RtcConfig::host(&[local]);
-    for addr in reflexive(&socket, &cfg.stun).await {
+    let mut rtc_cfg = if cfg.relay_only {
+        RtcConfig { candidates: vec![] }
+    } else {
+        RtcConfig::host(&[local])
+    };
+    let (mapped, mut turns) = gather(&socket, &cfg.stun, &cfg.turn, cfg.relay_only).await;
+    for addr in mapped {
         if addr != local
             && let Ok(c) = str0m::Candidate::server_reflexive(addr, local, "udp")
         {
             rtc_cfg.candidates.push(c);
+        }
+    }
+    // Allocations that landed in time are in every connection from the
+    // first; their events are spent here so the loop does not add them twice.
+    for t in &mut turns {
+        while let Some(e) = t.poll_event() {
+            if let TurnEvent::Allocated(addr) = e
+                && let Ok(c) = str0m::Candidate::relayed(addr, local, "udp")
+            {
+                rtc_cfg.candidates.push(c);
+            }
         }
     }
 
@@ -324,6 +482,7 @@ pub async fn join(cfg: JoinConfig) -> Result<RoomHandle, JoinError> {
         rtc: WebRtc::new(rtc_cfg, now),
         socket: Arc::new(socket),
         local,
+        turns,
         strategy: cfg.strategy,
         #[cfg(feature = "nostr")]
         keys: crate::nostr::Keys::generate(),
@@ -353,7 +512,10 @@ pub async fn join(cfg: JoinConfig) -> Result<RoomHandle, JoinError> {
     };
     tokio::spawn(run(state, cmds, relay_rx));
     match tokio::time::timeout(cfg.join_timeout, ready).await {
-        Ok(Ok(())) => Ok(RoomHandle { self_id, tx, rx }),
+        Ok(Ok(())) => Ok(RoomHandle {
+            sender: RoomSender { self_id, tx },
+            rx,
+        }),
         // Dropping `tx` ends the task, which drops the relays.
         _ => Err(JoinError::NoRelay),
     }
@@ -403,6 +565,8 @@ struct State {
     rtc: WebRtc,
     socket: Arc<UdpSocket>,
     local: SocketAddr,
+    /// One per TURN server, allocated or still allocating.
+    turns: Vec<TurnClient>,
     strategy: Strategy,
     #[cfg(feature = "nostr")]
     keys: crate::nostr::Keys,
@@ -448,7 +612,7 @@ async fn run(
                 // Windows reports an ICMP port-unreachable as a reset on the
                 // next receive: a dead candidate pair, not a dead socket.
                 if let Ok((n, from)) = r {
-                    st.rtc.handle_datagram(Instant::now(), from, st.local, &buf[..n]);
+                    st.on_datagram(from, &buf[..n], Instant::now());
                 }
             }
             Some(ev) = relays.recv() => st.on_relay(ev, Instant::now()),
@@ -497,6 +661,7 @@ impl State {
             self.signaller.poll_timeout(),
             self.announce.iter().flatten().map(|(t, _)| *t).min(),
             self.leaving.as_ref().map(|(t, _)| *t),
+            self.turns.iter().filter_map(TurnClient::poll_timeout).min(),
         ]
         .into_iter()
         .flatten()
@@ -505,7 +670,47 @@ impl State {
         .max(now)
     }
 
+    /// A datagram on the room's socket: from a TURN server, unwrapped and
+    /// handed to str0m as arriving at the relayed address; anything else,
+    /// straight to str0m.
+    fn on_datagram(&mut self, from: SocketAddr, data: &[u8], now: Instant) {
+        if let Some(t) = self.turns.iter_mut().find(|t| t.is_from_server(from)) {
+            let relayed = t.relayed_address();
+            if let Some((peer, payload)) = t.handle_input(from, data, now)
+                && let Some(relayed) = relayed
+            {
+                self.rtc.handle_datagram(now, peer, relayed, &payload);
+            }
+            return;
+        }
+        self.rtc.handle_datagram(now, from, self.local, data);
+    }
+
+    /// What the TURN clients queued, onto the socket, and any allocation
+    /// that landed, into str0m for the connections made from now on.
+    fn flush_turn(&mut self) -> bool {
+        let mut busy = false;
+        for t in &mut self.turns {
+            while let Some(e) = t.poll_event() {
+                busy = true;
+                if let TurnEvent::Allocated(addr) = e
+                    && let Ok(c) = str0m::Candidate::relayed(addr, self.local, "udp")
+                {
+                    self.rtc.add_local_candidate(c);
+                }
+            }
+            while let Some((to, d)) = t.poll_transmit() {
+                busy = true;
+                let _ = self.socket.try_send_to(&d, to);
+            }
+        }
+        busy
+    }
+
     fn on_timeout(&mut self, now: Instant) {
+        for t in &mut self.turns {
+            t.handle_timeout(now);
+        }
         self.rtc.handle_timeout(now);
         self.room.handle_timeout(now);
         self.signaller.handle_timeout(now, &mut self.rtc);
@@ -568,6 +773,13 @@ impl State {
                     }
                 }
                 self.reannounce(now);
+            }
+            Cmd::Path { peer, done } => {
+                let pair = self
+                    .conn_of
+                    .get(&peer)
+                    .and_then(|c| self.rtc.selected_pair(*c));
+                let _ = done.send(pair);
             }
             Cmd::Leave(ack) => self.start_leave(now, ack),
         }
@@ -908,10 +1120,23 @@ impl State {
             busy |= self.flush();
             while let Some(d) = self.rtc.poll_transmit() {
                 busy = true;
+                // From the relayed address: through its TURN server, which
+                // `send_to` wraps it for.
+                if let Some(t) = self
+                    .turns
+                    .iter_mut()
+                    .find(|t| t.relayed_address() == Some(d.source))
+                {
+                    if let Some(wrapped) = t.send_to(d.destination, &d.contents, now) {
+                        let _ = self.socket.try_send_to(&wrapped, t.server());
+                    }
+                    continue;
+                }
                 // UDP: a datagram the socket cannot take now is a lost one,
                 // which SCTP and ICE already expect.
                 let _ = self.socket.try_send_to(&d.contents, d.destination);
             }
+            busy |= self.flush_turn();
             // Joined, for the caller, once one relay has carried an announce.
             if self.ready.is_some() && self.announce.iter().flatten().any(|(_, n)| *n > 0) {
                 let _ = self.ready.take().map(|r| r.send(()));

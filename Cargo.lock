@@ -604,6 +604,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -666,6 +676,16 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest 0.10.7",
+]
 
 [[package]]
 name = "memchr"
@@ -842,7 +862,13 @@ dependencies = [
 name = "qrdrop-session"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
+ "if-addrs",
  "qrdrop-protocol",
+ "rand_core 0.6.4",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
  "tryst",
 ]
 
@@ -1390,7 +1416,9 @@ dependencies = [
  "aes-gcm",
  "base64",
  "futures-util",
+ "hmac",
  "k256",
+ "md-5",
  "p256",
  "rand_core 0.6.4",
  "rustls",

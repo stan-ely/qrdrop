@@ -22,7 +22,7 @@ use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::ChannelId;
 use str0m::config::{CryptoProvider, DtlsCert};
 use str0m::net::{Protocol, Receive};
-use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
+use str0m::{Candidate, CandidateKind, Event, IceConnectionState, Input, Output, Rtc};
 
 use crate::signal::{ConnId, Connector};
 
@@ -41,6 +41,46 @@ pub const BUFFERED_LOW: usize = 65_535;
 /// *including* bytes in flight, which pinned a 20 ms path at 3.96 MB/s in
 /// phase 1; this is twice the highest mark qrdrop's sender fills to.
 pub const SCTP_SEND_BUFFER: usize = 8 * 1024 * 1024;
+
+/// How often str0m reports the selected candidate pair. It reports nothing
+/// about the pair otherwise, and a second is how long the JS's
+/// `classifyPath` would poll `getStats()` across anyway.
+pub const STATS_INTERVAL: Duration = Duration::from_secs(1);
+
+/// What kind of address one end of a candidate pair is, in the words of
+/// RTCIceCandidateStats' `candidateType`, which is what qrdrop's path
+/// classification reads on the JS side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CandidateType {
+    Host,
+    /// Server-reflexive: the address a STUN server saw.
+    Srflx,
+    /// Peer-reflexive: an address the first check came from, signalled by
+    /// no one -- what a peer hiding its host address behind mDNS looks like.
+    Prflx,
+    /// A TURN server's.
+    Relay,
+}
+
+impl From<CandidateKind> for CandidateType {
+    fn from(k: CandidateKind) -> Self {
+        match k {
+            CandidateKind::Host => CandidateType::Host,
+            CandidateKind::ServerReflexive => CandidateType::Srflx,
+            CandidateKind::PeerReflexive => CandidateType::Prflx,
+            CandidateKind::Relayed => CandidateType::Relay,
+        }
+    }
+}
+
+/// The candidate pair a connection settled on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelectedPair {
+    pub local: SocketAddr,
+    pub local_type: CandidateType,
+    pub remote: SocketAddr,
+    pub remote_type: CandidateType,
+}
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -89,6 +129,23 @@ struct Conn {
     pending: Option<SdpPendingOffer>,
     offerer: bool,
     disconnected_at: Option<Instant>,
+    /// Every remote candidate signalled, in the SDP or trickled: str0m keeps
+    /// them but does not say which kind the selected one was.
+    remote_types: HashMap<SocketAddr, CandidateType>,
+    /// Addresses only, from str0m's stats; typed in [`WebRtc::selected_pair`].
+    selected: Option<(SocketAddr, SocketAddr)>,
+}
+
+/// Every `a=candidate` line in an SDP, by address.
+fn sdp_candidates(sdp: &str, into: &mut HashMap<SocketAddr, CandidateType>) {
+    for line in sdp.lines() {
+        if let Some(c) = line.trim().strip_prefix("a=")
+            && c.starts_with("candidate:")
+            && let Ok(c) = Candidate::from_sdp_string(c)
+        {
+            into.insert(c.addr(), c.kind().into());
+        }
+    }
 }
 
 pub struct WebRtc {
@@ -135,6 +192,7 @@ impl WebRtc {
             .set_crypto_provider(self.provider.clone())
             .set_dtls_cert(make_cert())
             .set_sctp_max_buffered_amount(SCTP_SEND_BUFFER)
+            .set_stats_interval(Some(STATS_INTERVAL))
             .build(self.now);
         for c in &self.cfg.candidates {
             rtc.add_local_candidate(c.clone());
@@ -148,6 +206,8 @@ impl WebRtc {
                 pending: None,
                 offerer,
                 disconnected_at: None,
+                remote_types: HashMap::new(),
+                selected: None,
             },
         );
         self.next
@@ -267,6 +327,11 @@ impl WebRtc {
                         self.drop_conn(id);
                         return None;
                     }
+                    Event::PeerStats(st) => {
+                        if let Some(p) = st.selected_candidate_pair {
+                            conn.selected = Some((p.local.addr, p.remote.addr));
+                        }
+                    }
                     Event::IceConnectionStateChange(s) => match s {
                         IceConnectionState::Disconnected => {
                             conn.disconnected_at.get_or_insert(self.now);
@@ -322,6 +387,31 @@ impl WebRtc {
             .map_or(0, |mut ch| ch.buffered_amount())
     }
 
+    /// The pair the connection is using, once str0m has reported one. A
+    /// local address none of ours matches is taken as a host one (a socket's
+    /// own); a remote one nobody signalled is peer-reflexive by definition.
+    pub fn selected_pair(&self, id: ConnId) -> Option<SelectedPair> {
+        let conn = self.conns.get(&id)?;
+        let (local, remote) = conn.selected?;
+        let local_type = self
+            .cfg
+            .candidates
+            .iter()
+            .find(|c| c.addr() == local)
+            .map_or(CandidateType::Host, |c| c.kind().into());
+        let remote_type = conn
+            .remote_types
+            .get(&remote)
+            .copied()
+            .unwrap_or(CandidateType::Prflx);
+        Some(SelectedPair {
+            local,
+            local_type,
+            remote,
+            remote_type,
+        })
+    }
+
     pub fn is_open(&self, id: ConnId) -> bool {
         self.conns.get(&id).is_some_and(|c| c.channel.is_some())
     }
@@ -354,9 +444,11 @@ impl Connector for WebRtc {
     }
 
     fn answer(&mut self, offer: &str) -> Option<(ConnId, String)> {
-        let offer = SdpOffer::from_sdp_string(offer).ok()?;
+        let parsed = SdpOffer::from_sdp_string(offer).ok()?;
         let id = self.build(false);
         let conn = self.conns.get_mut(&id)?;
+        sdp_candidates(offer, &mut conn.remote_types);
+        let offer = parsed;
         match conn.rtc.sdp_api().accept_offer(offer) {
             Ok(answer) => {
                 let sdp = answer.to_sdp_string();
@@ -374,6 +466,7 @@ impl Connector for WebRtc {
         let Some(conn) = self.conns.get_mut(&id) else {
             return false;
         };
+        sdp_candidates(answer, &mut conn.remote_types);
         let (Some(pending), Ok(answer)) = (conn.pending.take(), SdpAnswer::from_sdp_string(answer))
         else {
             return false;
@@ -401,6 +494,7 @@ impl Connector for WebRtc {
         // (Chromium hides host addresses behind them) do not resolve here,
         // and the peer-reflexive address the first check reveals stands in.
         if let Ok(c) = Candidate::from_sdp_string(line.trim_start_matches("a=")) {
+            conn.remote_types.insert(c.addr(), c.kind().into());
             conn.rtc.add_remote_candidate(c);
         }
     }

@@ -26,14 +26,19 @@ categories = ["network-programming"]
 # action wire, the room frame, the handshake -- is never behind a feature, so
 # the vectors always test all of it.
 [features]
-default = ["nostr", "torrent", "webrtc"]
+default = ["nostr", "torrent", "webrtc", "turn"]
+# The sans-IO TURN client (RFC 8656 over UDP). Independent of `webrtc`: it
+# neither names str0m nor needs it, so the runtime is what joins them.
+turn = ["dep:hmac", "dep:md-5"]
 nostr = ["relay", "dep:k256"]
 torrent = ["relay"]
 # The relay connection both signalling clients share: WebSocket over rustls
 # on ring, which phase 1 measured byte-reproducible for aarch64 Android.
 relay = ["dep:tokio", "dep:tokio-tungstenite", "dep:rustls", "dep:webpki-roots", "dep:futures-util"]
 # sha2/oid: the certificate builder names its signature algorithm by OID.
-webrtc = ["dep:str0m", "dep:p256", "dep:x509-cert", "sha2/oid"]
+# With `turn`: a peer that can reach no one directly has nothing else to
+# fall back on, and the client costs two small RustCrypto crates.
+webrtc = ["dep:str0m", "dep:p256", "dep:x509-cert", "sha2/oid", "turn"]
 
 [dependencies]
 # The sans-IO core. The same RustCrypto generation as qrdrop-protocol, for
@@ -46,6 +51,10 @@ rand_core = { version = "0.6.4", features = ["getrandom"] }
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
 sha1 = "0.10.6"
 sha2 = "0.10.9"
+
+# turn: long-term credentials are HMAC-SHA1 keyed by an MD5 (RFC 8489).
+hmac = { version = "0.12", optional = true }
+md-5 = { version = "0.10", optional = true }
 
 # webrtc: str0m on its pure-Rust crypto backend, which the root Cargo.toml
 # patches to drop aws-lc-sys (vendor/README.md), and what it takes to make
@@ -72,6 +81,10 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 [[test]]
 name = "join"
 required-features = ["webrtc", "nostr", "torrent"]
+
+[[example]]
+name = "turn-probe"
+required-features = ["turn"]
 
 [[example]]
 name = "peer"

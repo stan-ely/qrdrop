@@ -12,6 +12,7 @@ use tokio::time::timeout;
 use tryst::join::{JoinConfig, JoinError, RoomEvent, RoomHandle, join};
 use tryst::relay::{Backoff, Relay, RelayEvent};
 use tryst::signal::Strategy;
+use tryst::webrtc::CandidateType;
 use tryst::wire::Payload;
 
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -52,6 +53,26 @@ async fn pair(strategy: Strategy) {
     assert_eq!(
         until(&mut hi, |e| matches!(e, RoomEvent::Joined(_))).await,
         RoomEvent::Joined(lo_id.into())
+    );
+
+    // Both on loopback with no STUN: host to host, once str0m has said so.
+    let pair = timeout(WAIT, async {
+        loop {
+            if let Some(p) = lo.selected_pair(hi_id).await {
+                return p;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("no selected pair");
+    assert_eq!(
+        (pair.local_type, pair.remote_type),
+        (CandidateType::Host, CandidateType::Host)
+    );
+    assert!(
+        pair.local.ip().is_loopback() && pair.remote.ip().is_loopback(),
+        "{pair:?}"
     );
 
     assert_eq!(
@@ -240,4 +261,63 @@ async fn a_tracker_peer_that_joined_first_still_pairs_as_the_lower_id() {
         .await
         .expect("hi never joined");
     assert_eq!(e, RoomEvent::Joined(lo_id.into()));
+}
+
+#[path = "standin/turn.rs"]
+mod turn_standin;
+
+/// Both peers relay-only, as `iceTransportPolicy: 'relay'`: neither offers
+/// an address of its own, so the only way the two meet is through TURN.
+/// The connection settles on the relayed candidate, a message crosses, and
+/// the stand-in counts what it carried.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_relay_only_peers_pair_through_turn() {
+    use tryst::join::TurnServer;
+    let addr = standin::start().await;
+    let url = format!("ws://{addr}");
+    let (turn, relayed) = turn_standin::start().await;
+    let server = TurnServer {
+        url: format!("turn:{turn}?transport=udp"),
+        username: turn_standin::USERNAME.into(),
+        credential: turn_standin::PASSWORD.into(),
+    };
+    let (lo_id, hi_id) = ("0000000000000000000a", "zzzzzzzzzzzzzzzzzzzz");
+    let relay_only = |id| {
+        let mut c = config(Strategy::Nostr, &url, id, "pw");
+        c.turn = vec![server.clone()];
+        c.relay_only = true;
+        c
+    };
+    let mut lo = join(relay_only(lo_id)).await.unwrap();
+    let mut hi = join(relay_only(hi_id)).await.unwrap();
+    assert_eq!(
+        until(&mut lo, |e| matches!(e, RoomEvent::Joined(_))).await,
+        RoomEvent::Joined(hi_id.into())
+    );
+    until(&mut hi, |e| matches!(e, RoomEvent::Joined(_))).await;
+    let pair = timeout(WAIT, async {
+        loop {
+            if let Some(p) = lo.selected_pair(hi_id).await {
+                return p;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("no selected pair");
+    assert_eq!(pair.local_type, CandidateType::Relay, "{pair:?}");
+    assert_eq!(
+        lo.send("msg", Payload::Text("via turn".into()), None, Some(hi_id))
+            .await,
+        Ok(1)
+    );
+    let RoomEvent::Message { message, .. } =
+        until(&mut hi, |e| matches!(e, RoomEvent::Message { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(message.payload, Payload::Text("via turn".into()));
+    assert!(relayed.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    lo.leave().await;
+    hi.leave().await;
 }

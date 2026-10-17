@@ -12,16 +12,16 @@ session that works on it starts by reading the **Status** section and ends by up
 | 2. `qrdrop-protocol` | done, 2026-10-17 | `d935920` | every phase 0 vector passes; see "Phase 2: what it found" |
 | 3. `tryst`, sans-IO core and WebRTC peer | done, 2026-10-18 | `228f0f1` | every Trystero vector and both recordings pass; two str0m peers join in-process; see "Phase 3: what it found" |
 | 4. `tryst` signalling clients | done, 2026-10-18 | `a798f24` | a Rust peer and Node Trystero pair over the public relays and trackers, both roles; see "Phase 4: what it found" |
-| 5. `qrdrop-session` and LAN | not started | | |
+| 5. `qrdrop-session` and LAN | done, 2026-10-18 | | two Rust sessions pair, verify and move a file over the stand-ins and over the public relays; TURN in `tryst`; see "Phase 5: what it found" |
 | 6. Rust CLI and the cross-implementation suite | not started | | |
 | 7. The apps on the native session | not started | | |
 | 8. CLI distribution switch | not started | | |
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 5, `qrdrop-session`: `open_room` over `tryst::join` and phase 2's `Session`,
-the run loops, file `Source` and `Sink`, path classification and the LAN listener and dialer, tested
-against an in-memory fake network as the JS tests are.
+**Next step:** Phase 6, the Rust CLI: `crates/qrdrop-cli` on `qrdrop-session`, matching
+`src/cli.js`'s output contract, then `e2e/interop.e2e.mjs` with a launcher per side so the matrix
+runs JS↔JS, JS→Rust, Rust→JS and Rust↔Rust, with and without the LAN path.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -51,6 +51,11 @@ against an in-memory fake network as the JS tests are.
 
 **Still to decide, each in the phase that needs it:**
 - CLI distribution (phase 8).
+- **A TURN server that works.** The openrelay entries in `ICE_SERVERS` are dead for the JS and the
+  Rust alike (see "Phase 5: what it found"). Replacing them is an operator choice (a hosted service
+  with credentials, or one run for qrdrop), not a code change, and it is the owner's to make.
+- **The sink's de-duplicated name.** The Rust `FileSink` steps to `name (1).ext`, as the app's
+  `storage.rs` does; the Node CLI steps to `name (2).ext`. The Rust CLI in phase 6 picks one.
 
 **Open questions:**
 - **The app's path dependencies on `crates/` will break `app-reproducible.yml`.** Cargo hashes a path
@@ -873,6 +878,90 @@ warmup before the second peer joins; it fails without the fix and passes with it
 - On interrupt: close the room and wait for the leave.
 - Tests port the behaviour of `test/room`, `lan`, `backpressure` and `transfer`, against an in-memory
   fake network as `test/helpers/fake-network.mjs` does.
+
+### Phase 5: what it found
+
+Done on 2026-10-18. `qrdrop-session` has 29 tests with every feature on (21 unit, 8 integration, 4.4 s)
+and one ignored live test; `tryst` has 43 (35 unit, 8 integration), 20 of them with no feature at
+all. `cargo hack check --workspace --each-feature --no-dev-deps` builds every feature of every crate
+alone with no warnings, and clippy is clean with every feature and with none.
+
+**What was built:**
+- **`open_room`** (`pair.rs`) races the strategies in `OpenConfig::networks`, Nostr and torrent by
+  default, as `openRoom` does. Each attempt joins its own `tryst` room with **its own keypair**,
+  generated inside the attempt and dropped with it, so the forward-secrecy rule in CLAUDE.md holds
+  by construction: nothing outside an attempt ever holds a private key. The first attempt whose
+  ECDH completes wins, and every loser leaves. `PAIR_TIMEOUT` (60 s) and the two errors carry the
+  JS messages.
+- **The peer filter and the early-frame hold** are in the same place as the JS's. Frames from
+  anyone but the paired peer are dropped before they reach the session. The paired peer's frames
+  arriving before `confirm()` are held, at most `EARLY_FRAME_LIMIT` (16), and released in order
+  once the session starts; a leave in that window is held too, as a flag.
+- **The driver** (`session.rs`). `Paired::confirm(role, opts)` returns a cloneable `SessionHandle`
+  (`send_file`, `accept`, `decline`, `cancel`, `path`, `close`) and a `SessionEvents` stream that
+  carries what `element.js` renders: path, offer, progress, received, accepted, sent, declined,
+  `lan` and failed. One task owns phase 2's `Session`. Everything that reaches it (a frame, a leave,
+  a LAN socket, a LAN close) comes in on one channel, and everything it sends goes out through
+  **one writer FIFO**, which is the Rust shape of `sendControl`'s queue: an index is taken, sealed
+  and written in one step, so two control frames cannot leave out of order. The switch to the LAN
+  socket is a marker in that same FIFO, so every frame queued before Accept leaves on WebRTC ahead
+  of it. The outbound queue stops taking chunks at 1 MiB.
+- **Source and sink** (`io.rs`) are traits. The sink runs on a thread of its own and the source
+  reads up to 128 chunks ahead, so neither file IO nor a slow disk stalls the driver; the receiver's
+  pause and resume carry the backpressure, as `receiver.js` does. Behind `fs`, `FileSource` and a
+  `FileSink` that opens `create_new`, steps to `name (1).ext` and deletes a partial file on drop.
+  `safe_filename` strips the peer's name to its last component.
+- **Path classification** (`path.rs`) reads tryst's selected candidate pair (new in this phase:
+  str0m's stats, polled each second, with candidate types from the SDP and trickled candidates) and
+  names it Local, Direct or Relayed exactly as `classifyPath` does, with the relayed ceiling. Both
+  sides' verdicts combine as the JS combines them. The driver polls for up to 3 s; past that the
+  path is unknown, as the JS's.
+- **The LAN fast path** (`lan.rs`), behind `lan-listen` and `lan-dial`: the hello after the SAS,
+  `choose_listener` with the JS's preference order, the offer of every non-loopback address, the
+  token check, and a 2 s wait at Accept before staying on WebRTC. The socket is a WebSocket, as
+  `lan-server.js`'s.
+- **`close()`** leaves the room, bounded at `LEAVE_TIMEOUT` (2 s), for the CLI's interrupt hooks.
+
+**TURN, in `tryst`, and the servers are dead.** Phase 4 left TURN out. It is now `tryst::turn`, a
+sans-IO RFC 8656 client over UDP (allocate with the long-term credential, refresh, permissions,
+channel binds, send and data indications), sharing the room's socket. `join` gathers STUN and TURN
+together. A relayed transmit leaves str0m with the relayed address as its source, which is how the
+loop knows to wrap it and send it to that server; anything arriving from a TURN server is unwrapped
+and handed to str0m as arriving at the relayed address. `JoinConfig::relay_only` offers relayed
+candidates only, as `iceTransportPolicy: 'relay'`. `webrtc` now implies `turn`: a peer that can
+reach no one directly has nothing else, and the client costs `hmac` and `md-5`.
+`two_relay_only_peers_pair_through_turn` pairs two relay-only peers through a stand-in TURN server
+(`tests/standin/turn.rs`), asserts the selected pair is relayed, and checks the stand-in carried the
+bytes.
+
+Pointed at qrdrop's own servers it allocated nothing, and the reason is not this code:
+`openrelay.metered.ca` resolved to `192.0.2.1` and `100::1`, a documentation range and a discard
+prefix, on two public resolvers on 2026-10-18. **So the website and the Node CLI have no working
+TURN either**, and nothing reported it, because a dead TURN server only removes the fallback a
+pairing behind two symmetric NATs needs. The entries stay in `networks.rs`, where a test parses
+`room.js` and requires the same list, so whatever replaces them replaces them on both sides. Which
+replacement is the owner's decision (see "Still to decide").
+
+**The tests are ports of the JS's, on two fakes.** `tests.rs` runs the driver over an in-memory link
+(transfer, empty file, decline, unknown path, a leave right behind `done`, the sender leaving
+mid-file, a bad tag dropped and counted, backpressure under a slow sink, an accept after the
+session ended). `tests/session.rs` runs the whole stack over tryst's stand-in relay on loopback:
+both strategies raced and a file moved on a Local path, early frames held, a stranger in the room
+filtered, two pairings over one secret with different SAS, the timeout, LAN with either side
+listening, and no quiet listener staying on WebRTC. The stranger and early-frame tests were
+**mutation-checked**: with the filter removed, or the hold turned into a drop, each fails. The
+ignored live test pairs two sessions with every default over the public networks: Nostr won, the
+path was Local, and 8 MiB took 3.1 s.
+
+**Found on the way:**
+- **A leave right after the sink closed, before `done`, reports a disconnect** although the file is
+  whole on disk. The window is narrow, and closing it means the receiver treats
+  a finished sink as finished, which needs a look at what the JS does there first. Left for phase 6.
+- **A runt from the paired peer is fatal**, by "authenticate, then trust": it fails its tag only if
+  it is a frame at all. The bad-tag test sends 100 bytes of garbage instead.
+- **`if-addrs` and `tokio-tungstenite`'s handshake are pure Rust**: `lan-listen` brings no `cc` and
+  no new native code into the Android build.
+- **The CI path filters still did not move.** Nothing under `crates/` reaches the app yet; phase 7.
 
 ### Phase 6: the Rust CLI and the cross-implementation suite
 

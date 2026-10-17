@@ -9,8 +9,9 @@ sans-IO core and an async shell.
 this tree the sans-IO core (topics, signal crypto, the action wire, the room
 handshake and the signalling state machine) and a str0m peer behind it are
 written and tested against recorded Trystero traffic, and the Nostr and tracker
-clients on tokio pair with Node Trystero peers over the public relays. TURN is
-not yet supported. The crate is being written inside [qrdrop](https://github.com/stan-ely/qrdrop),
+clients on tokio pair with Node Trystero peers over the public relays. A UDP
+TURN client (RFC 8656) shares the room's socket, and a relay-only room is the
+equivalent of `iceTransportPolicy: 'relay'`. The crate is being written inside [qrdrop](https://github.com/stan-ely/qrdrop),
 whose Rust session needs to speak the same wire as Trystero's JavaScript peers;
 the plan and its progress are in that repository's
 `docs/notes/rust-session.md`. It is not affiliated with the Trystero project.

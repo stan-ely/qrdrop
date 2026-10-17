@@ -37,6 +37,9 @@ pub mod nostr;
 #[cfg(feature = "relay")]
 pub mod relay;
 
+#[cfg(feature = "turn")]
+pub mod turn;
+
 #[cfg(all(feature = "webrtc", feature = "relay"))]
 pub mod join;
 #[cfg(all(feature = "webrtc", feature = "relay"))]
