@@ -24,3 +24,18 @@ rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/stan-ely/qrdrop"
 authors = ["Bevan Stanely"]
+
+# Crypto at a usable speed in dev and test builds, which takes two overrides.
+# Unoptimised, AES-GCM runs at about 1 MB/s, and qrdrop-protocol's two
+# backpressure tests (a few MiB each, the least that crosses the 4 MiB pause
+# mark) took 12 s of a suite that is otherwise instant. The cipher's rounds and
+# SHA-256's compression are compiled in their own crates, which is the first
+# override; but AES-GCM itself is generic, so it is instantiated -- and
+# optimised or not -- in the crate that names it, which is the second. Either
+# alone measured 5-6.5 s, both 0.2 s. qrdrop-protocol at opt-level 1 still
+# steps fine in a debugger; the other workspace crates stay at 0.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.qrdrop-protocol]
+opt-level = 1

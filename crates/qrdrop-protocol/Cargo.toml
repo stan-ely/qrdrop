@@ -12,4 +12,19 @@ publish = false
 # No features, and none should be added: this crate does no IO, so it has no
 # optional transport to leave out, and every build tests all of it against the
 # vectors in test/vectors/.
+#
+# The RustCrypto crates are the 0.10/0.13 generation and not the newer 0.11/0.14
+# one, on purpose. str0m's DTLS stack (dimpl, phase 1) is built on this
+# generation, and the app links both: matching it is what keeps one copy of
+# p256, aes-gcm and sha2 in the Android .so rather than two. Move them together
+# when str0m does.
 [dependencies]
+aes-gcm = "0.10.3"
+base64 = "0.22.1"
+hkdf = "0.12.4"
+p256 = { version = "0.13.2", default-features = false, features = ["arithmetic", "ecdh", "std"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+subtle = "2.6.1"

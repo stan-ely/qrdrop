@@ -39,7 +39,11 @@ mise run rust:test                         # the Rust workspace under crates/; t
 `test/vectors/` is the contract between the JS core and the Rust session
 (`docs/notes/rust-session.md`), and `test/vectors.test.mjs` fails the moment the JS
 moves away from it. A change to `src/core/` that trips it is a change to the wire:
-re-run `make-vectors.mjs` and read the diff before committing it.
+re-run `make-vectors.mjs` and read the diff before committing it. The other side of the
+contract reads the same files: `crates/qrdrop-protocol/src/vectors.rs` `include_str!`s
+them, so regenerated vectors that the Rust has not caught up with fail
+`mise run rust:test`. That failure is the point. Do not regenerate vectors to make
+either side pass.
 
 Five image generators, all hand-run and none of them in `npm run build` — that
 runs in CI and in `prepublishOnly`, where downloading a browser is not

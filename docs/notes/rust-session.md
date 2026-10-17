@@ -8,8 +8,8 @@ session that works on it starts by reading the **Status** section and ends by up
 | Phase | State | Commits | Notes |
 |---|---|---|---|
 | 0. Groundwork | done, 2026-10-17 | `4c8508f`, `2498dac`, `f12c883`, `19a0184` | CI runs the Rust tests; workspace and vectors in; see "Phase 0: what it found" |
-| 1. WebRTC spike and stack choice | done, 2026-10-17 | | str0m chosen, TLS on ring; see "Phase 1: what it found" |
-| 2. `qrdrop-protocol` | not started | | |
+| 1. WebRTC spike and stack choice | done, 2026-10-17 | `a631f1f` | str0m chosen, TLS on ring; the spikes stayed in the scratchpad; see "Phase 1: what it found" |
+| 2. `qrdrop-protocol` | done, 2026-10-17 | | every phase 0 vector passes; see "Phase 2: what it found" |
 | 3. `tryst`, sans-IO core and WebRTC peer | not started | | |
 | 4. `tryst` signalling clients | not started | | |
 | 5. `qrdrop-session` and LAN | not started | | |
@@ -19,9 +19,9 @@ session that works on it starts by reading the **Status** section and ends by up
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 2, `qrdrop-protocol`: port the secret, KDFs, SAS, frames, digest, control
-messages and the two state machines, sans-IO, against phase 0's vectors. Nothing in it touches
-WebRTC, so phase 1's open questions below do not block it.
+**Next step:** Phase 3, `tryst`'s sans-IO core: topics, signal crypto, the action wire, the room
+frame and the handshake, against `trystero.json` and the two recordings, then the str0m peer behind
+it. It is also where `crates/**` joins the path filters in `app.yml` and `app-reproducible.yml`.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -45,6 +45,9 @@ WebRTC, so phase 1's open questions below do not block it.
   round trip. webrtc-rs was the alternative: it ships TURN and gathering, and reproduces, but its
   receive side falls to 1.6 MB/s at 50 ms. See "Phase 1: what it found".
 - **TLS provider: ring**, measured byte-reproducible for aarch64 Android in phase 1.
+- **RustCrypto at str0m's generation**: `p256` 0.13, `aes-gcm` 0.10, `hkdf` 0.12 and `sha2` 0.10,
+  although 0.14/0.11/0.13/0.11 are out. The app links str0m's DTLS stack too, and one generation
+  means one copy of each crate in the Android `.so`. They move when str0m's do.
 
 **Still to decide, each in the phase that needs it:**
 - CLI distribution (phase 8).
@@ -56,6 +59,10 @@ WebRTC, so phase 1's open questions below do not block it.
   binary. `app/src-tauri` is its own workspace by design (see "Architecture"). Settle it before the
   app's first dependency on `crates/` (phase 7, or phase 3 if the path filters move then): make the
   app a workspace member and rework what that layout protects, or find a way to pin the hash.
+  Moving `tryst` to a repository of its own is on the table (offered 2026-10-17). A git or registry
+  dependency is hashed by its source and version rather than its path, so that does fix `tryst`.
+  But the app also depends on `qrdrop-protocol` and `qrdrop-session`, which would still be path
+  dependencies, so a move settles this only if every crate the app uses goes with it.
 - **Upstream the `rcgen` fix to str0m** (an optional feature in `str0m-rust-crypto`), so the vendored
   copy can go.
 
@@ -577,6 +584,74 @@ Port, sans-IO:
 
 It passes all of phase 0's vectors. Its tests port `test/frame`, `crypto`, `secret`, `transfer`,
 `control-order` and `control-stream`.
+
+### Phase 2: what it found
+
+Done on 2026-10-17. `crates/qrdrop-protocol` has 69 tests, in 0.2 s. `src/vectors.rs` reads
+`secret`, `session`, `frames` and `digest.json` straight from `test/vectors/`, so a vector change fails
+the Rust job as well as `npm test`. Every sealed frame, control frames included, is byte-identical to
+the JS one. `transfer_tests.rs` also ports `test/backpressure`.
+
+**The shape, which phase 5 drives:**
+1. **`Secret`** is generated, or decoded from a code.
+2. **`Keypair`** has one job: `establish` consumes it with the peer's key and returns a `Pairing`.
+3. **`Pairing`** shows the SAS. `confirm()` is the only way to get a `Session`.
+4. **`Session`** carries both directions:
+   - frames go in through `handle_frame(bytes, now)` and out through `poll_transmit()`;
+   - the driver's work comes from `poll_event()`, and the pause timeout from `poll_timeout()` and
+     `handle_timeout()`;
+   - the receive calls are `accept`, `decline`, `accept_failed`, `write_done` and `file_closed`;
+   - the send calls are `send_file`, `start_chunks`, `chunk_wanted` and `send_chunk`.
+
+   There is no IO and no clock beyond the `Instant`s the driver passes in.
+
+**Invariants that became structural**, so what is left to test is the structure:
+- **Control order.** Sealing is synchronous and every outbound frame goes through one FIFO, so
+  index order is send order. The JS's per-direction queue has nothing left to do.
+- **Leave after frames.** `handle_frame` is finished with a frame when it returns, so a `done`
+  delivered before `peer_left()` has already completed the send. That was the interop flake.
+- **Sticky failure.** `fail()` sets one flag once, and nothing after it reports.
+- **The SAS before the manifest.** Nothing can seal before `Pairing::confirm`.
+- **One keypair per join.** `Keypair` is neither `Clone` nor reusable.
+- **fileSeq.** The session assigns it, so no caller can reuse a nonce prefix.
+
+**Where it differs from the JS, deliberately.** Each difference is invisible on the wire or
+stricter about a peer that has already broken the protocol:
+- **A second manifest** before the first is answered is fatal. The JS checks only after Accept, and
+  no sender sends one, since each waits for its reply.
+- **Excess data** is checked before the bytes go out in `Write`, where the JS writes them and then
+  throws. The failure is the same; the excess never reaches the file.
+- **A malformed advisory message** (`path`, `pause`, `resume`, `lan-*`) is ignored like an unknown
+  type. A malformed transfer message is fatal.
+- **The 200-unit cut of an `error` message** stops before a surrogate pair rather than splitting it.
+  Going the other way, a JS peer's split pair (`\ud83d` alone, from `slice` then `JSON.stringify`)
+  parses as U+FFFD. Without that, serde would refuse the frame and hide the peer's message.
+- **URLs** go through a small WHATWG subset in `code.rs`, not the `url` crate, because IDNA's
+  Unicode tables would go into every Android build for one question. Where the subset is looser,
+  the most it changes is which error a bad link gets. The code is still read from the fragment
+  only.
+- **The `error` reply** carries the seq of an offer that was never accepted, where the JS sends 0.
+  Today both are 0.
+
+**Left for phase 5**, because each needs IO or the room:
+- the early-frame hold and the peer filter;
+- the relay size cap;
+- path classification;
+- the transport's own high-water mark (the JS `drain()`, 4 MiB high and 256 KiB low). The driver
+  must stop asking `chunk_wanted()` while its channel is above it.
+
+The user-facing copy in `messages.js`, apart from the two shared constants, is phase 6's.
+
+**Found on the way:**
+- **Debug-build AES-GCM runs at about 1 MB/s,** and it took two profile overrides in the root
+  `Cargo.toml` to fix:
+  - the dependencies, for the cipher's rounds and SHA-256's compression;
+  - `qrdrop-protocol` itself, because AES-GCM is generic and is compiled, optimised or not, in the
+    crate that names it.
+
+  Either override alone measured 5-6.5 s, and both 0.2 s.
+- **`serde(other)`** works on a plain string enum, which is how an unknown `path` or `listen` value
+  falls back to `unknown` or `none`, as the JS has it.
 
 ### Phase 3: `tryst`, sans-IO core and WebRTC peer
 
