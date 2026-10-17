@@ -1406,11 +1406,11 @@ export function errorCopy(message) {
 export const NO_CAMERA_SCAN = 'No camera available — enter the code by hand.'
 /**
  * Said when a receive cannot start because the person dismissed the folder
- * picker -- the app on Android 10 and older, which can save nowhere until a
+ * picker -- the app on Android 9 and older, which can save nowhere until a
  * folder is chosen. It names the way forward, because the reset lands on the
- * choose screen and the next Receive tap asks again.
+ * choose screen and the next receive asks again.
  */
-export const NO_SAVE_FOLDER = 'qrdrop needs a folder to save received files in. Tap Receive again to choose one.'
+export const NO_SAVE_FOLDER = 'qrdrop needs a folder to save received files in. Start receiving again, and choose one when asked.'
 
 export const NO_CAMERA_BEAM = 'This device has no usable camera, so it cannot receive a beamed file.'
 
