@@ -222,6 +222,7 @@ and out of CI:
 npm run test:e2e          # two real browsers over real relays
 npm run test:e2e:interop  # two Node processes driving the CLI, pinned to WebRTC
 npm run test:e2e:interop:lan  # the same, over the local-network fast path
+npm run test:e2e:tryst    # the Rust tryst peer against a Node Trystero peer; `-- --live` for the public relays
 ```
 
 `mise.toml` mirrors every npm script as a task; either runner works.

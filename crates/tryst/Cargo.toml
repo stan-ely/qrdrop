@@ -19,16 +19,19 @@ categories = ["network-programming"]
 # yanked but never replaced.
 
 # Each optional transport is a feature, so a build carries only the paths its
-# platform uses (see "Feature flags" in docs/notes/rust-session.md). Empty
-# until the code behind them exists; declared now so CI's feature matrix runs
-# from the first commit, and a feature that only compiles beside another is
-# caught the day it is written. The sans-IO core -- topics, signal crypto, the
+# platform uses (see "Feature flags" in docs/notes/rust-session.md), and
+# `cargo hack check --each-feature --no-dev-deps` builds each one alone, so a
+# feature that only compiles beside another is caught the day it is written.
+# The runtime (`join`) needs `webrtc` and `relay` both. The sans-IO core -- topics, signal crypto, the
 # action wire, the room frame, the handshake -- is never behind a feature, so
 # the vectors always test all of it.
 [features]
 default = ["nostr", "torrent", "webrtc"]
-nostr = []
-torrent = []
+nostr = ["relay", "dep:k256"]
+torrent = ["relay"]
+# The relay connection both signalling clients share: WebSocket over rustls
+# on ring, which phase 1 measured byte-reproducible for aarch64 Android.
+relay = ["dep:tokio", "dep:tokio-tungstenite", "dep:rustls", "dep:webpki-roots", "dep:futures-util"]
 # sha2/oid: the certificate builder names its signature algorithm by OID.
 webrtc = ["dep:str0m", "dep:p256", "dep:x509-cert", "sha2/oid"]
 
@@ -50,3 +53,30 @@ sha2 = "0.10.9"
 str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"], optional = true }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
 x509-cert = { version = "0.2.5", features = ["builder"], optional = true }
+
+# nostr and torrent: the relay clients and the runtime that joins a room.
+tokio = { version = "1.53.3", features = ["rt", "net", "time", "sync", "macros"], optional = true }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "1.0.9", optional = true }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"], optional = true }
+# BIP-340 Schnorr for Nostr events, at the 0.13 generation p256 is on.
+k256 = { version = "0.13.4", default-features = false, features = ["schnorr", "std"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["rt", "rt-multi-thread", "macros", "time", "net"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+
+# The runtime's tests and examples need a relay client and a peer connection.
+[[test]]
+name = "join"
+required-features = ["webrtc", "nostr", "torrent"]
+
+[[example]]
+name = "peer"
+required-features = ["webrtc", "nostr", "torrent"]
+
+[[example]]
+name = "standin-relay"
+required-features = ["webrtc", "nostr", "torrent"]

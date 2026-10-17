@@ -10,8 +10,8 @@ session that works on it starts by reading the **Status** section and ends by up
 | 0. Groundwork | done, 2026-10-17 | `4c8508f`, `2498dac`, `f12c883`, `19a0184` | CI runs the Rust tests; workspace and vectors in; see "Phase 0: what it found" |
 | 1. WebRTC spike and stack choice | done, 2026-10-17 | `a631f1f` | str0m chosen, TLS on ring; the spikes stayed in the scratchpad; see "Phase 1: what it found" |
 | 2. `qrdrop-protocol` | done, 2026-10-17 | `d935920` | every phase 0 vector passes; see "Phase 2: what it found" |
-| 3. `tryst`, sans-IO core and WebRTC peer | done, 2026-10-18 | | every Trystero vector and both recordings pass; two str0m peers join in-process; see "Phase 3: what it found" |
-| 4. `tryst` signalling clients | not started | | |
+| 3. `tryst`, sans-IO core and WebRTC peer | done, 2026-10-18 | `228f0f1` | every Trystero vector and both recordings pass; two str0m peers join in-process; see "Phase 3: what it found" |
+| 4. `tryst` signalling clients | done, 2026-10-18 | | a Rust peer and Node Trystero pair over the public relays and trackers, both roles; see "Phase 4: what it found" |
 | 5. `qrdrop-session` and LAN | not started | | |
 | 6. Rust CLI and the cross-implementation suite | not started | | |
 | 7. The apps on the native session | not started | | |
@@ -19,9 +19,9 @@ session that works on it starts by reading the **Status** section and ends by up
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 4, `tryst`'s Nostr and torrent clients on tokio, driving the phase 3
-`Signaller`, with the relay rules from phase 4 below. Its gate is a Rust peer and a Node Trystero
-peer joining one room over the public relays.
+**Next step:** Phase 5, `qrdrop-session`: `open_room` over `tryst::join` and phase 2's `Session`,
+the run loops, file `Source` and `Sink`, path classification and the LAN listener and dialer, tested
+against an in-memory fake network as the JS tests are.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -788,10 +788,88 @@ Then the race across both. **Gate:** over the public relays, a Rust peer and a r
 join one room and both fire `onPeerJoin`. That check is a new e2e script, out of `npm test` like the
 others.
 
+### Phase 4: what it found
+
+Done on 2026-10-18. `tryst` has 31 tests with every feature on (24 unit, 7 integration, 4.2 s); 20
+still need no feature at all, and `cargo hack check --each-feature --no-dev-deps` builds each feature
+alone with no warnings.
+
+**What was built, behind features:**
+- **`relay`** (`relay.rs`): one task per relay URL holding a WebSocket over tokio-tungstenite and
+  rustls on ring with webpki-roots. It reports `Up`, `Down` and `Text` and takes `send`, `resume` and
+  `retire`. This brings ring, and `cc` to build it, into the tree; phase 1 chose ring for exactly
+  this and measured it reproducible. No aws-lc, cmake or openssl.
+- **`nostr`** (`nostr.rs`): the keypair, the NIP-01 event signed with BIP-340 Schnorr (k256), the
+  subscription and the relay message classifier. The signed event is byte-identical to the
+  vector's, given its secret key and auxiliary randomness.
+- **`torrent`**: the tracker client is in `join.rs`, since everything it does is a few JSON fields
+  around the phase 3 `Signaller`.
+- **`join`** (`join.rs`, with `stun.rs`; needs `webrtc` and `relay`): `join(JoinConfig)` returns a
+  `RoomHandle` with `next_event`, `send`, `resume` and `leave`. One task owns the UDP socket, every
+  relay, the signaller, str0m and the room, and moves everything between them in `pump()`. A minimal
+  STUN client finds the server-reflexive candidate (RFC 5769's sample is its test).
+- **Not built: TURN.** qrdrop's `ICE_SERVERS` carries three openrelay TURN entries, and str0m has no
+  TURN client, so a Rust peer cannot yet pair where only a relayed path works (both ends behind
+  symmetric NATs, or UDP blocked). It is a gap against the JS session, not a choice. It belongs with
+  phase 5, whose path classification already has to name a relayed path and apply its ceiling: a
+  TURN allocation (RFC 8656) whose relayed candidate goes in the SDP, behind its own feature.
+
+**The relay rules above, as built and tested:**
+- **No network failure retires a relay.** Backoff doubles from 3.333 s to 60 s, jittered, then stays
+  at 60 s forever. `a_relay_that_keeps_dropping_is_never_given_up` closes the first twelve
+  connections straight after their handshake, more than twice Trystero's five retries, and the room
+  still joins.
+- **Only the relay's words retire it:** a `CLOSED`, or an `OK false` that is neither `rate-limited:`
+  nor `duplicate:`. A rate limit backs off that relay's announces instead, from 60 s doubling to 15
+  minutes.
+- **`resume()` redials now**, with the backoff reset, even mid-wait. `resume_redials_at_once` puts a
+  minute's backoff ahead of a dropped relay and sees it up again within 2 s of the call.
+- **A room never joins on a dead pool.** `join` resolves once some relay has carried an announce,
+  and otherwise fails after `join_timeout` (15 s) with `NoRelay`, "no signalling server reachable".
+- **Not done here: the emulator repro** (receive, idle 75 s, picker 120 s, receive). It needs the
+  app on the native session, so it is phase 7's to run. The two tests above are the in-process
+  half of it.
+
+**`send` is backpressured:** it resolves once its chunks are handed to str0m, and a connection
+holding 4 MiB or more (`HIGH_WATER`) takes no more until it drains. The 8 MiB transfer in
+`two_rust_peers_pair_over_*` sends frame by frame against it.
+
+**The gate, `e2e/tryst.e2e.mjs`** (`npm run test:e2e:tryst`): a Rust peer (`examples/peer.rs`) and
+a Node Trystero 0.25.4 peer on node-datachannel join one room. Each fires `onPeerJoin` with the
+other's ID, and each hears the other on a `msg` action. It runs four ways, Nostr and torrent, with
+Rust as the lower ID (it offers) and the higher (it answers), by giving the Rust peer an ID of
+twenty `0`s or twenty `z`s.
+- **Offline**, through the stand-in relay and tracker (`tests/standin/`, a port of
+  `scripts/record-trystero.mjs`'s, served by `examples/standin-relay.rs`) on loopback: 4/4.
+- **`--live`**, through qrdrop's `RELAYS`, `tracker.openwebtorrent.com`, `tracker.webtorrent.dev`
+  and qrdrop's STUN servers: 4/4.
+
+**The one interop bug the gate found was a tracker rule, not a wire one.** Live, the torrent pairing
+with Rust as the lower ID timed out every time, while the other three passed. Traced:
+- Rust announced through its warmup (233, 533 and 1333 ms), and the tracker then set its interval
+  to 120 s.
+- Node joined after that. Its offers reached Rust, and Rust ignored them, correctly by the glare
+  rule: the lower ID holding offers of its own does not answer.
+- Node never saw a Rust offer. A tracker forwards an announce's offers only to peers already in the
+  swarm, so offers announced before Node arrived went nowhere, and the next were 120 s away.
+
+The stand-in passed because two loopback peers start within the warmup of each other. The fix
+keeps the wire: an offer the glare rule ignores proves its sender is now in the swarm, so the lower
+peer pulls its next announce forward to now, at most once per 2 s per tracker
+(`TRACKER_NUDGE_GAP`). `a_tracker_peer_that_joined_first_still_pairs_as_the_lower_id` waits out the
+warmup before the second peer joins; it fails without the fix and passes with it.
+
+**Found on the way:**
+- **Trystero 0.25's `makeAction` returns an object**, with `send(data, { target })` and an
+  assignable `onMessage`, not the older `[send, receive]` pair; the e2e uses it as
+  `src/transport/room.js` does.
+- **The CI path filters still did not move.** Nothing under `crates/` reaches the app yet; phase 7.
+
 ### Phase 5: `qrdrop-session` and LAN
 
 - `open_room`, the run loops, file `Source` and `Sink`, path classification, and the LAN listener and
   dialer.
+- A TURN client for `tryst` (phase 4 left it out; see "Phase 4: what it found").
 - On interrupt: close the room and wait for the leave.
 - Tests port the behaviour of `test/room`, `lan`, `backpressure` and `transfer`, against an in-memory
   fake network as `test/helpers/fake-network.mjs` does.

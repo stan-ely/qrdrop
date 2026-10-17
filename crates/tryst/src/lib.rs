@@ -17,6 +17,10 @@
 //!
 //! Behind `webrtc`, [`webrtc`] is the str0m peer connection the signaller
 //! makes connections through -- sans-IO as well, since str0m is.
+//!
+//! Behind `nostr` or `torrent` with `webrtc`, [`join`] is the one part that
+//! does IO: relays over WebSocket ([`relay`]), a UDP socket, and the core
+//! driven on tokio. [`join::join`] is Trystero's `joinRoom`.
 
 #![forbid(unsafe_code)]
 
@@ -27,6 +31,16 @@ pub mod wire;
 
 #[cfg(feature = "webrtc")]
 pub mod webrtc;
+
+#[cfg(feature = "nostr")]
+pub mod nostr;
+#[cfg(feature = "relay")]
+pub mod relay;
+
+#[cfg(all(feature = "webrtc", feature = "relay"))]
+pub mod join;
+#[cfg(all(feature = "webrtc", feature = "relay"))]
+mod stun;
 
 #[cfg(test)]
 mod tests;
