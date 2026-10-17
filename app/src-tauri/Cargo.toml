@@ -33,9 +33,10 @@ tauri-build = { version = "2.6.3", features = [] }
 # ~2 MB/s. The feature and the config field are checked against each other by
 # tauri's build script, which is what caught their being out of step here.
 tauri = { version = "2.11.5", features = ["protocol-asset"] }
-# The native sink: plugin-dialog's save() picks the destination, plugin-fs's
-# Rust API opens it (on Android that is a content:// URI, which std::fs cannot
-# open), and this crate's own sink_* commands (src/sink.rs) move the bytes --
+# The native sink: src/storage.rs picks the destination (plugin-dialog's save()
+# only on iOS), plugin-fs's Rust API opens a granted Android folder's documents
+# (content:// URIs, which std::fs cannot open), and this crate's own sink_*
+# commands (src/sink.rs) move the bytes --
 # NOT plugin-fs's JS write(), which is bandwidth-bound at ~2 MB/s on WebView2
 # (app/CAPABILITIES.md has the measurements).
 tauri-plugin-dialog = "2"

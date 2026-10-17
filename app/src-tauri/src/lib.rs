@@ -1,6 +1,7 @@
 mod lan;
 mod share;
 mod sink;
+mod storage;
 
 use tauri::Manager;
 
@@ -28,12 +29,22 @@ pub fn run() {
         }));
     }
 
+    // The Kotlin half of src/storage.rs: a folder the person grants once on
+    // Android, and the documents created in it. Without this registration
+    // gen/.../StoragePlugin.kt is compiled into the APK and never loaded, and
+    // Android 7-10 have nowhere to save a received file.
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(storage::android::init());
+    }
+
     builder
-        // plugin-dialog's save() picks the destination for the native sink
-        // (app/src/tauri-sink.js), and plugin-fs's Rust API opens it. That
-        // registration is load-bearing, not left over: on Android the
-        // destination is a content:// URI that only plugin-fs can resolve,
-        // so without it the app cannot receive there. The bytes still go
+        // plugin-fs's Rust API opens a received file's destination. That
+        // registration is load-bearing, not left over: a folder granted on
+        // Android hands back content:// URIs that only plugin-fs can resolve,
+        // so without it the app cannot receive there. plugin-dialog is iOS's
+        // save() now, every other target choosing Downloads/qrdrop or the
+        // granted folder without asking (src/storage.rs). The bytes still go
         // through this crate's own sink_* commands rather than plugin-fs's
         // JS write() -- see src/sink.rs for both halves of that.
         .plugin(tauri_plugin_dialog::init())
@@ -50,6 +61,12 @@ pub fn run() {
             sink::sink_write,
             sink::sink_close,
             sink::sink_abort,
+            // Where a received file goes, and the Android folder grant
+            // behind it. Every target, for share.rs's reason below; the ones
+            // that mean nothing off Android say so rather than not existing.
+            storage::save_mode,
+            storage::save_prepare,
+            storage::save_change_folder,
             // The Android share sheet's pickup end. Registered on every
             // target, not gated on #[cfg(target_os = "android")]: it is
             // std::fs on the app's own cache directory, it returns Ok(None)

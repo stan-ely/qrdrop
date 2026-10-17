@@ -12,14 +12,21 @@
  * fallback needs a browser's own download manager behind the `<a download>`
  * click, which a Tauri window does not have.
  *
- * The destination is picked by @tauri-apps/plugin-dialog's save(), which
- * returns a filesystem path on desktop and a `content://` URI on Android.
- * Both reach sink_open as an opaque string and are resolved Rust-side, where
- * plugin-fs's open() knows what to do with each -- nothing here may parse or
- * rewrite it, because a URI mangled into a path fails at sink_open. That
- * failure now reaches the screen as itself; until 2026-09-12 receiver.js read
- * every createSink rejection as a dismissed dialog, and this module's null is
- * still the only way to say one. The bytes,
+ * The destination is NOT picked here, and nothing asks at Accept. sink_open
+ * chooses it Rust-side (src-tauri/src/storage.rs): a new file in
+ * Downloads/qrdrop, or a new document in the folder the person granted once on
+ * Android -- never an existing file in either. The save dialog this used to
+ * open was, on Android, the window in which ColorOS froze the app and lost the
+ * sender. The one Android case with nowhere to write (7 to 10, before a folder
+ * is granted) is settled by prepareReceive below, before pairing, where a
+ * picker cannot cost a transfer. iOS alone still asks, through
+ * @tauri-apps/plugin-dialog's save(), whose result reaches sink_open as an
+ * opaque string -- nothing here may parse or rewrite it, because a URI mangled
+ * into a path fails at sink_open.
+ *
+ * A failure to open reaches the screen as itself; until 2026-09-12
+ * receiver.js read every createSink rejection as a dismissed dialog, and this
+ * module's null is still the only way to say one. The bytes,
  * though, go through this crate's own sink_open / sink_write / sink_close
  * commands (app/src-tauri/src/sink.rs), NOT plugin-fs's write(): on WebView2
  * plugin-fs moves bytes across the IPC boundary at ~2 MB/s whatever the block
@@ -94,6 +101,16 @@ function toBase64(bytes) {
   return btoa(binary)
 }
 
+/** @type {Promise<'fixed' | 'android' | 'dialog'> | null} */
+let mode = null
+
+/**
+ * How this target chooses a destination -- see storage.rs's MODE. Asked of
+ * the Rust side once, which knows its own target, rather than guessed from a
+ * user agent here.
+ */
+export const saveMode = () => (mode ??= invoke('save_mode'))
+
 /**
  * @param {{ name: unknown, mime?: string }} manifest
  * @returns {Promise<Sink | null>}
@@ -101,16 +118,22 @@ function toBase64(bytes) {
 export async function createTauriSink(manifest) {
   const name = safeFilename(manifest.name)
 
-  // null means "dismissed", exactly like a cancelled showSaveFilePicker.
-  // element.js already handles this (see _startReceive's onOfferAccept and
-  // _startBeamReceive) by tearing the session down with an explanation, so
-  // this sink does not need a second copy of that message.
-  const path = await save({ defaultPath: name })
-  if (!path) return null
+  /** @type {string | null} */
+  let path = null
+  if (await saveMode() === 'dialog') {
+    // null means "dismissed", exactly like a cancelled showSaveFilePicker.
+    // element.js already handles this by tearing the session down with an
+    // explanation, so this sink does not need a second copy of that message.
+    path = await save({ defaultPath: name })
+    if (!path) return null
+  }
 
-  // true where the IPC carries a raw request body, false on Android -- asked
-  // of the Rust side, which knows its own target, rather than guessed here.
-  const rawBody = await invoke('sink_open', { path })
+  // rawBody is true where the IPC carries a raw request body, false on
+  // Android. name is what the file was saved as, `report (1).pdf` when
+  // `report.pdf` was taken, and location what the done screen says.
+  /** @type {{ rawBody: boolean, name: string, location: string | null }} */
+  const opened = await invoke('sink_open', { name, mime: manifest.mime ?? null, path })
+  const rawBody = opened.rawBody
   let closed = false
 
   /** @type {Bytes[]} */
@@ -133,7 +156,8 @@ export async function createTauriSink(manifest) {
 
   return {
     streaming: true,
-    name,
+    name: opened.name,
+    location: opened.location ?? undefined,
     write: async chunk => {
       pending.push(chunk)
       pendingBytes += chunk.length
@@ -144,10 +168,11 @@ export async function createTauriSink(manifest) {
       await flush()
       await invoke('sink_close')
     },
-    // Deletes the partial file, Rust-side (sink_abort). The File System Access
-    // writable this mirrors cannot do that -- element.js's beam teardown
-    // comment spells out why an abandoned web transfer leaves an empty file on
-    // disk with no handle able to remove it.
+    // Deletes the partial file, Rust-side (sink_abort), on Android's granted
+    // folder as well as a path. The File System Access writable this mirrors
+    // cannot do that -- element.js's beam teardown comment spells out why an
+    // abandoned web transfer leaves an empty file on disk with no handle able
+    // to remove it.
     abort: async () => {
       pending = []
       pendingBytes = 0
@@ -160,6 +185,24 @@ export async function createTauriSink(manifest) {
     },
   }
 }
+
+/**
+ * Makes sure a receive has somewhere to go, before it pairs. A no-op
+ * everywhere but Android 7 to 10 with no folder granted yet, where it opens
+ * the folder picker -- the one moment a picker cannot lose a sender, since
+ * there is none. Resolves false when the person dismissed it.
+ *
+ * @returns {Promise<boolean>}
+ */
+export const prepareReceive = () => invoke('save_prepare')
+
+/**
+ * The done screen's "Change folder", Android only. Resolves to the new
+ * folder's name, or null when the picker was dismissed and nothing changed.
+ *
+ * @returns {Promise<string | null>}
+ */
+export const changeSaveLocation = () => invoke('save_change_folder')
 
 /**
  * Always true: sink_write streams straight to disk, so there is no

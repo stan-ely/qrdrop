@@ -7,17 +7,21 @@
 //! the caller coalesces frames to >=256 KiB blocks. tauri-sink.js does that
 //! coalescing to 1 MiB; this file is deliberately dumb -- open, append, close.
 //!
-//! plugin-dialog still picks the destination (`save()`), and plugin-fs still
-//! OPENS it -- through its Rust API, never its JS one, and for exactly one
-//! reason: on Android `save()` goes through the Storage Access Framework and
-//! returns a `content://` URI, not a path. `fs::File::create` on that string
-//! failed with `No such file or directory (os error 2)`, which is why the
-//! Android app shipped unable to receive. `app.fs().open()` hands a content
-//! URI to Android's ContentResolver and gets back a real file descriptor,
-//! wrapped as an ordinary `std::fs::File`; on desktop it is
-//! `std::fs::OpenOptions::open` on the same path as before. Do not "simplify"
-//! `sink_open` back to `File::create`: it is correct on every desktop and
-//! silently wrong on the one platform whose save dialog does not deal in paths.
+//! The destination is no longer picked by a dialog: `sink_open` asks
+//! src/storage.rs, which answers Downloads/qrdrop or a folder the person
+//! granted on Android, and creates the file without ever opening one that
+//! exists. That module carries the reasoning, which starts with ColorOS
+//! freezing the app behind the save dialog.
+//!
+//! A granted Android folder hands back a `content://` URI, and plugin-fs still
+//! OPENS that -- through its Rust API, never its JS one, and for exactly one
+//! reason: `fs::File::create` on a content URI fails with `No such file or
+//! directory (os error 2)`, which is why the Android app once shipped unable
+//! to receive (when the URI came from `save()`). `app.fs().open()` hands a
+//! content URI to Android's ContentResolver and gets back a real file
+//! descriptor, wrapped as an ordinary `std::fs::File`. Do not "simplify" that
+//! open back to `File::create`: it is silently wrong on the one route that
+//! does not deal in paths. (iOS still takes a path from `save()`.)
 //!
 //! And Android cannot have the raw body either. Tauri's IPC script never uses
 //! the custom-protocol transport there (`canUseCustomProtocol = osName !==
@@ -37,7 +41,10 @@ use std::io::Write;
 use std::sync::Mutex;
 
 use base64::Engine as _;
+use serde::Serialize;
 use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
+
+use crate::storage;
 
 /// Whether this platform's IPC delivers an invoke request's raw body. Mirrors
 /// the one condition in Tauri's ipc-protocol.js that decides it; returned from
@@ -57,38 +64,117 @@ pub struct SinkState(Mutex<Option<Open>>);
 struct Open {
     path: FilePath,
     file: fs::File,
+    /// Whether this sink made the file, and so may delete it on abort. A path
+    /// from iOS's `save()` names a file the person chose, possibly one that
+    /// already existed, and is only truncated.
+    created: bool,
 }
 
-/// Opens (truncating) whatever plugin-dialog's `save()` returned: a filesystem
-/// path on desktop, a `content://` URI on Android. The received bytes never
-/// pass through this call -- see `sink_write`. Resolves to [`RAW_BODY`].
+/// What `sink_open` tells tauri-sink.js.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Opened {
+    /// See [`RAW_BODY`].
+    raw_body: bool,
+    /// The name the file was actually saved under, `report (1).pdf` when
+    /// `report.pdf` was taken.
+    name: String,
+    /// What the done screen says, `Downloads/qrdrop/report (1).pdf`. None for
+    /// a path the person picked in a dialog, which they already know.
+    location: Option<String>,
+}
+
+/// Creates the destination for one received file and holds it open. The
+/// received bytes never pass through this call -- see `sink_write`.
 ///
-/// `async`, unlike the three commands below, and that is not decoration. A
-/// synchronous command runs on the main thread, and on Android `fs().open()`
-/// of a content URI is a round-trip into plugin-fs's Kotlin half, which has to
-/// be scheduled to run before the call can return -- a blocking wait on the
-/// thread that would run it. The other three only touch the `File` already
-/// held, so they stay synchronous.
+/// Without `path`, src/storage.rs chooses: a new file in Downloads/qrdrop, or
+/// a new document in the folder the person granted on Android -- never an
+/// existing file in either. With `path` (iOS, whose save dialog is kept), the
+/// chosen file is opened truncating, as before.
 ///
-/// `truncate` is what makes overwriting a longer existing file correct: on a
-/// content URI it becomes the `"wt"` mode, where a bare `"w"` is allowed by
-/// the platform to leave the old tail in place. `create` matters on desktop
-/// only; the Storage Access Framework has already created the document by the
-/// time `save()` returns its URI.
+/// `async`, unlike `sink_write`, and that is not decoration. A synchronous
+/// command runs on the main thread, and on Android both creating a document
+/// and `fs().open()` of a content URI are round-trips into Kotlin, which has
+/// to be scheduled to run before the call can return -- a blocking wait on
+/// the thread that would run it.
 #[tauri::command]
 pub async fn sink_open(
     app: tauri::AppHandle,
     state: tauri::State<'_, SinkState>,
-    path: String,
-) -> Result<bool, String> {
-    // Infallible: a string that does not parse as a URL -- or parses as one
-    // with a one-letter scheme, which is a Windows drive -- is a path.
-    let Ok(path) = path.parse::<FilePath>();
+    name: String,
+    mime: Option<String>,
+    path: Option<String>,
+) -> Result<Opened, String> {
+    let (open, name, location) = match path {
+        Some(path) => {
+            // Infallible: a string that does not parse as a URL -- or parses
+            // as one with a one-letter scheme, which is a Windows drive -- is
+            // a path.
+            let Ok(path) = path.parse::<FilePath>();
+            // `truncate` is what makes overwriting a longer file the person
+            // chose correct: on a content URI it becomes `"wt"`, where a bare
+            // `"w"` may leave the old tail in place.
+            let mut options = OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            let file = app.fs().open(path.clone(), options).map_err(|e| e.to_string())?;
+            (Open { path, file, created: false }, name, None)
+        }
+        None => match storage::destination(&app).await? {
+            storage::Destination::Folder(dir) => {
+                let (file, path) = storage::create_unique(&dir, &name)
+                    .map_err(|e| format!("Could not save into {}: {e}", dir.display()))?;
+                let saved = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or(name);
+                let location = storage::display_location(&path);
+                (Open { path: FilePath::Path(path), file, created: true }, saved, Some(location))
+            }
+            storage::Destination::Granted => open_granted(&app, &name, mime.as_deref()).await?,
+        },
+    };
+    *state.0.lock().unwrap() = Some(open);
+    Ok(Opened { raw_body: RAW_BODY, name, location })
+}
+
+/// A new document in the folder the person granted, opened the way a
+/// `save()` URI used to be. `createDocument` made it a moment ago, so it is
+/// empty and `"wt"` truncates nothing; the mode is kept for symmetry with the
+/// dialog path rather than because anything here depends on it.
+#[cfg(target_os = "android")]
+async fn open_granted(
+    app: &tauri::AppHandle,
+    name: &str,
+    mime: Option<&str>,
+) -> Result<(Open, String, Option<String>), String> {
+    let created = storage::android::create_file(
+        app,
+        name,
+        mime.filter(|m| !m.is_empty()).unwrap_or("application/octet-stream"),
+    )
+    .await?;
+    let Ok(path) = created.uri.parse::<FilePath>();
     let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    let file = app.fs().open(path.clone(), options).map_err(|e| e.to_string())?;
-    *state.0.lock().unwrap() = Some(Open { path, file });
-    Ok(RAW_BODY)
+    options.write(true).truncate(true);
+    let file = match app.fs().open(path.clone(), options) {
+        Ok(file) => file,
+        Err(e) => {
+            // Created and then unopenable: leave nothing empty behind.
+            let _ = storage::android::delete_file(app, &created.uri).await;
+            return Err(e.to_string());
+        }
+    };
+    let location = format!("{}/{}", created.folder, created.name);
+    Ok((Open { path, file, created: true }, created.name, Some(location)))
+}
+
+#[cfg(not(target_os = "android"))]
+async fn open_granted(
+    _app: &tauri::AppHandle,
+    _name: &str,
+    _mime: Option<&str>,
+) -> Result<(Open, String, Option<String>), String> {
+    unreachable!("storage::destination grants a folder only on Android")
 }
 
 /// Appends one coalesced block: in the invoke request's raw body where the IPC
@@ -156,7 +242,7 @@ pub async fn sink_close(
     app: tauri::AppHandle,
     state: tauri::State<'_, SinkState>,
 ) -> Result<(), String> {
-    let Some(Open { path, mut file }) = state.0.lock().unwrap().take() else {
+    let Some(Open { path, mut file, .. }) = state.0.lock().unwrap().take() else {
         return Ok(());
     };
     file.flush().map_err(|e| e.to_string())?;
@@ -182,24 +268,44 @@ fn needs_media_rescan(path: &FilePath) -> bool {
 /// do (tauri-sink.js's header spells out why an abandoned web transfer leaves
 /// an empty file with no handle able to remove it).
 ///
-/// Two steps, because only one of them works everywhere. Truncating through
-/// the handle we hold does, so the partial bytes are gone on every platform.
-/// Unlinking needs a path, and a `content://` document has none: removing it
-/// is `DocumentsContract.deleteDocument`, which is Kotlin, which is a hand-edit
-/// in gen/ for a cleanup. So on Android a cancelled receive leaves an EMPTY
-/// file under the name the person chose -- the same outcome the website's
-/// File System Access path has always had, and an honest one: they picked
-/// that name a moment ago and can see what happened to it.
+/// Truncating through the handle we hold comes first, because it works on
+/// every route, so the partial bytes are gone whatever happens next. Then the
+/// file itself goes, but only one this sink created: a path is unlinked, and
+/// a document in a granted Android folder is deleted through
+/// `DocumentsContract.deleteDocument` (StoragePlugin.kt). That second half
+/// could not exist while the destination came from `save()` -- there was no
+/// Kotlin to call -- and a cancelled Android receive left an empty file under
+/// the chosen name. A file the person picked on iOS is left, emptied: it may
+/// have existed before they chose it.
+///
+/// `async` for `sink_open`'s reason: the delete is a round-trip into Kotlin.
 #[tauri::command]
-pub fn sink_abort(state: tauri::State<'_, SinkState>) -> Result<(), String> {
-    if let Some(open) = state.0.lock().unwrap().take() {
-        // Best effort throughout: the transfer is already being torn down, and
-        // a failure to clean up a partial file is not worth surfacing as an
-        // error on top of whatever caused the abort.
-        let _ = open.file.set_len(0);
-        drop(open.file);
-        if let FilePath::Path(path) = &open.path {
+pub async fn sink_abort(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SinkState>,
+) -> Result<(), String> {
+    let Some(open) = state.0.lock().unwrap().take() else {
+        return Ok(());
+    };
+    // Best effort throughout: the transfer is already being torn down, and a
+    // failure to clean up a partial file is not worth surfacing as an error on
+    // top of whatever caused the abort.
+    let _ = open.file.set_len(0);
+    drop(open.file);
+    if !open.created {
+        return Ok(());
+    }
+    match &open.path {
+        FilePath::Path(path) => {
             let _ = fs::remove_file(path);
+        }
+        #[cfg(target_os = "android")]
+        FilePath::Url(url) => {
+            let _ = storage::android::delete_file(&app, url.as_str()).await;
+        }
+        #[cfg(not(target_os = "android"))]
+        FilePath::Url(_) => {
+            let _ = &app;
         }
     }
     Ok(())

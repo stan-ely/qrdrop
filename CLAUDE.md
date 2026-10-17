@@ -782,6 +782,7 @@ hand edit above, and losing that edit leaves the file inert:
 | Path | What |
 |---|---|
 | `java/com/stan_ely/qrdrop/QrdropTileService.kt` | The Quick Settings tile. |
+| `java/com/stan_ely/qrdrop/StoragePlugin.kt` | The once-only save-folder grant and the documents created in it. Reached through `register_android_plugin` in `src-tauri/src/storage.rs` (via `lib.rs`), not a manifest entry; losing that call leaves Android 7–10 with nowhere to save. |
 | `res/xml/shortcuts.xml` | The two launcher shortcuts. |
 | `res/values/qrdrop_entry_points.xml` | Their labels, and the tile's. Deliberately **not** in the generated `strings.xml`. |
 | `res/drawable/ic_qrdrop_scan.xml`, `ic_qrdrop_send.xml` | Their icons. |
@@ -1355,6 +1356,25 @@ this took a second session to find. And DocumentsUI cannot be read by `uiautomat
 ("null root node"), so a timed Save is an `adb shell input tap` at coordinates taken from
 a screenshot. The full table is in `app/CAPABILITIES.md`.
 
+**So the app no longer opens a save dialog at Accept, and must not grow one back.**
+`src-tauri/src/storage.rs` chooses the destination: `Downloads/qrdrop` on desktop and on
+Android 11+ (plain `std::fs`, which scoped storage allows there with no permission), or a
+folder the person granted once on Android (`StoragePlugin.kt`, an SAF tree grant), which
+wins when held. Android 7–10 can write to neither without a permission, so `save_prepare`
+asks for that folder on the **Receive tap, before pairing** — element.js's
+`_ensureSaveLocation`, at the top of every receive entry point — because a picker there has
+no peer to lose. Nothing is overwritten: a path is opened `create_new` and steps to
+`name (1).ext`, and `createDocument` never returns an existing document. The done screen
+says where the file went, and on Android offers "Change folder". A "Save as…" on the offer
+screen is the tempting addition and is exactly the dialog this removed. The website keeps
+`showSaveFilePicker`, which needs the Accept click's activation and is unaffected.
+
+**`download_dir()` on Android is not Downloads.** Tauri resolves it with
+`getExternalFilesDir(DIRECTORY_DOWNLOADS)`, which is `Android/data/<package>/files/Download`
+— app-private, hidden from most file managers since Android 11, and deleted on uninstall. A
+received file put there is lost to the person who received it. The shared folder is
+`home_dir()` + `Download`; `storage.rs`'s `downloads_folder` is the one place that knows.
+
 **Comments in `AndroidManifest.xml` must not contain a double hyphen.** XML
 forbids it inside a comment and this repository's prose style uses it as an em
 dash. Gradle reports the result only as `Error parsing AndroidManifest.xml`.
@@ -1384,8 +1404,9 @@ A JSON-array `invoke('save_chunk', { data: [...] })` is the *other* wrong answer
 megabyte becomes a million stringified numbers.
 
 **Opening the destination does use `plugin-fs` — its Rust API — and must not be
-"simplified" back to `File::create`.** On Android, `plugin-dialog`'s `save()` returns
-a `content://` URI from the Storage Access Framework, not a path. `File::create` on
+"simplified" back to `File::create`.** On Android, a document created in a granted
+folder (and, before the dialog went, `plugin-dialog`'s `save()`) is a `content://` URI
+from the Storage Access Framework, not a path. `File::create` on
 that string fails with `os error 2`, and that is why the Android app shipped unable
 to receive. `sink_open` hands the string to `app.fs().open()`, which resolves a
 content URI through the ContentResolver into a real file descriptor and is plain

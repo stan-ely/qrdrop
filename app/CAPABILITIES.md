@@ -728,8 +728,11 @@ Four things found on the way, none of them the sink:
   The first failure, closed at two seconds, is consistent with an app that had already
   spent its `R` and `M` time in the background before the picker. A relayed (TCP)
   connection would be cut by the socket close itself; not measured. Vendor behaviour
-  outside the WebView; not worked around. The failure it exposed on our side is
-  recorded below.
+  outside the WebView, still not worked around, but **avoided since 2026-10-17**: the app
+  no longer opens a save dialog at Accept. A receive goes to `Download/qrdrop` on Android
+  11+ by plain path, or to a folder granted once, asked for on the Receive tap before any
+  pairing exists (`src-tauri/src/storage.rs`, `StoragePlugin.kt`). The only picker left
+  opens with no peer to lose. The failure it exposed on our side is recorded below.
 - ~~**A receive whose sender left during the save dialog stood on "Receiving, 0%"
   forever.**~~ **Fixed 2026-09-12.** The 45 s run above never showed a failure. On the
   thaw the phone logged *"The other device disconnected"*, opened the error sheet, and

@@ -26,13 +26,24 @@
  */
 import { defineQRDrop, registerPlatform } from '../../src/web/index.js'
 import { wireInfoSheets } from '../../site/wire-sheets.js'
-import { createTauriSink, canStreamToDisk } from './tauri-sink.js'
+import {
+  createTauriSink, canStreamToDisk, prepareReceive, changeSaveLocation, saveMode,
+} from './tauri-sink.js'
 import { secretFromDeepLink } from './deep-link.js'
 import { createTauriLan } from './lan.js'
 
 const APP_LINK_ORIGIN = 'https://share.stan-ely.com/'
 
-registerPlatform({ createSink: createTauriSink, canStreamToDisk })
+registerPlatform({ createSink: createTauriSink, canStreamToDisk, prepareReceive })
+
+// "Change folder" is Android's alone: the desktop always saves to
+// Downloads/qrdrop and iOS asks every time, so neither has a folder to change.
+// Registered once the shell has said which it is, which is long before any
+// transfer can reach the done screen that offers it.
+saveMode().then(
+  mode => { if (mode === 'android') registerPlatform({ changeSaveLocation }) },
+  error => console.warn('qrdrop: save mode unavailable', String(error)),
+)
 
 // The local-network fast path. Registered when the shell has answered, which
 // is a few milliseconds and always before any pairing can finish (see
