@@ -7,11 +7,11 @@ session that works on it starts by reading the **Status** section and ends by up
 
 | Phase | State | Commits | Notes |
 |---|---|---|---|
-| 0. Groundwork | not started | | |
+| 0. Groundwork | done, 2026-10-17 | `4c8508f`, `2498dac`, `f12c883`, `19a0184` | CI runs the Rust tests; workspace and vectors in; see "Phase 0: what it found" |
 | 1. WebRTC spike and stack choice | not started | | |
 | 2. `qrdrop-protocol` | not started | | |
-| 3. `trystero`, sans-IO core and WebRTC peer | not started | | |
-| 4. `trystero` signalling clients | not started | | |
+| 3. `tryst`, sans-IO core and WebRTC peer | not started | | |
+| 4. `tryst` signalling clients | not started | | |
 | 5. `qrdrop-session` and LAN | not started | | |
 | 6. Rust CLI and the cross-implementation suite | not started | | |
 | 7. The apps on the native session | not started | | |
@@ -19,7 +19,11 @@ session that works on it starts by reading the **Status** section and ends by up
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 0.
+**Next step:** Phase 1, the WebRTC spike: a throwaway binary in the scratchpad that pairs with
+node-datachannel and Chromium over a hand-carried SDP and moves bytes in Trystero's room frame and
+action wire. `test/vectors/trystero.json` has both encodings, and the recordings show what a
+working exchange looks like on the channel. The first push of phase 0 is also the first run of
+ci.yml's `rust` job; check it went green, since the app half has only been run on Windows.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -29,6 +33,10 @@ session that works on it starts by reading the **Status** section and ends by up
   through a discovery or relay system of its own. iroh is not assumed.
 - **Location.** The code lives in this repo under `crates/` until the Trystero-compatible layer is
   mature enough to publish on its own.
+- **Crate names.** `tryst` for the Trystero-compatible rooms, named apart from Trystero so a later
+  crates.io release does not read as upstream's own; then `qrdrop-protocol`, `qrdrop-session` and
+  `qrdrop-cli` (binary `qrdrop`). All four were free on crates.io on 2026-10-17. Phase 10 can still
+  revisit `tryst` with upstream.
 - **Feature flags.** Optional transports (the signalling strategies, WebRTC, LAN listen and dial,
   QUIC, file IO, the CLI's extras) are Cargo features, so each platform builds only what it uses.
   See "Feature flags".
@@ -36,7 +44,6 @@ session that works on it starts by reading the **Status** section and ends by up
 **Still to decide, each in the phase that needs it:**
 - the WebRTC crate (phase 1);
 - the TLS crypto provider (phase 1);
-- crate names (phase 0);
 - CLI distribution (phase 8).
 
 **Open questions:** none yet.
@@ -72,7 +79,7 @@ path working, and so does the `sed` in `app-release.yml` that reads the first `v
 
 | Crate | Role | IO | Extractable |
 |---|---|---|---|
-| `crates/trystero` (name TBD) | Trystero 0.25-compatible rooms. **Sans-IO core:** topics, signal crypto, the action wire, the room frame, the handshake, and the offer and glare state machine. **Async shell (tokio):** Nostr and torrent clients, and a WebRTC peer. Generic over app ID and actions. Exposes a signal channel so other transports (QUIC) can negotiate through it. | sans-IO core, tokio shell | **yes**, the library to publish |
+| `crates/tryst` | Trystero 0.25-compatible rooms. **Sans-IO core:** topics, signal crypto, the action wire, the room frame, the handshake, and the offer and glare state machine. **Async shell (tokio):** Nostr and torrent clients, and a WebRTC peer. Generic over app ID and actions. Exposes a signal channel so other transports (QUIC) can negotiate through it. | sans-IO core, tokio shell | **yes**, the library to publish |
 | `crates/qrdrop-protocol` | Secret and code parsing (fragment only), KDFs, ECDH and SAS, frame seal and open, digest, control messages, and the sender and receiver state machines. | sans-IO, no tokio | maybe |
 | `crates/qrdrop-session` | `open_room`: races the strategies, then the ECDH, the peer filter and early frames. Send and receive run loops. `Source` and `Sink` traits with std file implementations. LAN listener and dialer. Path classification. QUIC, later. | tokio | no |
 | `crates/qrdrop-cli` | Binary `qrdrop`, with the same commands, flags, exit codes and stdout contract as `src/cli.js`. | | no |
@@ -98,9 +105,9 @@ property instead of a runtime check.
 
 | Crate | Feature | Pulls in | Who enables it |
 |---|---|---|---|
-| `trystero` | `nostr` | WebSocket + TLS client, `k256` | everyone, by default |
-| `trystero` | `torrent` | WebSocket + TLS client | everyone, by default |
-| `trystero` | `webrtc` | the WebRTC stack chosen in phase 1 | everyone, by default; off only in a Rust-only build |
+| `tryst` | `nostr` | WebSocket + TLS client, `k256` | everyone, by default |
+| `tryst` | `torrent` | WebSocket + TLS client | everyone, by default |
+| `tryst` | `webrtc` | the WebRTC stack chosen in phase 1 | everyone, by default; off only in a Rust-only build |
 | `qrdrop-session` | `lan-dial` | WebSocket client | the CLI, every app target |
 | `qrdrop-session` | `lan-listen` | WebSocket server, getifaddrs | the CLI; the app on Android and Linux only |
 | `qrdrop-session` | `quic` | quinn, rustls | off until phase 9 passes its gate |
@@ -121,7 +128,7 @@ Rules:
 - **The platform rule moves into `Cargo.toml`.** The app chooses features per target with
   `[target.'cfg(...)'.dependencies]`. On Windows and macOS, `lan-listen` is simply not built, which
   is a stronger guarantee against a firewall prompt than today's runtime `MODE` constant in `lan.rs`.
-- **The sans-IO crates have no transport features.** `qrdrop-protocol` and `trystero`'s core compile
+- **The sans-IO crates have no transport features.** `qrdrop-protocol` and `tryst`'s core compile
   everywhere, with everything, so the vectors always test all of them.
 - **CI builds a feature matrix:** every crate with `--no-default-features`, each feature on its own,
   and `--all-features`. A feature that only compiles alongside another is the bug this catches.
@@ -244,7 +251,7 @@ loser.
 - **Active announce:** `numwant: 3`, plus up to three outstanding offers, each
   `{offer_id, offer: {type: "offer", sdp: <cipher>}}`. They are reused until answered or 120 s old.
 - **Answer:** `{answer: {type: "answer", sdp: <cipher>}, offer_id, to_peer_id}`. Inbound answers are
-  matched by `offer_id`.
+  matched by `offer_id`, which here is 20 characters (`genId(20)`), not Nostr's 12.
 - **Who answers.** In practice, the lower ID's offer is the one answered.
 - **No trickle.** The full SDP goes out after gathering completes, or after 15 s.
 - **Duplicates and pacing.** Repeats within 4 s are dropped. The tracker interval is clamped to
@@ -262,7 +269,8 @@ loser.
 - **Data frame:** `[0x01][token length, u16 BE][64-character hex room token][action chunk]`, 67
   bytes of overhead.
 - **Presence frame:** `[0x02][1 present / 0 gone][length][token]`. A single-room peer may ignore
-  inbound presence frames.
+  inbound presence frames, but must tolerate them: the recordings show each JS side sending two per
+  run.
 
 **Action chunk** (`core/dist/action-wire.mjs`):
 
@@ -465,6 +473,39 @@ long splits; it does not end half-done without a note here.
 - **Comments.** Correct the PBKDF2 comments at `src/transport/room.js:657` and
   `src/core/secret.js:70-81`.
 
+### Phase 0: what it found
+
+Done on 2026-10-17. Where things are:
+
+- **CI.** `ci.yml`'s `rust` job runs `cargo test --workspace --all-features`, then
+  `cargo hack check --workspace --each-feature --no-dev-deps` (17 combinations today), then
+  `cargo test` in `app/src-tauri` (16 host tests). `mise run rust:test` and `mise run
+  rust:features` are the same commands locally; cargo-hack is pinned in `mise.toml`.
+- **Workspace.** `Cargo.toml` at the repo root, `members = ["crates/*"]`, `exclude = ["app"]`, its
+  own `Cargo.lock` and `/target/`. `cargo metadata` confirms `app/src-tauri` is still its own
+  workspace root with its own target directory. All four crates are empty, `publish = false`, and
+  declare the feature names from "Feature flags".
+- **Vectors.** `node scripts/make-vectors.mjs` writes `test/vectors/{secret,session,frames,digest,
+  trystero}.json`; `--check` exits 1 if they are stale. Each file's `about` field gives its
+  encoding (hex bytes; `{"mod251": n}` for large plaintexts).
+- **Recordings.** `node scripts/record-trystero.mjs` writes `trystero-recording.json` through a
+  stand-in relay and tracker, offline; `--live` writes `trystero-recording-live.json` through
+  the public ones. Peer connections are bound to 127.0.0.1, so no SDP names a real address.
+- **The guard.** `test/vectors.test.mjs` (in `npm test`) rebuilds the vectors and compares them byte
+  for byte, cross-checks the values the script had to compute itself, and checks the recordings
+  against Trystero's own code. `test/helpers/trystero.mjs` refuses any Trystero but 0.25.4.
+
+Found on the way, beyond what the wire section above already said:
+
+- **A code's last character has two padding bits that the JS ignores.** `fromBase64url` goes through
+  `atob`, so a code differing only there decodes to the same secret. The Rust decoder must accept
+  non-canonical trailing bits, which the `base64` crate rejects by default. `secret.json` has the
+  case.
+- **Each side sends two room presence frames** per run, which Phase 3 must at least accept and drop.
+- **Flags seen on the wire:** `@_hsdata` is JSON (`0x09` when last), `@_hsready` and `@_leave` are
+  strings (`0x01`), a metadata chunk is `0x02` with nothing else set, and a full frame chunk is
+  `0x0D` in a 16451-byte channel message (67 + 36 + 16348).
+
 ### Phase 1: WebRTC spike and stack choice
 
 A throwaway binary, in the scratchpad and not the repo, pairs with node-datachannel and with
@@ -491,7 +532,7 @@ Port, sans-IO:
 It passes all of phase 0's vectors. Its tests port `test/frame`, `crypto`, `secret`, `transfer`,
 `control-order` and `control-stream`.
 
-### Phase 3: `trystero`, sans-IO core and WebRTC peer
+### Phase 3: `tryst`, sans-IO core and WebRTC peer
 
 - Topics and signal crypto.
 - The action wire, including reassembly and the binary-before-JSON rule, and the room frame.
@@ -500,7 +541,7 @@ It passes all of phase 0's vectors. Its tests port `test/frame`, `crypto`, `secr
 Test all of it against the phase 0 recordings, then put the WebRTC peer behind it on the chosen
 stack. Add `crates/**` to the path filters in `app.yml` and `app-reproducible.yml`.
 
-### Phase 4: `trystero` signalling clients
+### Phase 4: `tryst` signalling clients
 
 Nostr and torrent clients:
 - per-relay connections, backoff and retirement;
@@ -618,7 +659,7 @@ Handle these together:
 
 ### Phase 10: extraction prep
 
-- The `trystero` crate gets a clean API, docs, examples and its own vectors.
+- The `tryst` crate gets a clean API, docs, examples and its own vectors.
 - Settle the licence and the name, then publish to crates.io.
 
 ## Verification, every phase

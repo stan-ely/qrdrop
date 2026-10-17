@@ -30,7 +30,16 @@ node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
 
 node scripts/bench-beam.mjs                # beam loss/overhead tables, ~3 min; the ONLY source for docs/beam.md's numbers
+
+node scripts/make-vectors.mjs              # rewrite test/vectors/ from src/core/ and Trystero; --check exits 1 if stale
+node scripts/record-trystero.mjs           # re-record two real peers over Trystero; --live goes through the public relays
+mise run rust:test                         # the Rust workspace under crates/; the app crate is `cargo test` in app/src-tauri
 ```
+
+`test/vectors/` is the contract between the JS core and the Rust session
+(`docs/notes/rust-session.md`), and `test/vectors.test.mjs` fails the moment the JS
+moves away from it. A change to `src/core/` that trips it is a change to the wire:
+re-run `make-vectors.mjs` and read the diff before committing it.
 
 Five image generators, all hand-run and none of them in `npm run build` — that
 runs in CI and in `prepublishOnly`, where downloading a browser is not
