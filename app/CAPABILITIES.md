@@ -1516,6 +1516,17 @@ offline and gathers no ICE candidates at all. The WSL system Node is 18,
 which Playwright refuses, so Node 24 came from `mise exec node@24`.
 Chromium's shared libraries were already present.
 
+**netem on `lo` reorders packets, so do not reuse this setup for anything
+that reacts to reordering.** Found on 2026-10-17 (see "The Rust WebRTC
+stacks" below): the delay line is one qdisc whose release timer fires on
+whichever CPU armed it last, and packets released on different CPUs overtake
+one another on the way to the socket. About 0.4% of SCTP DATA chunks arrived
+out of order at 2-20 ms, none with no qdisc, none with everything pinned to
+one CPU, and every reorder can cost an SCTP sender a fast-retransmit halving
+of its window. The Chromium rows above survived a re-measure on the clean
+harness below (1.5 MB/s at 50 ms, 1.0 at 100), so their conclusion stands;
+anything new uses the two-namespace veth harness instead.
+
 A Node UDP delay proxy on Windows was tried first, and it cannot do this
 job: its timers fired 24-71 ms late even on a worker thread with a
 `setImmediate` spin loop, and SCTP reads that as loss. With a 4 MB queue it
@@ -1803,3 +1814,96 @@ paid per frame, so the next step on this path is fewer, larger frames rather
 than faster code. `CHUNK_SIZE` is set by the data channel's message size,
 the direct socket has no such limit, and a frame size that varies by path
 changes the protocol, so that is a decision and not a patch.
+
+### The Rust WebRTC stacks, against each other and the JS ones (2026-10-17)
+
+Phase 1 of `docs/notes/rust-session.md`: a throwaway binary per candidate
+crate, str0m 0.24.1 and webrtc-rs 0.21.1, with the SDP carried by hand and
+every message wrapped exactly as Trystero 0.25.4 wraps a binary `frame`
+action (room frame, action chunk, 16,348 payload bytes, 16,451 on the
+channel). Both crates interoperate with node-datachannel and with Chromium
+153 as offerer and as answerer, in both directions, with every byte checked.
+Chromium kept its default mDNS host candidates, so the peer-reflexive path a
+real browser forces on a native peer works too. Throughput is receiver-side
+MB/s (1e6 bytes), 256 MiB per run (64 MiB at 50 and 100 ms).
+
+**Loopback, Windows, i5-10210U, no pinning.**
+
+| Pairing | Rust sends | Rust receives |
+| --- | --- | --- |
+| str0m and node-datachannel 0.33 | 28-36 | 39-41 |
+| str0m and Chromium 153 | 33-36 | 26-29 |
+| str0m and str0m | 51-53 | |
+| webrtc-rs and node-datachannel | 39 | 35 |
+| webrtc-rs and Chromium 153 | 27-33 | 29-30 |
+| webrtc-rs and webrtc-rs | 26-27 | |
+| Chromium 153 and itself, in one page | 15-17 | |
+
+str0m to str0m was 10-13 until both sockets were given 4 MB buffers: the
+Windows default drops the bursts only a native peer sends this fast, and SCTP
+then lives in loss recovery. Against a JS peer the buffers change nothing,
+because the JS end is the ceiling.
+
+**Round trips, WSL, the clean harness.** Two network namespaces joined by a
+veth pair, `netem delay <rtt/2>ms limit 100000` on each end's egress, and each
+peer pinned to its own core (`taskset`), so each delay line is only ever armed
+by one process and order holds per direction. Measured with sctp-proto's
+trace: 48,001 DATA chunks at 20 ms, none out of order, no fast retransmits.
+One core per peer is also what holds str0m to str0m near 19 below: its sender
+is CPU-bound in a spike that spins and makes one syscall per datagram, and
+webrtc-rs's sender feeding str0m shows the path carries 45-54.
+
+| RTT | str0m to str0m | webrtc-rs to webrtc-rs | webrtc-rs to str0m | str0m to webrtc-rs | Chromium to Chromium | str0m to Chromium | Chromium to str0m |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ~0 | 16-18 | 13.5 | 54 | 21-25 | 12 | 16 | 14.5 |
+| 2 ms | 14.5 | 11-12 | 44-47 | 15-23 | | | |
+| 10 ms | 19 | 4.4-4.8 | 45 | 5.3-6.1 | 5.8 | 5.0 | 16.7 |
+| 20 ms | 19 | 2.7-3.1 | 46.5 | 7-23 | 3.6-3.8 | 3.1-3.8 | 9-12.5 |
+| 50 ms | 16 | 1.5-1.6 | 18.7 | 2.3-8.1 | 1.5 | 1.5 | 5.8 |
+| 100 ms | 9 | 0.8-0.9 | 8.9 | 0.9-1.0 | 1.0 | 1.0 | 6.2 |
+
+**The receiver decides the rate, and str0m is the one that holds up.** Every
+column with str0m receiving degrades slowly with RTT; every column with
+webrtc-rs or Chromium receiving falls as roughly 80-100 KB per round trip,
+which is a receive window and not congestion control. str0m's own long-RTT
+ceiling is its 1 MiB SCTP receive buffer (1 MiB per 100 ms is 10.5 MB/s,
+measured 9), and sctp-proto exposes that as a setting. For qrdrop that means
+a native receiver gains four to six times over the internet even when the
+other end is a browser, and a native sender to a browser gains nothing,
+because the browser's receive side is where Chromium's 1-2 MB/s lives.
+
+Four things a real session must carry, each found by a number that did not
+fit:
+
+- **str0m caps a whole association's send buffer at 128 KiB by default**,
+  in-flight bytes included (`RtcConfig::set_sctp_max_buffered_amount`). At
+  20 ms that pinned str0m to str0m at 3.96 MB/s, the same to three digits
+  run after run; sctp-proto's trace showed cwnd refusing to grow with
+  `pending=0`, a sender starved by the cap rather than limited by the path.
+  Raised, the same run is 22.7.
+- **Socket buffers, on both platforms.** 4 MB requested on each socket; with
+  Linux's defaults the 20 ms run fell to 5.7 again.
+- **webrtc-rs fails `PeerConnectionBuilder::build()` with `ENODEV` when the
+  host has no default route**, before any ICE runs. A LAN with no gateway is
+  that host.
+- **str0m's `rust-crypto` backend is not pure Rust as shipped.**
+  `str0m-rust-crypto` 0.6.0 enables dimpl's `rcgen` feature, which in dimpl
+  also enables `aws-lc-rs`, a cc and cmake build, only to generate the DTLS
+  certificate. The spike vendors that crate with certificate generation
+  removed and passes its own through `RtcConfig::set_dtls_cert`, made with
+  `p256` and `x509-cert`. That certificate must be a self-issued **leaf**:
+  `Profile::Root` sets key usage to certificate and CRL signing only, and
+  OpenSSL in node-datachannel refuses it for ECDHE-ECDSA as `bad ecc cert`.
+
+**Reproducibility, aarch64 Android.** Each spike built twice for
+`aarch64-linux-android` with NDK r29 (`29.0.14206865`), from two checkout
+directories of different lengths and two fresh `CARGO_HOME`s, with
+`scripts/android-env.mjs`'s flags (Tauri's three link arguments plus both
+remaps). webrtc-rs, ring's C build included, came out byte-identical, with no
+build path anywhere in the binary. str0m did too, but only once the vendored
+crate moved inside the spike's own workspace: with it at
+`../str0m-rust-crypto` the two binaries differed by 128 bytes with no path
+in either, because Cargo hashes a path dependency outside the workspace root
+by its absolute path into every symbol name. `app/src-tauri` is its own
+workspace and is planned to depend on `crates/*` by path, which is exactly
+that shape.

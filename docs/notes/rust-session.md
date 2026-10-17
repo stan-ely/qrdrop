@@ -8,7 +8,7 @@ session that works on it starts by reading the **Status** section and ends by up
 | Phase | State | Commits | Notes |
 |---|---|---|---|
 | 0. Groundwork | done, 2026-10-17 | `4c8508f`, `2498dac`, `f12c883`, `19a0184` | CI runs the Rust tests; workspace and vectors in; see "Phase 0: what it found" |
-| 1. WebRTC spike and stack choice | not started | | |
+| 1. WebRTC spike and stack choice | done, 2026-10-17 | | str0m chosen, TLS on ring; see "Phase 1: what it found" |
 | 2. `qrdrop-protocol` | not started | | |
 | 3. `tryst`, sans-IO core and WebRTC peer | not started | | |
 | 4. `tryst` signalling clients | not started | | |
@@ -19,11 +19,9 @@ session that works on it starts by reading the **Status** section and ends by up
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 1, the WebRTC spike: a throwaway binary in the scratchpad that pairs with
-node-datachannel and Chromium over a hand-carried SDP and moves bytes in Trystero's room frame and
-action wire. `test/vectors/trystero.json` has both encodings, and the recordings show what a
-working exchange looks like on the channel. ci.yml's `rust` job went green
-on its first run (run 39016489083, 3 min 17 s), app host tests included.
+**Next step:** Phase 2, `qrdrop-protocol`: port the secret, KDFs, SAS, frames, digest, control
+messages and the two state machines, sans-IO, against phase 0's vectors. Nothing in it touches
+WebRTC, so phase 1's open questions below do not block it.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -41,13 +39,25 @@ on its first run (run 39016489083, 3 min 17 s), app host tests included.
 - **Feature flags.** Optional transports (the signalling strategies, WebRTC, LAN listen and dial,
   QUIC, file IO, the CLI's extras) are Cargo features, so each platform builds only what it uses.
   See "Feature flags".
+- **WebRTC: str0m 0.24**, `rust-crypto` backend, with `str0m-rust-crypto` vendored inside the
+  workspace minus its `rcgen` dependency. It interoperates with Chromium and node-datachannel in
+  every role and direction, and it is the only stack measured whose receive side holds up over a
+  round trip. webrtc-rs was the alternative: it ships TURN and gathering, and reproduces, but its
+  receive side falls to 1.6 MB/s at 50 ms. See "Phase 1: what it found".
+- **TLS provider: ring**, measured byte-reproducible for aarch64 Android in phase 1.
 
 **Still to decide, each in the phase that needs it:**
-- the WebRTC crate (phase 1);
-- the TLS crypto provider (phase 1);
 - CLI distribution (phase 8).
 
-**Open questions:** none yet.
+**Open questions:**
+- **The app's path dependencies on `crates/` will break `app-reproducible.yml`.** Cargo hashes a path
+  dependency outside the building workspace's root by its absolute path into every symbol, and phase
+  1 measured exactly that: a 128-byte difference between two checkouts, with no path in either
+  binary. `app/src-tauri` is its own workspace by design (see "Architecture"). Settle it before the
+  app's first dependency on `crates/` (phase 7, or phase 3 if the path filters move then): make the
+  app a workspace member and rework what that layout protects, or find a way to pin the hash.
+- **Upstream the `rcgen` fix to str0m** (an optional feature in `str0m-rust-crypto`), so the vendored
+  copy can go.
 
 ## Why
 
@@ -108,7 +118,7 @@ property instead of a runtime check.
 |---|---|---|---|
 | `tryst` | `nostr` | WebSocket + TLS client, `k256` | everyone, by default |
 | `tryst` | `torrent` | WebSocket + TLS client | everyone, by default |
-| `tryst` | `webrtc` | the WebRTC stack chosen in phase 1 | everyone, by default; off only in a Rust-only build |
+| `tryst` | `webrtc` | str0m (chosen in phase 1), `stun-proto`, `turn-client-proto` | everyone, by default; off only in a Rust-only build |
 | `qrdrop-session` | `lan-dial` | WebSocket client | the CLI, every app target |
 | `qrdrop-session` | `lan-listen` | WebSocket server, getifaddrs | the CLI; the app on Android and Linux only |
 | `qrdrop-session` | `quic` | quinn, rustls | off until phase 9 passes its gate |
@@ -145,10 +155,13 @@ is a risk to measure, not assume. The crate choices:
 
 - **Crypto: RustCrypto.** `p256`, `hkdf`, `sha2`, `sha1`, and `aes-gcm`, with a 16-byte nonce for
   Trystero's signals; `k256` for BIP-340 Schnorr.
-- **WebRTC: str0m or webrtc-rs, chosen in phase 1.** The criteria: DCEP data channels, trickle ICE,
-  TURN, interop with Chromium and node-datachannel, and a reproducible aarch64 Android build.
-- **TLS** for `wss://` relays and, later, QUIC: rustls with webpki-roots. The crypto provider (ring,
-  or a pure-Rust one) is decided by the same reproducibility check.
+- **WebRTC: str0m 0.24, with its `rust-crypto` backend, chosen in phase 1.** It needs one vendored
+  patch (see "Phase 1: what it found") and brings no STUN gathering and no TURN client of its own;
+  `stun-proto` and `turn-client-proto` are the sans-IO crates to fill that, from phase 3.
+- **TLS** for `wss://` relays and, later, QUIC: rustls with webpki-roots and the **ring** provider.
+  ring is a cc build, and phase 1 measured it byte-reproducible for aarch64 Android under
+  `android-env.mjs`'s flags; the pure-Rust provider would be a less mature crate for no measured
+  gain.
 
 `scripts/android-env.mjs` remaps the whole repo root and `CARGO_HOME`, so path dependencies under
 `crates/` are covered. From phase 3, the path filters in `app.yml` and `app-reproducible.yml` must
@@ -519,6 +532,38 @@ frame and action wire. Measure:
   `CARGO_HOME`s.
 
 Decide the WebRTC crate and the TLS provider. Record both here, and the numbers in CAPABILITIES.md.
+
+### Phase 1: what it found
+
+Done on 2026-10-17. The numbers and how they were taken are in `app/CAPABILITIES.md`, "The Rust
+WebRTC stacks, against each other and the JS ones". The spikes were throwaway and are not in the
+repo. What the next phases need from them:
+
+- **Interop.** str0m and webrtc-rs both pair with node-datachannel and Chromium 153 as offerer and
+  answerer, both directions, over Trystero's room frame and action chunk, every byte checked.
+  Chromium's mDNS host candidates do not matter: the browser connects to the native peer's host
+  candidate and str0m learns the peer-reflexive one.
+- **The receiver decides the rate over a round trip.** str0m receiving: 46 MB/s at 20 ms, 16-19 at
+  50, 9 at 100. Chromium or webrtc-rs receiving: about 80-100 KB per round trip, 1.5 at 50 ms. So
+  the app gains over the internet when it receives, even from a browser, and gains nothing sending
+  to one.
+- **Settings phase 3 and 5 must carry, each found by a number that did not fit.** str0m caps an
+  association's send buffer at 128 KiB including in-flight bytes, which pinned 20 ms at 3.96 MB/s;
+  raise it with `set_sctp_max_buffered_amount`. Ask for 4 MB socket buffers on every platform;
+  Windows' default drops a native peer's bursts, and Linux's held 20 ms to 5.7. str0m's 1 MiB SCTP
+  receive buffer is its own long-RTT ceiling (sctp-proto's `with_max_receive_buffer_size`).
+- **The DTLS certificate is ours to make.** The patched backend generates none, so `tryst` makes a
+  self-signed P-256 certificate with `p256` and `x509-cert` and passes it through `set_dtls_cert`.
+  It must be a self-issued **leaf**; a root profile's key usage makes OpenSSL refuse it as `bad ecc
+  cert`. Random 16-byte serials, for the Firefox reason dimpl's own generator gives.
+- **Reproducibility.** Both crates built byte-identical for aarch64 Android from two directories and
+  two `CARGO_HOME`s, ring's C build included, once every patched crate sat inside the workspace. One
+  outside it is the open question above.
+- **webrtc-rs needs a default route**: without one, `PeerConnectionBuilder::build()` fails with
+  `ENODEV` before any ICE.
+- **A harness lesson.** netem on `lo` reorders about 0.4% of packets at 2-20 ms, because its release
+  timer fires on different CPUs, and each reorder can halve an SCTP sender's window. Measure in two
+  namespaces over veth with each peer pinned; the setup is in CAPABILITIES.md.
 
 ### Phase 2: `qrdrop-protocol`
 
