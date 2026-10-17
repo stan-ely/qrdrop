@@ -10,10 +10,9 @@ then does the file move.
 There is also Beam, which carries a file as animated QR codes across a camera
 and needs no network at all.
 
-On ColorOS phones (Oppo, Realme, OnePlus), choose where to save a received
-file within about 20 seconds, or allow qrdrop to run in the background. The
-phone freezes an app while the save dialog covers it, and the sending device
-gives up after 30 seconds without a reply.
+Received files are saved to Download/qrdrop as soon as you accept them, and a
+file never replaces one that is already there. On Android 10 and older, the
+app asks once for a folder to save into.
 
 Every copy of this app, from any store or from the GitHub Releases page, is
 built by the project's own release workflow and signed with the same key.

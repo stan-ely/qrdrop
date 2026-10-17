@@ -72,14 +72,36 @@ and verified on a device — a 64 MiB file received byte-identical, and a Beam
 receive through the camera on the same phone. So was a third fix found on the way:
 every received file was listed as 0 B by the Files app, because Android indexed it
 the moment it was opened for writing, before a byte had arrived, and was never
-asked to look again. A cancelled receive on
+asked to look again. In 1.2.1 and earlier, a cancelled receive on
 Android leaves an empty file behind rather than none, because the app is not
-allowed to delete a document the save dialog created.
+allowed to delete a document the save dialog created. Later releases have no
+save dialog (below), and remove the unfinished file.
+
+## Where received files go
+
+**The app saves a received file as soon as you accept it, without asking
+where.** The offer screen shows the file's name and size, and Accept saves it.
+The screen after the transfer says where it went:
+
+- **Computer:** a `qrdrop` folder in Downloads.
+- **Android 11 and later:** `Download/qrdrop`.
+- **Android 7 to 10:** a folder you choose once. These versions do not let an
+  app write to Downloads without a storage permission. So the first time you tap
+  Receive, before anything is paired, the app asks for a folder, and it saves
+  there after that.
+
+On Android, **Change folder** on that screen lets you pick a different folder,
+and the one you pick replaces `Download/qrdrop`. A received file never
+replaces one that is already there: a second `report.pdf` is saved as
+`report (1).pdf`. The website still asks where to save, because a browser
+needs you to choose a file before it can write one to disk.
 
 ## Android on ColorOS
 
-**On ColorOS (Oppo, Realme, OnePlus), choose where to save within about 20
-seconds**, or allow qrdrop to run in the background. The save dialog counts as
+**In 1.2.1 and earlier, on ColorOS (Oppo, Realme, OnePlus), choose where to save
+within about 20 seconds**, or allow qrdrop to run in the background. Later
+releases have no save dialog at Accept (above), so this no longer applies to
+them. The save dialog counts as
 leaving the app, ColorOS freezes an app about 11 seconds after it leaves, and a
 sender that hears nothing from a frozen phone for 30 seconds gives up. Measured on
 a Realme phone: saving after 2 or 20 seconds received the file whole, saving after

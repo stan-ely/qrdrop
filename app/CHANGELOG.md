@@ -11,6 +11,26 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
+## Unreleased
+
+**Received files are saved straight away, with no save dialog.** Accept now saves the
+file, and the done screen says where it went. On a computer that is a `qrdrop` folder
+in Downloads. On Android 11 and later it is `Download/qrdrop`. Android 7 to 10 asks you
+to choose a folder once, the first time you tap Receive, and saves there after that.
+On Android you can pick a different folder with **Change folder** on the screen after
+a file arrives.
+
+Received files never replace a file that is already there. A second `report.pdf` is
+saved as `report (1).pdf`.
+
+This also fixes receives failing on some Android phones, Realme and other ColorOS
+phones among them. While the save dialog was open, the phone paused qrdrop. If choosing
+a location took more than about half a minute, the other device gave up and the
+transfer failed.
+
+Cancelling a receive now removes the unfinished file on Android, too. Before, it left an
+empty file behind.
+
 ## 1.2.1 -- 2026-09-28
 
 **No changes to the app.** This is 1.2.0 under a new number. Google Play never lets a
