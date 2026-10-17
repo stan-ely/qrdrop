@@ -274,10 +274,20 @@ class StoragePlugin(private val activity: Activity) : Plugin(activity) {
     return held
   }
 
+  // The device's own storage names a tree "primary:Download/qrdrop", and the
+  // path after the colon is what the done screen should say -- the same
+  // "Download/qrdrop" the MediaStore route reports, rather than a bare
+  // "qrdrop" that reads as a different place when it is the same folder. Any
+  // other provider (an SD card's volume id, a cloud drive's opaque id) has no
+  // readable path, so it gets the folder's display name.
   private fun folderName(tree: Uri): String? = try {
-    displayName(
-      DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-    )
+    val id = DocumentsContract.getTreeDocumentId(tree)
+    if (tree.authority == "com.android.externalstorage.documents" && id.startsWith("primary:") &&
+      id.length > "primary:".length) {
+      id.removePrefix("primary:")
+    } else {
+      displayName(DocumentsContract.buildDocumentUriUsingTree(tree, id))
+    }
   } catch (e: Exception) {
     null
   }
