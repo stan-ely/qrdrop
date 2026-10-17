@@ -31,6 +31,7 @@ use tokio::sync::mpsc;
 use crate::prompt::Prompter;
 use crate::style::Style;
 use crate::text;
+use qrdrop_session::messages;
 
 /// What every exit path prints: one line, in the JS's words where the JS
 /// has words for it.
@@ -228,7 +229,7 @@ async fn establish(
 /// the interop suite parses stdout, and this is commentary.
 fn announce(path: NetworkPath, name: &str, size: u64) {
     let style = Style::stderr();
-    let (label, detail) = text::path_description(path);
+    let (label, detail) = messages::path_description(path);
     let label = match path {
         NetworkPath::Local => style.ok(label),
         NetworkPath::Direct => style.accent(label),
@@ -236,7 +237,7 @@ fn announce(path: NetworkPath, name: &str, size: u64) {
         NetworkPath::Unknown => style.dim(label),
     };
     eprintln!("{label} \u{2014} {detail}");
-    if let Some(w) = text::metered_warning(name, size, path) {
+    if let Some(w) = messages::metered_warning(name, size, path) {
         eprintln!("{}", style.warn(&w));
     }
 }
@@ -273,8 +274,8 @@ impl Progress {
         let line = format!(
             "{} {} of {}",
             self.verb,
-            text::bytes(moved),
-            text::bytes(total)
+            messages::bytes(moved),
+            messages::bytes(total)
         );
         if self.tty {
             print!("\r\x1b[K{line}{}", if done { "\n" } else { "" });
@@ -353,13 +354,13 @@ async fn send_on(
     // Free TURN is metered: refuse before the manifest goes out rather than
     // fail partway through.
     if size > RELAYED_MAX_BYTES && handle.path().await == NetworkPath::Relay {
-        return Err(text::relay_cap(&name, size).into());
+        return Err(messages::relay_cap(&name, size).into());
     }
 
     // A file big enough to warn about waits for the route before it starts;
     // a small one goes now and the route is said whenever it is known.
     let mut announced = false;
-    if size > text::METERED_WARN_BYTES {
+    if size > messages::METERED_WARN_BYTES {
         loop {
             match events.next().await {
                 Some(SessionEvent::Path { combined, .. }) => {
@@ -375,7 +376,7 @@ async fn send_on(
         }
     }
 
-    println!("\nSending {name} ({})\u{2026}", text::bytes(size));
+    println!("\nSending {name} ({})\u{2026}", messages::bytes(size));
     let mut progress = Progress::new("Sent");
     handle.send_file(Box::new(source));
     loop {
@@ -492,10 +493,10 @@ async fn decide(
     assume_yes: bool,
 ) -> Result<Decision, Error> {
     let style = Style::stdout();
-    let describe = format!("{name} ({})", text::bytes(size));
+    let describe = format!("{name} ({})", messages::bytes(size));
     let mine = handle.path().await;
     if size > RELAYED_MAX_BYTES && mine == NetworkPath::Relay {
-        let refusal = text::relay_cap_decline(&name, size);
+        let refusal = messages::relay_cap_decline(&name, size);
         println!("\n{}", style.warn(&format!("Refused: {refusal}")));
         handle.decline();
         return Ok(Decision::Declined);

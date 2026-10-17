@@ -18,6 +18,7 @@
 
 pub mod io;
 pub mod lan;
+pub mod messages;
 pub mod networks;
 pub mod pair;
 pub mod path;
