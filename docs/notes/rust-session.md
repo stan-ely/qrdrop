@@ -22,8 +22,8 @@ session that works on it starts by reading the **Status** section and ends by up
 **Next step:** Phase 1, the WebRTC spike: a throwaway binary in the scratchpad that pairs with
 node-datachannel and Chromium over a hand-carried SDP and moves bytes in Trystero's room frame and
 action wire. `test/vectors/trystero.json` has both encodings, and the recordings show what a
-working exchange looks like on the channel. The first push of phase 0 is also the first run of
-ci.yml's `rust` job; check it went green, since the app half has only been run on Windows.
+working exchange looks like on the channel. ci.yml's `rust` job went green
+on its first run (run 39016489083, 3 min 17 s), app host tests included.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
