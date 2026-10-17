@@ -51,7 +51,7 @@ import { renderQR, scanQR, cameraAvailable } from './qr.js'
 import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
 import { patch } from './vdom.js'
-import { render, dialogContent, NO_CAMERA_SCAN } from './view.js'
+import { render, dialogContent, NO_CAMERA_SCAN, NO_SAVE_FOLDER } from './view.js'
 import { copyText } from './copy.js'
 import { STYLES } from './styles.js'
 
@@ -550,6 +550,8 @@ export class QRDropElement extends HTMLElement {
       toast: /** @type {string | null} */ (null),
       beam: /** @type {import('./view.js').State['beam']} */ (null),
       beamEnlarged: false,
+      saveLocation: /** @type {string | null} */ (null),
+      canChangeFolder: false,
     }
   }
 
@@ -908,7 +910,7 @@ export class QRDropElement extends HTMLElement {
       // starts it. See _confirmBeam.
       case 'beam:pick': return this._pickFile(async file => this._confirmBeam(file))
       case 'beam:start': return this._beginConfirmedBeam()
-      case 'beam:scan': return void this._startBeamReceive()
+      case 'beam:scan': return void this._startBeamReceive().catch(e => this._fail(e))
       case 'beam:fps': return this._setBeamFps(payload)
       case 'beam:enlarge': return this._setBeamEnlarged(payload ?? !this._state.beamEnlarged)
       case 'manual:submit': return this._submitManualCode(payload)
@@ -929,6 +931,7 @@ export class QRDropElement extends HTMLElement {
       case 'cancel': return this._reset()
       case 'restart': return this._reset()
       case 'copy': return void this._copy(payload)
+      case 'save:change-folder': return void this._changeSaveFolder().catch(e => this._fail(e))
       default: throw new Error(`Unknown intent: ${intent}`)
     }
   }
@@ -1381,7 +1384,7 @@ export class QRDropElement extends HTMLElement {
       sas: '', sasWords: [], offer: null, file: null, progress: null,
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
       mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
-      path: null, lan: false, pathDebug: null,
+      path: null, lan: false, pathDebug: null, saveLocation: null, canChangeFolder: false,
       // Last key wins over the `error: null` _setState injects for any
       // update carrying a screen change, which is what lets this one reset
       // set an error while every other one still clears the stale one. The
@@ -1693,6 +1696,7 @@ export class QRDropElement extends HTMLElement {
 
   /** @param {Bytes} secret */
   async _startReceive(secret) {
+    if (!await this._ensureSaveLocation()) return
     this._setState({ screen: 'receive', role: 'receiver', status: 'Starting…', pairing: true })
 
     const room = await this._establish({ secret, role: 'guest' })
@@ -1766,6 +1770,7 @@ export class QRDropElement extends HTMLElement {
               file: { name: manifest.name, size: manifest.size },
               status: sink.streaming ? '' : 'This browser buffers the file in memory before saving it.',
               progress: { moved: 0, total: manifest.size },
+              saveLocation: sink.location ?? null,
             })
           }
 
@@ -1782,6 +1787,7 @@ export class QRDropElement extends HTMLElement {
         this._setState({
           screen: 'done', outcome: 'received',
           file: { name: file.name, size: file.size }, digest: file.digest,
+          canChangeFolder: Boolean(getPlatform().changeSaveLocation),
         })
         room.close()
       },
@@ -2021,6 +2027,7 @@ export class QRDropElement extends HTMLElement {
    * Beam: collect a file from another device's screen through this camera.
    */
   async _startBeamReceive() {
+    if (!await this._ensureSaveLocation()) return
     this._setState({
       screen: 'beam-receive', mode: 'beam', role: 'receiver',
       // Empty: the heading already says exactly this, and a status line that
@@ -2072,6 +2079,8 @@ export class QRDropElement extends HTMLElement {
       this._setState({
         screen: 'done', outcome: 'received',
         file: { name: sink.name, size: received.size },
+        saveLocation: sink.location ?? null,
+        canChangeFolder: Boolean(getPlatform().changeSaveLocation),
         // The manifest's own hash, which assemble() has just checked the bytes
         // against. On the network path this field holds a chained digest both
         // peers computed independently; here there is only one computation and
@@ -2194,7 +2203,46 @@ export class QRDropElement extends HTMLElement {
     }
   }
 
+  /**
+   * Settles where a received file will go, before anything is paired or the
+   * camera opens. A no-op on the website, which has no prepareReceive and asks
+   * at Accept because showSaveFilePicker must; and in the app nearly always a
+   * no-op too, since the desktop and Android 11+ save to Downloads/qrdrop.
+   *
+   * It exists for Android 7 to 10, which can write nowhere until the person
+   * grants a folder. Asking for that at Accept, as the save dialog used to, is
+   * what took the app off the screen mid-session and let ColorOS freeze it
+   * until the sender gave up -- here there is no peer yet to give up. Every
+   * receive entry point calls it, the scanner's included, and it runs again
+   * when a scanned code reaches _startReceive: that second call finds the
+   * folder held and returns at once.
+   *
+   * @returns {Promise<boolean>} false when the person dismissed the picker,
+   *   having been told why a receive cannot go ahead without a folder.
+   */
+  async _ensureSaveLocation() {
+    const prepare = getPlatform().prepareReceive
+    if (!prepare) return true
+    if (await prepare()) return true
+    this._reset(NO_SAVE_FOLDER)
+    return false
+  }
+
+  /**
+   * The done screen's "Change folder". Only offered where the platform has
+   * one to change (the Android app), and only after a receive, where the
+   * person has just seen where their file went and can judge whether that was
+   * the right place. The file just received stays where it is.
+   */
+  async _changeSaveFolder() {
+    const change = getPlatform().changeSaveLocation
+    if (!change) return
+    const folder = await change()
+    if (folder) this._toast(`Files you receive will be saved in ${folder}.`)
+  }
+
   async _beginScan() {
+    if (!await this._ensureSaveLocation()) return
     this._setState({
       screen: 'receive', role: 'receiver',
       status: cameraAvailable() ? 'Point the camera at the code.' : NO_CAMERA_SCAN,

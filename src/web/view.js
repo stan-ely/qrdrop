@@ -18,7 +18,8 @@
  * The intents are: 'send:pick', 'receive:scan', 'manual:submit' (payload:
  * the raw text typed or pasted), 'verify:confirm', 'offer:accept',
  * 'offer:decline', 'cancel', 'restart', 'copy' (payload: 'code' | 'digest'),
- * 'beam:pick', 'beam:scan', 'beam:fps' (payload: the chosen number). The
+ * 'beam:pick', 'beam:scan', 'beam:fps' (payload: the chosen number),
+ * 'save:change-folder' (the app's done screen, after a receive). The
  * beam intents are the no-network path's equivalents of 'send:pick' /
  * 'receive:scan' -- a separate pair rather than overloading the originals,
  * because element.js needs to know at the moment of the click which of two
@@ -127,6 +128,12 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   evidence to estimate honestly.
  * @property {boolean} beamEnlarged whether beam-send's code fills the display
  *   (styles.js's overlay). Reset on every screen change by element.js.
+ * @property {string | null} saveLocation where the received file was saved,
+ *   `Downloads/qrdrop/report (1).pdf` -- known only when the sink chose the
+ *   place itself (the app). A browser's picker was the person's own choice,
+ *   and repeating it back would be noise.
+ * @property {boolean} canChangeFolder whether the done screen offers "Change
+ *   folder": set after a receive on a platform with a folder to change.
  */
 
 /** @typedef {(intent: string, payload?: any) => void} Dispatch */
@@ -1287,6 +1294,13 @@ function done(state, dispatch) {
       state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '')
         ? h('p', { class: 'filename' }, state.file.name)
         : null,
+      // The app saves without asking, so this is the only place the person
+      // learns where their file went. The full relative location rather than
+      // the folder alone, because a second copy of a name is saved as
+      // `name (1).ext` and the line above shows the name the sender used.
+      state.saveLocation && state.outcome === 'received'
+        ? h('p', { class: 'note', id: 'done-location' }, `Saved to ${state.saveLocation}`)
+        : null,
       pathBadge(state),
     ]),
     // Only when there is one. A failed or declined transfer never computes a
@@ -1306,6 +1320,13 @@ function done(state, dispatch) {
     ],
     actions: [
       h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
+      // Here and nowhere else: after a receive, with the location just above
+      // it, is when someone can tell whether that was the right place. Never on
+      // the offer screen -- Accept and Decline are the decision there, and a
+      // third control beside them is one more thing to misread.
+      state.canChangeFolder && state.outcome === 'received'
+        ? h('button', { class: 'btn', type: 'button', onclick: () => dispatch('save:change-folder') }, 'Change folder')
+        : null,
     ],
   }
 }
@@ -1383,6 +1404,14 @@ export function errorCopy(message) {
  * there the sentence has to say the mode is simply unavailable here.
  */
 export const NO_CAMERA_SCAN = 'No camera available — enter the code by hand.'
+/**
+ * Said when a receive cannot start because the person dismissed the folder
+ * picker -- the app on Android 10 and older, which can save nowhere until a
+ * folder is chosen. It names the way forward, because the reset lands on the
+ * choose screen and the next Receive tap asks again.
+ */
+export const NO_SAVE_FOLDER = 'qrdrop needs a folder to save received files in. Tap Receive again to choose one.'
+
 export const NO_CAMERA_BEAM = 'This device has no usable camera, so it cannot receive a beamed file.'
 
 /**

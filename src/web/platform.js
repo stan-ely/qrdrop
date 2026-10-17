@@ -31,6 +31,17 @@ import { createSink as webCreateSink, canStreamToDisk as webCanStreamToDisk } fr
  *   (transport/lan.js). Absent here and on the deployed website, which
  *   never takes that path -- a page has no listener, and the site's CSP
  *   names no ws: origin. Only app/src/main.js registers one.
+ * @property {() => Promise<boolean>} [prepareReceive] Settles where a
+ *   received file will go, BEFORE a receive pairs or opens the camera, and
+ *   resolves false when the person declined to say. Only the app registers
+ *   it: its sink saves without asking at Accept, and on the Android versions
+ *   that need a folder chosen first, choosing it mid-session is what let the
+ *   OS freeze the app and lose the sender. A browser has nothing to prepare
+ *   -- showSaveFilePicker asks at Accept, and must.
+ * @property {() => Promise<string | null>} [changeSaveLocation] Asks for a
+ *   new folder to save into and resolves to its name, or null when nothing
+ *   changed. Its presence is what puts "Change folder" on the done screen, so
+ *   only a platform with a folder to change (the Android app) registers it.
  */
 
 /** @type {Platform} */

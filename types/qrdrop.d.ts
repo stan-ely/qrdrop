@@ -431,6 +431,12 @@ interface Sink {
   streaming: boolean
   /** The sanitised filename actually used, not the one the peer asked for. */
   name: string
+  /**
+   * Where the file went, for the done screen -- `Downloads/qrdrop/report (1).pdf`.
+   * Only a sink that chose the destination itself knows one: the app's. A
+   * browser's picker or download manager was the person's own choice.
+   */
+  location?: string
   write(chunk: Bytes): Promise<void>
   close(): Promise<void>
   abort(): Promise<void>

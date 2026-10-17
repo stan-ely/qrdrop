@@ -56,7 +56,7 @@ function state(overrides) {
     offer: null, file: null, progress: null, outcome: null, message: null, digest: '',
     dragging: false, copied: null, pairing: false, busy: false, manualError: null,
     mode: 'p2p', beamNode: null, beam: null, dialogNode: null, modal: null, toast: null,
-    beamEnlarged: false,
+    beamEnlarged: false, saveLocation: null, canChangeFolder: false,
     ...overrides,
   })
 }
@@ -235,4 +235,28 @@ test('the fast path takes over the badge, in the local colour and with no metere
   // come before the classification ever resolves.
   const early = screenTree(state({ screen: 'transfer', role: 'receiver', file, progress, lan: true }), 'transfer')
   assert.match(textOf(early), /Local network, direct/)
+})
+
+test('the app says where a received file went, and only a receive offers to change it', () => {
+  const file = { name: 'report.pdf', size: 2_097_152 }
+  const received = { screen: 'done', role: 'receiver', outcome: 'received', file, digest: 'ab' }
+
+  // The app saved without asking, so this line is the only place the person
+  // learns the second copy was named report (1).pdf.
+  const app = state({ ...received, saveLocation: 'Download/qrdrop/report (1).pdf', canChangeFolder: true })
+  assert.match(textOf(screenTree(app, 'done')), /Saved to Download\/qrdrop\/report \(1\)\.pdf/)
+  assert.ok(intentsOn(app, 'done').has('save:change-folder'))
+  for (const intent of intentsOn(app, 'done')) {
+    assert.ok(!PAIRING_INTENTS.has(intent), `'${intent}' on done would start a pairing without the choose screen`)
+  }
+
+  // The website: the person picked the place, and there is no folder to change.
+  const web = state(received)
+  assert.doesNotMatch(textOf(screenTree(web, 'done')), /Saved to/)
+  assert.ok(!intentsOn(web, 'done').has('save:change-folder'))
+
+  // A failure saved nothing, so it must not claim a location or offer one.
+  const failed = state({ ...received, outcome: 'failed', saveLocation: 'Download/qrdrop/x', canChangeFolder: true })
+  assert.doesNotMatch(textOf(screenTree(failed, 'done')), /Saved to/)
+  assert.ok(!intentsOn(failed, 'done').has('save:change-folder'))
 })

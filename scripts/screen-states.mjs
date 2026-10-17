@@ -195,6 +195,19 @@ export const FIXTURES = [
     },
   },
   {
+    // The app's receive: saved without a dialog, so the done screen carries
+    // the one line saying where, and Android's "Change folder" beside the
+    // restart button. The second button is what makes this its own picture:
+    // it is the only done screen whose action bar holds two.
+    name: 'done-app',
+    screen: 'done',
+    state: {
+      screen: 'done', role: 'receiver', outcome: 'received',
+      file: PDF, path: 'local', digest: DIGEST,
+      saveLocation: `Download/qrdrop/${PDF.name}`, canChangeFolder: true,
+    },
+  },
+  {
     // The failure outcome, which is the sparsest screen the app can render:
     // no filename (view.js drops it unless the outcome succeeded), no digest
     // (a failed transfer never computes one, and _failTransfer clears the
