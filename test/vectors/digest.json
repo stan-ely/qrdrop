@@ -1,0 +1,81 @@
+{
+  "about": "The rolling digest: start from 32 zero bytes; for each chunk c = SHA-256(c || SHA-256(chunk)); sent as 64 lowercase hex characters. A file is cut into CHUNK_SIZE (16318) pieces and has max(1, ceil(size / CHUNK_SIZE)) chunks, so an empty file is one empty chunk. Files are {\"mod251\": n}: n bytes, byte i = i % 251.",
+  "cases": [
+    {
+      "why": "an empty file: one empty chunk",
+      "file": {
+        "mod251": 0
+      },
+      "chunks": 1,
+      "steps": [
+        "1c9ecec90e28d2461650418635878a5c91e49f47586ecf75f2b0cbb94e897112"
+      ],
+      "digest": "1c9ecec90e28d2461650418635878a5c91e49f47586ecf75f2b0cbb94e897112"
+    },
+    {
+      "why": "one byte",
+      "file": {
+        "mod251": 1
+      },
+      "chunks": 1,
+      "steps": [
+        "64fdb2b463190df45dc976206ce8111d8c83680ddeb86778b7f9982d6822de6a"
+      ],
+      "digest": "64fdb2b463190df45dc976206ce8111d8c83680ddeb86778b7f9982d6822de6a"
+    },
+    {
+      "why": "exactly one full chunk",
+      "file": {
+        "mod251": 16318
+      },
+      "chunks": 1,
+      "steps": [
+        "f4a2500c30417da3dfca551ba6c877cd4ab2ce9422ec35ab974588c19b928495"
+      ],
+      "digest": "f4a2500c30417da3dfca551ba6c877cd4ab2ce9422ec35ab974588c19b928495"
+    },
+    {
+      "why": "two full chunks and five bytes",
+      "file": {
+        "mod251": 32641
+      },
+      "chunks": 3,
+      "steps": [
+        "f4a2500c30417da3dfca551ba6c877cd4ab2ce9422ec35ab974588c19b928495",
+        "a9c72365b36d93d5d9a1050c666bd985d5853aedcf06d8bef80df26eb7813ade",
+        "767a861210c16251c3e9e7abefdf2e658ae64292187947e00c26b4564e56048f"
+      ],
+      "digest": "767a861210c16251c3e9e7abefdf2e658ae64292187947e00c26b4564e56048f"
+    }
+  ],
+  "chunk_counts": [
+    {
+      "size": 0,
+      "chunks": 1
+    },
+    {
+      "size": 1,
+      "chunks": 1
+    },
+    {
+      "size": 16317,
+      "chunks": 1
+    },
+    {
+      "size": 16318,
+      "chunks": 1
+    },
+    {
+      "size": 16319,
+      "chunks": 2
+    },
+    {
+      "size": 104857600,
+      "chunks": 6426
+    },
+    {
+      "size": 1099511627776,
+      "chunks": 67380294
+    }
+  ]
+}

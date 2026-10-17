@@ -1,0 +1,269 @@
+{
+  "about": "Trystero 0.25.4's wire as qrdrop uses it, computed by Trystero's own modules wherever they can be driven with fixed inputs (see scripts/make-vectors.mjs). room_id and password are the first secret vector's topic and password. Recorded live traffic is in trystero-recording.json.",
+  "trystero_version": "0.25.4",
+  "password": "dh9ZTmPpS1KRWV9j_4EKoZJhHKZP-Bp_QUQRmevJhgI",
+  "topics": {
+    "app_id": "qrdrop",
+    "room_id": "iYYUuG3RFGI0DnoMN5eZ1A",
+    "root_topic_plaintext": "Trystero@qrdrop@iYYUuG3RFGI0DnoMN5eZ1A",
+    "root_topic": "2d3te74r2e3824221d3f62310193142536c6t",
+    "nostr_kind_root": 22388,
+    "torrent_info_hash": "16s4k4d624d2k2n2p1z3",
+    "room_token_plaintext": "Trystero:qrdrop:iYYUuG3RFGI0DnoMN5eZ1A",
+    "room_token": "d4286ac8a9c4282d55cf1c71c53614229086531cc5a0792c4584c414d3f2e0c3",
+    "peers": [
+      {
+        "self_id": "0aBcDeFgHiJkLmNoPqRs",
+        "self_topic_plaintext": "Trystero@qrdrop@iYYUuG3RFGI0DnoMN5eZ1A@0aBcDeFgHiJkLmNoPqRs",
+        "self_topic": "2d585o6c4t4f4n6r2l6w103ca6yr60305j5s1m",
+        "nostr_kind_self": 22878
+      },
+      {
+        "self_id": "zYxWvUtSrQpOnMlKjIhG",
+        "self_topic_plaintext": "Trystero@qrdrop@iYYUuG3RFGI0DnoMN5eZ1A@zYxWvUtSrQpOnMlKjIhG",
+        "self_topic": "1c55723k682e121y2g282y6e169311y2y2h643o",
+        "nostr_kind_self": 22655
+      }
+    ]
+  },
+  "sha1": [
+    {
+      "input": "",
+      "digest": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+      "base36": "621l4j6m2m2z23d1e2d5b6n452oo404v6079"
+    },
+    {
+      "input": "abc",
+      "digest": "a9993e364706816aba3e25717850c26c9cd0d89d",
+      "base36": "4p491q1i1z63l2y561q11353c285e304c5s604d"
+    },
+    {
+      "input": "Trystero@qrdrop@iYYUuG3RFGI0DnoMN5eZ1A",
+      "digest": "55890e07ab56744c4a317bda03242d6d92b7e4f5",
+      "base36": "2d3te74r2e3824221d3f62310193142536c6t"
+    }
+  ],
+  "signal": {
+    "key": "4f9f5f5ef5a681da99fe2130ce18b379434593d33eaa2ca9aa591ced3e13ea9d",
+    "key_plaintext": "dh9ZTmPpS1KRWV9j_4EKoZJhHKZP-Bp_QUQRmevJhgI:qrdrop:iYYUuG3RFGI0DnoMN5eZ1A",
+    "iv_bytes": 16,
+    "cases": [
+      {
+        "why": "an offer SDP",
+        "iv": "00112233445566778899aabbccddeeff",
+        "plaintext": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:abcd\r\na=ice-pwd:abcdefghijklmnopqrstuvwx\r\na=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\na=setup:actpass\r\na=mid:0\r\na=sctp-port:5000\r\n",
+        "wire": "0,17,34,51,68,85,102,119,136,153,170,187,204,221,238,255$duhgjfwgcSzQxqZCCm6oJ+fKEthZFdrozlk4I+9eC6vQVgfKL+upfizhaqkJ8HM6Rlm+xNCecNpflDJF0g0evyNzn+wjVQt/Tn8Rhf889Q1GbrhcoEQr2ilBbJUgneJWz1rJcIvnVKvvTlasBurshu6fdoT5Rl2fRSUB9IgYWVXuuYPRKm1/ibh75udsk9El501Yms1daZpDPdmKKDMfp1CjvBOCB44Ki+yS2v/MgWG+HnVhzYtpw8PQLO4xKbdDqihZNtqfbbp36/94CCOKtRy7NQWku9bB0p0RxaFBnQsloUF3yqYhKaRMNNKdiC082qDHOebgRGggOu2v/TisvQ+o8jZXJlbOsL4bLHJt7fQuC9P1EEFlVQLrRUGCp9gih9y9amMA7KAcaK6GFfTIrCSV6g38bxcdRHAFqS0V1J493zsspS1X3hYBLwSYsezFsyaI0/GIKR7jpVr+JTLbdsCq3D5CmNaMlgsZ9iLspFmG+TBatU4jmGxtj/Y="
+      },
+      {
+        "why": "an ICE candidate, as Nostr trickles it",
+        "iv": "64758697a8b9cadbecfd0e1f30415263",
+        "plaintext": "{\"candidate\":\"candidate:1 1 UDP 2122317823 127.0.0.1 50000 typ host\",\"sdpMid\":\"0\",\"sdpMLineIndex\":0,\"usernameFragment\":\"abcd\"}",
+        "wire": "100,117,134,151,168,185,202,219,236,253,14,31,48,65,82,99$Q0ddT9VoO9ozbYGV3+9bIJoetXaIzuJEC1qIeV+t9QVPmg4NOwTggnmHNCZZMzGGhBMvLyF+Zcb4k5yCrgle/uwpilHDUHu2M43/XGNAIrBUiBCb1714dY1ifvjWscqKilPdZBNOUYMI4NbXMQkLomfEuERXZjE6VPRVqC1kcp2QhIV6iIqFTRVrUaDQcg=="
+      },
+      {
+        "why": "an empty string",
+        "iv": "c8d9eafb0c1d2e3f5061728394a5b6c7",
+        "plaintext": "",
+        "wire": "200,217,234,251,12,29,46,63,80,97,114,131,148,165,182,199$s8de2O8yai7iRv5oGtCmYw=="
+      }
+    ]
+  },
+  "handshake": {
+    "initiator": "0aBcDeFgHiJkLmNoPqRs",
+    "challenge_message": {
+      "__trystero_pw": "challenge",
+      "c": "abcdefghijklmnopqrstuvwxyz0123456789"
+    },
+    "response_message": {
+      "__trystero_pw": "response",
+      "h": "d44b4afb2049331964bae1aacda5da8b6422ec10a1857bae8fe56b44d5ce9db8"
+    },
+    "response_plaintext": "abcdefghijklmnopqrstuvwxyz0123456789:dh9ZTmPpS1KRWV9j_4EKoZJhHKZP-Bp_QUQRmevJhgI:qrdrop:iYYUuG3RFGI0DnoMN5eZ1A",
+    "ready_payload": ""
+  },
+  "action_wire": {
+    "header_bytes": 36,
+    "max_payload_bytes": 16348,
+    "cases": [
+      {
+        "action": "ecdh",
+        "payload": {
+          "json": "BPublicKeyAsBase64urlGoesHere"
+        },
+        "chunks": [
+          {
+            "hex": "6563646800000000000000000000000000000000000000000000000000000000000001ff425075626c69634b6579417342617365363475726c476f657348657265"
+          }
+        ]
+      },
+      {
+        "action": "ecdh",
+        "payload": {
+          "json": "a second send on one action: the nonce advances"
+        },
+        "chunks": [
+          {
+            "hex": "6563646800000000000000000000000000000000000000000000000000000000000101ff61207365636f6e642073656e64206f6e206f6e6520616374696f6e3a20746865206e6f6e636520616476616e636573"
+          }
+        ]
+      },
+      {
+        "action": "@_hsdata",
+        "payload": {
+          "json": {
+            "__trystero_pw": "challenge",
+            "c": "abcdefghijklmnopqrstuvwxyz0123456789"
+          }
+        },
+        "chunks": [
+          {
+            "hex": "405f687364617461000000000000000000000000000000000000000000000000000009ff7b225f5f747279737465726f5f7077223a226368616c6c656e6765222c2263223a226162636465666768696a6b6c6d6e6f707172737475767778797a30313233343536373839227d"
+          }
+        ]
+      },
+      {
+        "action": "@_hsready",
+        "payload": {
+          "json": ""
+        },
+        "chunks": [
+          {
+            "hex": "405f687372656164790000000000000000000000000000000000000000000000000001ff"
+          }
+        ]
+      },
+      {
+        "action": "@_leave",
+        "payload": {
+          "json": ""
+        },
+        "chunks": [
+          {
+            "hex": "405f6c6561766500000000000000000000000000000000000000000000000000000001ff"
+          }
+        ]
+      },
+      {
+        "action": "json",
+        "payload": {
+          "json": {
+            "n": 1,
+            "s": "ünïcødé",
+            "a": [
+              true,
+              null
+            ]
+          }
+        },
+        "chunks": [
+          {
+            "hex": "6a736f6e00000000000000000000000000000000000000000000000000000000000009ff7b226e223a312c2273223a22c3bc6ec3af63c3b864c3a9222c2261223a5b747275652c6e756c6c5d7d"
+          }
+        ]
+      },
+      {
+        "action": "json",
+        "payload": {
+          "json": 42
+        },
+        "chunks": [
+          {
+            "hex": "6a736f6e00000000000000000000000000000000000000000000000000000000000109ff3432"
+          }
+        ]
+      },
+      {
+        "action": "frame",
+        "payload": {
+          "binary": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d"
+        },
+        "chunks": [
+          {
+            "hex": "6672616d6500000000000000000000000000000000000000000000000000000000000dff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d"
+          }
+        ]
+      },
+      {
+        "action": "frame",
+        "payload": {
+          "binary": {
+            "mod251": 16358
+          }
+        },
+        "chunks": [
+          {
+            "header": "6672616d6500000000000000000000000000000000000000000000000000000000010c80",
+            "length": 16384,
+            "sha256": "93b1e71f04df0e7378117f744372e05f4bc5a30661f078671a8ee21944933730"
+          },
+          {
+            "header": "6672616d6500000000000000000000000000000000000000000000000000000000010dff",
+            "length": 46,
+            "sha256": "c3c15e3ae3bfff105587ceda0d2bf8cd48752fdd6b157f985877222f3aef923b"
+          }
+        ]
+      },
+      {
+        "action": "frame",
+        "payload": {
+          "binary": ""
+        },
+        "chunks": [
+          {
+            "hex": "6672616d6500000000000000000000000000000000000000000000000000000000020dff"
+          }
+        ]
+      },
+      {
+        "action": "meta",
+        "payload": {
+          "json": "with metadata"
+        },
+        "metadata": {
+          "name": "x"
+        },
+        "chunks": [
+          {
+            "hex": "6d65746100000000000000000000000000000000000000000000000000000000000002807b226e616d65223a2278227d"
+          },
+          {
+            "hex": "6d65746100000000000000000000000000000000000000000000000000000000000001ff77697468206d65746164617461"
+          }
+        ]
+      },
+      {
+        "action": "abcdefghijklmnopqrstuvwxyz012345",
+        "payload": {
+          "json": "a 32-byte action name, the longest allowed"
+        },
+        "chunks": [
+          {
+            "hex": "6162636465666768696a6b6c6d6e6f707172737475767778797a303132333435000001ff612033322d6279746520616374696f6e206e616d652c20746865206c6f6e6765737420616c6c6f776564"
+          }
+        ]
+      }
+    ]
+  },
+  "room_frame": {
+    "data": {
+      "inner": "6563646800000000000000000000000000000000000000000000000000000000000001ff425075626c69634b6579417342617365363475726c476f657348657265",
+      "frame": "010040643432383661633861396334323832643535636631633731633533363134323239303836353331636335613037393263343538346334313464336632653063336563646800000000000000000000000000000000000000000000000000000000000001ff425075626c69634b6579417342617365363475726c476f657348657265"
+    },
+    "presence": [
+      {
+        "present": true,
+        "frame": "0201004064343238366163386139633432383264353563663163373163353336313432323930383635333163633561303739326334353834633431346433663265306333"
+      },
+      {
+        "present": false,
+        "frame": "0200004064343238366163386139633432383264353563663163373163353336313432323930383635333163633561303739326334353834633431346433663265306333"
+      }
+    ]
+  },
+  "nostr_event": {
+    "secret_key": "ddfe0f2bf3db9c6cce58afd88d2988aeb8105929320fc4521beb7550fd59752e",
+    "aux_rand": "0000000000000000000000000000000000000000000000000000000000000000",
+    "id_preimage": "[0,\"6e253952a907bf7997776ae28f2aca57cb336647123d1e33487a101e957d4db4\",1760000000,22388,[[\"x\",\"2d3te74r2e3824221d3f62310193142536c6t\"]],\"{\\\"peerId\\\":\\\"zYxWvUtSrQpOnMlKjIhG\\\"}\"]",
+    "message": "[\"EVENT\",{\"kind\":22388,\"tags\":[[\"x\",\"2d3te74r2e3824221d3f62310193142536c6t\"]],\"created_at\":1760000000,\"content\":\"{\\\"peerId\\\":\\\"zYxWvUtSrQpOnMlKjIhG\\\"}\",\"pubkey\":\"6e253952a907bf7997776ae28f2aca57cb336647123d1e33487a101e957d4db4\",\"id\":\"6c606b03c444f1436521e7eee5402be437437a3a3cdd16bd2459f60b06e87f52\",\"sig\":\"f6887df96cf5b0880354c2ed1bb0a74b7b3cd6aadfba47dca1d970b013fddc8be8e94ec3dc9143f23bd2a3045333ac35894e4a933a30935c343a71e68af01cfe\"}]"
+  }
+}

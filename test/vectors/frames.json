@@ -1,0 +1,385 @@
+{
+  "about": "Frames: a 14-byte header (type u8: 0 control, 1 chunk; fileSeq u32 BE; index u64 BE; last u8, read as true only when 1) then AES-256-GCM(ciphertext || 16-byte tag) with IV = header[1..13] and AAD = the whole header. Control frames use fileSeq 0xffffffff, last 0, one index counter per direction, and UTF-8 JSON plaintext. Keys are the session vectors' first case. A plaintext of {\"mod251\": n} is n bytes where byte i = i % 251. reject.error is one of unauthenticated (drop and count, never fatal) | index | type | file-seq (fatal) | too-short | too-large.",
+  "keys": {
+    "host_to_guest": "14f04ad73009bec294ec4b0c2931b59969d16b763a44bf0fd7369dbf19c55b48",
+    "guest_to_host": "b887121f5947ce505005a89db61c05fa160e5e35d1195a54532bf29e9f4f430a"
+  },
+  "constants": {
+    "HEADER_BYTES": 14,
+    "TAG_BYTES": 16,
+    "CHUNK_SIZE": 16318,
+    "MAX_FRAME_BYTES": 16414,
+    "CONTROL_SEQ": 4294967295,
+    "TYPE_CONTROL": 0,
+    "TYPE_CHUNK": 1,
+    "MIN_FRAME_BYTES": 30,
+    "FULL_FRAME_BYTES": 16348
+  },
+  "headers": [
+    {
+      "fields": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 0,
+        "last": true
+      },
+      "header": "0100000000000000000000000001"
+    },
+    {
+      "fields": {
+        "type": 1,
+        "fileSeq": 16909060,
+        "index": 21575960585,
+        "last": false
+      },
+      "header": "0101020304000000050607080900"
+    },
+    {
+      "fields": {
+        "type": 0,
+        "fileSeq": 4294967295,
+        "index": 3,
+        "last": false
+      },
+      "header": "00ffffffff000000000000000300"
+    },
+    {
+      "fields": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 9007199254740991,
+        "last": true
+      },
+      "header": "0100000000001fffffffffffff01"
+    }
+  ],
+  "decode": [
+    {
+      "header": "0100000000000000000000000001",
+      "fields": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 0,
+        "last": true
+      }
+    },
+    {
+      "header": "0100000000000000000000000002",
+      "fields": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 0,
+        "last": false
+      }
+    },
+    {
+      "header": "01000000000000000000000000ff",
+      "fields": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 0,
+        "last": false
+      }
+    }
+  ],
+  "chunks": [
+    {
+      "why": "an empty file is one empty chunk",
+      "key": "host_to_guest",
+      "file_seq": 0,
+      "index": 0,
+      "last": true,
+      "plaintext": "",
+      "frame": "0100000000000000000000000001318978f094deaf04c162b4946721ea72"
+    },
+    {
+      "why": "a small first chunk",
+      "key": "host_to_guest",
+      "file_seq": 0,
+      "index": 0,
+      "last": false,
+      "plaintext": "68656c6c6f2c20",
+      "frame": "010000000000000000000000000083e26ac41be78832a791d2e7a6f7b15a1cb0941f8e69f7"
+    },
+    {
+      "why": "and its last",
+      "key": "host_to_guest",
+      "file_seq": 0,
+      "index": 1,
+      "last": true,
+      "plaintext": "776f726c64",
+      "frame": "010000000000000000000000010180c0d5375dba0273637432876dffdebd5e801e152b"
+    },
+    {
+      "why": "a full chunk, 16348 bytes sealed: exactly one Trystero chunk",
+      "key": "host_to_guest",
+      "file_seq": 0,
+      "index": 2,
+      "last": false,
+      "plaintext": {
+        "mod251": 16318
+      },
+      "frame_length": 16348,
+      "frame_sha256": "6687b6d814c1a780631df28337d1cb381e4e5da2c12c9ac2575e53eca2e17634"
+    },
+    {
+      "why": "a large index and a non-zero fileSeq, both in the nonce",
+      "key": "host_to_guest",
+      "file_seq": 7,
+      "index": 1099511627779,
+      "last": true,
+      "plaintext": "00ff",
+      "frame": "01000000070000010000000003010cafffa0723292863cef6a5a39b65447289a"
+    }
+  ],
+  "controls": [
+    {
+      "key": "host_to_guest",
+      "index": 0,
+      "message": {
+        "t": "path",
+        "path": "direct"
+      },
+      "plaintext": "{\"t\":\"path\",\"path\":\"direct\"}",
+      "frame": "00ffffffff000000000000000000fe75918f0a2fad849b33d393a8c10ecf53bc116f6d26a2636fadadff39159f70a210093c76d37dbfa12ebd01"
+    },
+    {
+      "key": "host_to_guest",
+      "index": 1,
+      "message": {
+        "t": "lan-hello",
+        "listen": "quiet"
+      },
+      "plaintext": "{\"t\":\"lan-hello\",\"listen\":\"quiet\"}",
+      "frame": "00ffffffff00000000000000010095ed7b574415d4d9ce220717b12aeccbc262d9468794754e8741819249d7efcedf61b3fc6c6e18c809914278479da2c3e3eb"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 0,
+      "message": {
+        "t": "path",
+        "path": "direct"
+      },
+      "plaintext": "{\"t\":\"path\",\"path\":\"direct\"}",
+      "frame": "00ffffffff000000000000000000d1eca9a196bc4dcc70310ca1def5173a682fe3cedfc03b9a009b49aced2f9f03ca2e9174383862a2239b5db1"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 1,
+      "message": {
+        "t": "lan-hello",
+        "listen": "quiet"
+      },
+      "plaintext": "{\"t\":\"lan-hello\",\"listen\":\"quiet\"}",
+      "frame": "00ffffffff000000000000000100e334558ba09a759030171b1963796ac7df1d7a699b624a9a743625092c2f6fe29c80937e68e0e35e83ab0909d5d69add4ee5"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 2,
+      "message": {
+        "t": "lan-offer",
+        "addrs": [
+          "192.168.1.20",
+          "10.0.0.5"
+        ],
+        "port": 49152,
+        "token": "00112233445566778899aabbccddeeff"
+      },
+      "plaintext": "{\"t\":\"lan-offer\",\"addrs\":[\"192.168.1.20\",\"10.0.0.5\"],\"port\":49152,\"token\":\"00112233445566778899aabbccddeeff\"}",
+      "frame": "00ffffffff0000000000000002000f0f5a46e3ea610855f8167c8827164f639765606024609710b43bc5a9f600d868ca6f827ac99d06bacf873e0ad7862230b2dbc4aa82ddc22f284d2884b218f880acf6915dade783e5cfa9d5a2f7beb230e2f07ae8b3b73fafb86138f3b977848508feff688914984b1b59614dfc4ed1a90eb2da76c52ad9920b3c8cbc"
+    },
+    {
+      "key": "host_to_guest",
+      "index": 2,
+      "message": {
+        "t": "manifest",
+        "seq": 0,
+        "name": "résumé 📄.pdf",
+        "size": 32641,
+        "mime": "application/pdf",
+        "chunks": 3
+      },
+      "plaintext": "{\"t\":\"manifest\",\"seq\":0,\"name\":\"résumé 📄.pdf\",\"size\":32641,\"mime\":\"application/pdf\",\"chunks\":3}",
+      "frame": "00ffffffff0000000000000002001ac7c3ab41f5a294f61c4618b9c6f8b830106c84230452ca4d84b3efacb3e93201a59363c7317744870e27a7459388e4619f2cac6ff7d9ed8c60bccbf5479d4a9214f50d2bda0689dbb42cc8f6951159c00fb831c36faa38dcc75a5ec692b611d2adc0e8976e94d0dc2545e95a311ada48a478a1"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 3,
+      "message": {
+        "t": "accept",
+        "seq": 0
+      },
+      "plaintext": "{\"t\":\"accept\",\"seq\":0}",
+      "frame": "00ffffffff0000000000000003002acee73c1bb78d96b6408923e1f8122598f7c95eb5cb219e23f9d5026c05ee8d5be1d204fe16"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 4,
+      "message": {
+        "t": "pause"
+      },
+      "plaintext": "{\"t\":\"pause\"}",
+      "frame": "00ffffffff000000000000000400bdf8f06271f46c5998086d6b48339b383b307dedabf0946697cef6cc62"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 5,
+      "message": {
+        "t": "resume"
+      },
+      "plaintext": "{\"t\":\"resume\"}",
+      "frame": "00ffffffff000000000000000500d421148ea94c5fcbd3b7bf36093027c28da6977312700a352c5ecfc5937f"
+    },
+    {
+      "key": "host_to_guest",
+      "index": 3,
+      "message": {
+        "t": "complete",
+        "seq": 0,
+        "chunks": 3,
+        "digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "plaintext": "{\"t\":\"complete\",\"seq\":0,\"chunks\":3,\"digest\":\"abababababababababababababababababababababababababababababababab\"}",
+      "frame": "00ffffffff0000000000000003004e243f806d15b7dac2f5bf1967fa7be4307657c6c6b227df60eb9760148895f9d38a9835aefbf76c7b2000f36f4a38e3ee50e6db99b0aad432dc718aca6047762c8ac726eaee151a38cd1ca171fb2860cce7c85d69c191e278c4dadc406529ec11a3b6585a3c268a322b960000d13b50fc812b1c02fad7be359f46226992a9"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 6,
+      "message": {
+        "t": "done",
+        "seq": 0
+      },
+      "plaintext": "{\"t\":\"done\",\"seq\":0}",
+      "frame": "00ffffffff00000000000000060029b0ee0611d930e59c96bc442952bf9f7204a2359671e778980e29815aa8a438245b2389"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 7,
+      "message": {
+        "t": "decline",
+        "seq": 1
+      },
+      "plaintext": "{\"t\":\"decline\",\"seq\":1}",
+      "frame": "00ffffffff000000000000000700d206f5134a4eec643a4e559cc4bda2243d865ed9ee3bfb68bba027d8e26baeb8d0abd9f8abafa8"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 8,
+      "message": {
+        "t": "error",
+        "seq": 1,
+        "message": "Saving failed: disk full"
+      },
+      "plaintext": "{\"t\":\"error\",\"seq\":1,\"message\":\"Saving failed: disk full\"}",
+      "frame": "00ffffffff0000000000000008007ef5a4f2c733167ef4040d6248017e4ade5542809a8e664a715b80a0ecec6511c58d977ff95b756da87ca3d736ca818dbad6b248deeb83ff918b997d0d09d2a7ad52f01c0bb48f69ac15"
+    }
+  ],
+  "reject": [
+    {
+      "why": "one bit of the tag flipped",
+      "key": "host_to_guest",
+      "frame": "010000000000000000000000040091b23d84916de4a4e3e43478e49375eb8dfaf97596daf9",
+      "expect": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 4
+      },
+      "error": "unauthenticated"
+    },
+    {
+      "why": "one bit of the ciphertext flipped",
+      "key": "host_to_guest",
+      "frame": "010000000000000000000000040011b23d84916de4a4e3e43478e49375eb8dfaf97596daf8",
+      "expect": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 4
+      },
+      "error": "unauthenticated"
+    },
+    {
+      "why": "the header's index rewritten: it is the AAD and the nonce, so the tag fails before any order check sees it",
+      "key": "host_to_guest",
+      "frame": "0100000000000000000000000d0091b23d84916de4a4e3e43478e49375eb8dfaf97596daf8",
+      "expect": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 4
+      },
+      "error": "unauthenticated"
+    },
+    {
+      "why": "the header's last byte rewritten",
+      "key": "host_to_guest",
+      "frame": "010000000000000000000000040191b23d84916de4a4e3e43478e49375eb8dfaf97596daf8",
+      "expect": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 4
+      },
+      "error": "unauthenticated"
+    },
+    {
+      "why": "sealed under the other direction's key",
+      "key": "host_to_guest",
+      "frame": "01000000000000000000000004003785ac4aeff170689d3b6aa5002eb0923c8f4f7257fb41",
+      "expect": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 4
+      },
+      "error": "unauthenticated"
+    },
+    {
+      "why": "authentic, but not the index expected: fatal, it is our own peer",
+      "key": "host_to_guest",
+      "frame": "010000000000000000000000040091b23d84916de4a4e3e43478e49375eb8dfaf97596daf8",
+      "expect": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 3
+      },
+      "error": "index"
+    },
+    {
+      "why": "authentic, but not the type expected",
+      "key": "host_to_guest",
+      "frame": "010000000000000000000000040091b23d84916de4a4e3e43478e49375eb8dfaf97596daf8",
+      "expect": {
+        "type": 0,
+        "fileSeq": 0,
+        "index": 4
+      },
+      "error": "type"
+    },
+    {
+      "why": "authentic, but from another file",
+      "key": "host_to_guest",
+      "frame": "010000000000000000000000040091b23d84916de4a4e3e43478e49375eb8dfaf97596daf8",
+      "expect": {
+        "type": 1,
+        "fileSeq": 1,
+        "index": 4
+      },
+      "error": "file-seq"
+    },
+    {
+      "why": "one byte under the 30-byte minimum",
+      "key": "host_to_guest",
+      "frame": "010000000000000000000000040091b23d84916de4a4e3e43478e49375",
+      "expect": {
+        "type": 1,
+        "fileSeq": 0,
+        "index": 4
+      },
+      "error": "too-short"
+    },
+    {
+      "why": "one byte over MAX_FRAME_BYTES, refused before decryption",
+      "key": "host_to_guest",
+      "frame_zeros": 16415,
+      "expect": null,
+      "error": "too-large"
+    }
+  ]
+}

@@ -1,0 +1,364 @@
+{
+  "about": "P-256 ECDH, raw uncompressed public keys (65 bytes; base64url without padding on the wire). shared = the 32-byte X coordinate; transcript = SHA-256(lo || hi) of the two public keys sorted bytewise; each value is HKDF-SHA-256(ikm = shared, salt = the QR secret, info = UTF-8(label) || transcript) for labels host->guest and guest->host (32 bytes, AES-256-GCM) and sas (4 bytes). The host (the QR side) sends with host_to_guest. SAS symbol i is sas_table[sas_bytes[i] & 0x3f].",
+  "cases": [
+    {
+      "secret": "73815823edcb7f2c144c653094497b2ecb384034c866ff431ea1396624e38dff",
+      "host_private": "95651ff750882510b8f079763d12b9ef9e2f954667b6717aabb4d36eb0cdb102",
+      "host_public": "04ba69973f618e20b0030fe0708b6ba98f0c3ae75dfdb3604cae7d8c0e5aff987c2eaf5f06fe9a1fb4d0aaf119c0ec0440bd57f8362708804db259994289767b40",
+      "host_public_b64url": "BLpplz9hjiCwAw_gcItrqY8MOudd_bNgTK59jA5a_5h8Lq9fBv6aH7TQqvEZwOwEQL1X-DYnCIBNslmZQol2e0A",
+      "guest_private": "d7d0aefa8015e03387b4e9050eb22c056357ae593195103b337e56844e8b4100",
+      "guest_public": "04cf324feb61c6d5819d72c0c15d79aef374acaf27c66d8fae39d3b62e0156ed5e8819e773a3d06bb719b83f67b4fed62d96731e8a0284a2aaa1ea52903e5cb129",
+      "guest_public_b64url": "BM8yT-thxtWBnXLAwV15rvN0rK8nxm2PrjnTti4BVu1eiBnnc6PQa7cZuD9ntP7WLZZzHooChKKqoepSkD5csSk",
+      "shared": "0c9210e537bc6d273eda11a20daa78bd10acfbd0a5c20ed011bd752cec8e0f28",
+      "transcript": "f2a4b973c439b69d65e81048ae037236dd73e0006c9960e30b7203391451dd72",
+      "host_to_guest": "14f04ad73009bec294ec4b0c2931b59969d16b763a44bf0fd7369dbf19c55b48",
+      "guest_to_host": "b887121f5947ce505005a89db61c05fa160e5e35d1195a54532bf29e9f4f430a",
+      "sas_bytes": "0843ce0f",
+      "sas": "🧊 🐬 🌴 👑",
+      "sas_words": [
+        "ice",
+        "dolphin",
+        "palm",
+        "crown"
+      ],
+      "cli_line": "🧊 ice   🐬 dolphin   🌴 palm   👑 crown"
+    },
+    {
+      "secret": "0bd11a55d04d69320c29c096016d9bc45f58ca891c404453752f49c2d6557e13",
+      "host_private": "bd165f54ae7bc5f5cc5f27969af9eb721b5abdeb65fc578e21f582750dfb6ece",
+      "host_public": "045e2942180b57d006e2ab9ef38286897f57187af251c9931d520624cd33a841d72f1ba3b673c5dba4b3b33ca435fb1370470095acd9681d126d11fe63aa5ef804",
+      "host_public_b64url": "BF4pQhgLV9AG4que84KGiX9XGHryUcmTHVIGJM0zqEHXLxujtnPF26SzszykNfsTcEcAlazZaB0SbRH-Y6pe-AQ",
+      "guest_private": "3fe98d095da8e88576e5d9e31c6497dd41f4f6b8e4de008696ea185bed9f3d1c",
+      "guest_public": "0488308658909fcc4726b379343861310bb0b061769bf45b74c77acc398e9afb75b38bc3727c2fee9e3bf5b6a92a51b396a0ee8e812c23743fa959ebe119f535b9",
+      "guest_public_b64url": "BIgwhliQn8xHJrN5NDhhMQuwsGF2m_RbdMd6zDmOmvt1s4vDcnwv7p479bapKlGzlqDujoEsI3Q_qVnr4Rn1Nbk",
+      "shared": "6a67b0894641f7bac32e0836fc8227fb54629d4c6994194579427b0c8f51c0bd",
+      "transcript": "8e813a155be79cf7b9c0bc2584c819e5a6e46b8e6b9bb3be1953363614364cf4",
+      "host_to_guest": "bb6253926481da6a1599bc1393ac068ef37e605aafb0add8e910cd8227bb8243",
+      "guest_to_host": "38fd3c07f305a2b9471f5cb58f07f5122a4feed9668121ef8abee5409ee32841",
+      "sas_bytes": "c4650a8e",
+      "sas": "🐘 💀 🍋 🌴",
+      "sas_words": [
+        "elephant",
+        "skull",
+        "lemon",
+        "palm"
+      ],
+      "cli_line": "🐘 elephant   💀 skull   🍋 lemon   🌴 palm"
+    }
+  ],
+  "render": [
+    {
+      "sas_bytes": "00000000",
+      "sas": "🍎 🍎 🍎 🍎",
+      "sas_words": [
+        "apple",
+        "apple",
+        "apple",
+        "apple"
+      ],
+      "cli_line": "🍎 apple   🍎 apple   🍎 apple   🍎 apple"
+    },
+    {
+      "sas_bytes": "ffffffff",
+      "sas": "🪄 🪄 🪄 🪄",
+      "sas_words": [
+        "wand",
+        "wand",
+        "wand",
+        "wand"
+      ],
+      "cli_line": "🪄 wand   🪄 wand   🪄 wand   🪄 wand"
+    },
+    {
+      "sas_bytes": "3f7fbfff",
+      "sas": "🪄 🪄 🪄 🪄",
+      "sas_words": [
+        "wand",
+        "wand",
+        "wand",
+        "wand"
+      ],
+      "cli_line": "🪄 wand   🪄 wand   🪄 wand   🪄 wand"
+    },
+    {
+      "sas_bytes": "1a24271a",
+      "sas": "🕯️ ✂️ 🌪️ 🕯️",
+      "sas_words": [
+        "candle",
+        "scissors",
+        "tornado",
+        "candle"
+      ],
+      "cli_line": "🕯️ candle   ✂️ scissors   🌪️ tornado   🕯️ candle"
+    },
+    {
+      "sas_bytes": "40800c33",
+      "sas": "🍎 🍎 🦉 🍩",
+      "sas_words": [
+        "apple",
+        "apple",
+        "owl",
+        "donut"
+      ],
+      "cli_line": "🍎 apple   🍎 apple   🦉 owl   🍩 donut"
+    }
+  ],
+  "sas_table": [
+    [
+      "🍎",
+      "apple"
+    ],
+    [
+      "🐝",
+      "bee"
+    ],
+    [
+      "🌵",
+      "cactus"
+    ],
+    [
+      "🐬",
+      "dolphin"
+    ],
+    [
+      "🐘",
+      "elephant"
+    ],
+    [
+      "🔥",
+      "fire"
+    ],
+    [
+      "👻",
+      "ghost"
+    ],
+    [
+      "🍄",
+      "mushroom"
+    ],
+    [
+      "🧊",
+      "ice"
+    ],
+    [
+      "🔑",
+      "key"
+    ],
+    [
+      "🍋",
+      "lemon"
+    ],
+    [
+      "🌙",
+      "moon"
+    ],
+    [
+      "🦉",
+      "owl"
+    ],
+    [
+      "🐙",
+      "octopus"
+    ],
+    [
+      "🌴",
+      "palm"
+    ],
+    [
+      "👑",
+      "crown"
+    ],
+    [
+      "🌈",
+      "rainbow"
+    ],
+    [
+      "🐍",
+      "snake"
+    ],
+    [
+      "🌻",
+      "sunflower"
+    ],
+    [
+      "🌮",
+      "taco"
+    ],
+    [
+      "🦄",
+      "unicorn"
+    ],
+    [
+      "🌊",
+      "wave"
+    ],
+    [
+      "⌛",
+      "hourglass"
+    ],
+    [
+      "🦓",
+      "zebra"
+    ],
+    [
+      "⚓",
+      "anchor"
+    ],
+    [
+      "🎈",
+      "balloon"
+    ],
+    [
+      "🕯️",
+      "candle"
+    ],
+    [
+      "💎",
+      "diamond"
+    ],
+    [
+      "🥚",
+      "egg"
+    ],
+    [
+      "🎸",
+      "guitar"
+    ],
+    [
+      "🔨",
+      "hammer"
+    ],
+    [
+      "🧲",
+      "magnet"
+    ],
+    [
+      "🎺",
+      "trumpet"
+    ],
+    [
+      "🪐",
+      "saturn"
+    ],
+    [
+      "🧩",
+      "puzzle"
+    ],
+    [
+      "🚀",
+      "rocket"
+    ],
+    [
+      "✂️",
+      "scissors"
+    ],
+    [
+      "💀",
+      "skull"
+    ],
+    [
+      "🔭",
+      "telescope"
+    ],
+    [
+      "🌪️",
+      "tornado"
+    ],
+    [
+      "🧵",
+      "thread"
+    ],
+    [
+      "🚂",
+      "train"
+    ],
+    [
+      "☂️",
+      "umbrella"
+    ],
+    [
+      "🎻",
+      "violin"
+    ],
+    [
+      "⚡",
+      "lightning"
+    ],
+    [
+      "🪓",
+      "axe"
+    ],
+    [
+      "🧶",
+      "yarn"
+    ],
+    [
+      "🦴",
+      "bone"
+    ],
+    [
+      "🏹",
+      "arrow"
+    ],
+    [
+      "🧱",
+      "brick"
+    ],
+    [
+      "🕰️",
+      "clock"
+    ],
+    [
+      "🍩",
+      "donut"
+    ],
+    [
+      "🥁",
+      "drum"
+    ],
+    [
+      "🪶",
+      "feather"
+    ],
+    [
+      "🍇",
+      "grapes"
+    ],
+    [
+      "🔔",
+      "bell"
+    ],
+    [
+      "🪁",
+      "kite"
+    ],
+    [
+      "🍿",
+      "popcorn"
+    ],
+    [
+      "🎯",
+      "target"
+    ],
+    [
+      "🧭",
+      "compass"
+    ],
+    [
+      "🪞",
+      "mirror"
+    ],
+    [
+      "🧪",
+      "flask"
+    ],
+    [
+      "🌡️",
+      "thermometer"
+    ],
+    [
+      "🪄",
+      "wand"
+    ]
+  ]
+}
