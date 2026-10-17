@@ -171,6 +171,8 @@ Each of these is in CLAUDE.md for the JS, was broken once there, and gets its ow
   working.
 - **CLI colour is identity** when that stream is not a TTY, or when `NO_COLOR` is set.
 - **`MAX_FRAME_BYTES` is the inbound tolerance and is not derived from `CHUNK_SIZE`.**
+- **New, from Trystero's own failure: a signalling connection is never given up for good on a network
+  error, and a room never joins an empty pool.** See phase 4.
 
 ## The wire, as the Rust side must speak it
 
@@ -504,6 +506,39 @@ Nostr and torrent clients:
 - per-relay connections, backoff and retirement;
 - the warm-up announce schedule;
 - offer re-send and expiry.
+
+**Compatible on the wire does not mean copying Trystero's client behaviour, and one behaviour must not
+be copied.** Trystero 0.25.4's `makeSocket` (`core/dist/utils.mjs`) retries a closed relay socket
+with backoff (3.3, 6.7, 13, 27, 53 s). After that it sets `isClosed` and never tries again.
+`relayManager.register` then keeps handing that dead client to every later room, so the room joins
+nothing and pairing ends in "Timed out waiting for the other device" until the app is force-stopped.
+
+This was reproduced on 2026-10-17 on the API 35 emulator. Android 15's background firewall chain
+blocks the app's uid within seconds of it leaving the foreground (a folder picker in front is
+enough). About 10 s later every relay socket closes, and with a cold DNS cache the whole backoff runs
+out inside the block. `navigator.onLine` stays true, so Trystero's online/offline pause never starts.
+(The details are in the `trystero-relay-giveup` memory note.)
+
+The Rust clients therefore follow these rules, each with a test:
+
+- **Never retire a relay for a network failure.** Back off up to a cap, then keep retrying at the
+  cap. Retirement (`CLOSED`, a non-duplicate `OK false`) is for what the relay *said*, never for a
+  socket that dropped.
+- **A room never joins on a pool with nothing alive in it.** Joining checks the pool. Every
+  connection that is down is redialled at once, with its backoff reset, and the room waits for one
+  to come up. If none does, the error names the cause ("no signalling server reachable"), not the
+  peer.
+- **Resume is an event.** The app tells the session when it returns to the foreground (Tauri's
+  resume event on mobile; the page gets nothing, per CLAUDE.md), and the session resets every backoff
+  and redials. This replaces the page's 1.5 s poll for this purpose.
+- **A blocked network is not a timeout to wait out.** The test is the emulator repro: receive, idle
+  75 s, picker 120 s, receive. It must pair.
+
+The background block still kills a *live* transfer, as the ColorOS freeze does. Nothing in-process
+can fix that, and this phase does not claim to.
+
+Phases 1-6 are months away, so the JS fix the memory note proposes should not wait for them. That
+fix is to check `getRelaySockets()` before joining and recover, or upstream a Trystero change.
 
 Then the race across both. **Gate:** over the public relays, a Rust peer and a real Node Trystero peer
 join one room and both fire `onPeerJoin`. That check is a new e2e script, out of `npm test` like the
