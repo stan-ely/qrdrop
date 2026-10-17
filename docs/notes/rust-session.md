@@ -12,7 +12,7 @@ session that works on it starts by reading the **Status** section and ends by up
 | 2. `qrdrop-protocol` | done, 2026-10-17 | `d935920` | every phase 0 vector passes; see "Phase 2: what it found" |
 | 3. `tryst`, sans-IO core and WebRTC peer | done, 2026-10-18 | `228f0f1` | every Trystero vector and both recordings pass; two str0m peers join in-process; see "Phase 3: what it found" |
 | 4. `tryst` signalling clients | done, 2026-10-18 | `a798f24` | a Rust peer and Node Trystero pair over the public relays and trackers, both roles; see "Phase 4: what it found" |
-| 5. `qrdrop-session` and LAN | done, 2026-10-18 | | two Rust sessions pair, verify and move a file over the stand-ins and over the public relays; TURN in `tryst`; see "Phase 5: what it found" |
+| 5. `qrdrop-session` and LAN | done, 2026-10-18 | `2982bea` | two Rust sessions pair, verify and move a file over the stand-ins and over the public relays; TURN in `tryst`; see "Phase 5: what it found" |
 | 6. Rust CLI and the cross-implementation suite | not started | | |
 | 7. The apps on the native session | not started | | |
 | 8. CLI distribution switch | not started | | |
