@@ -67,18 +67,24 @@ export async function deriveTopic(secret, epoch = null) {
 /**
  * The password Trystero uses to encrypt session descriptions.
  *
- * Returned as a string because that is what Trystero's config takes; it hands
- * it to PBKDF2 internally. The entropy is ours either way -- this is 256 bits
- * of HKDF output, not a passphrase -- so the stretching is redundant rather
- * than load-bearing.
+ * Returned as a string because that is what Trystero's config takes. Trystero
+ * 0.25.4 does not stretch it: its signal key is one SHA-256 of
+ * `<password>:<appId>:<roomId>`, imported raw as an AES-256-GCM key, with no
+ * salt and no iterations, and each signal is sealed under a fresh 16-byte IV
+ * (core/dist/crypto.mjs). These comments said PBKDF2 until 2026-10-17, and
+ * nothing here ever depended on it: all of the strength is ours, because this
+ * is 256 bits of HKDF output rather than a passphrase, which is exactly the
+ * case where a single hash is enough. A Rust peer has to reproduce the hash,
+ * not a key-stretching function (test/vectors/trystero.json).
  *
  * Trystero without a password derives its key from the app ID and room name,
  * both of which any relay observer already has. That would leave the DTLS
  * fingerprint substitutable in transit, so this is not optional.
  *
  * Note the return type: a STRING, not a CryptoKey. Trystero's config field
- * takes the password and stretches it itself, so handing it key material
- * straight from WebCrypto is a type error rather than a subtle failure.
+ * takes the password and hashes it into a key itself, so handing it key
+ * material straight from WebCrypto is a type error rather than a subtle
+ * failure.
  *
  * @param {Bytes} secret
  * @returns {Promise<string>}

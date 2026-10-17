@@ -654,7 +654,9 @@ export async function collectPathEvidence(pc) {
  * @param {SignalingStrategy} strategy
  * @param {object} ctx
  * @param {string} ctx.topic HKDF'd from the secret -- never the secret itself.
- * @param {string} ctx.password A string, not a CryptoKey: Trystero stretches it internally.
+ * @param {string} ctx.password A string, not a CryptoKey: Trystero hashes it
+ *   into its signal key itself (one SHA-256, no salt, no PBKDF2; see
+ *   derivePassword in core/secret.js).
  * @param {Bytes} ctx.secret The QR secret, passed on as the ECDH HKDF salt.
  * @param {'host' | 'guest'} ctx.role
  * @param {readonly RTCIceServer[]} ctx.iceServers
