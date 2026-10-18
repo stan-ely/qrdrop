@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use qrdrop_protocol::{Manifest, NetworkPath, PEER_DISCONNECTED, Role, Secret};
+use qrdrop_session::networks::STUN_SERVERS;
 use qrdrop_session::path::RELAYED_MAX_BYTES;
 use qrdrop_session::{
     LanConfig, OpenConfig, Paired, SessionEvent, SessionEvents, SessionHandle, SessionOptions, Sink,
@@ -217,12 +218,16 @@ impl Drop for NativeSink {
     }
 }
 
-/// No QUIC yet: the app is built without the feature until phase 9's gate
-/// is measured on the phone (docs/notes/rust-session.md).
+/// QUIC only in a build with the app's `quic` feature, which no shipped build
+/// has until phase 9's gate is measured on the phone
+/// (docs/notes/rust-session.md).
 fn options() -> SessionOptions {
     SessionOptions {
         lan: Some(LanConfig::default()),
-        quic: None,
+        quic: cfg!(feature = "quic").then(|| qrdrop_session::QuicConfig {
+            bind: None,
+            stun: STUN_SERVERS.iter().map(|s| s.to_string()).collect(),
+        }),
     }
 }
 

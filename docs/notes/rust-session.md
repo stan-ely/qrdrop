@@ -1300,6 +1300,23 @@ WSL, one pinned core per side:
 - **Cubic stays.** A raw quinn spike measured BBR ahead at 20 and 50 ms and behind on a clean link
   and at 100 ms. Nothing there justifies leaving quinn's default before a real path is measured.
 
+**The first device session (2026-10-18, RMX3868 on Wi-Fi to the Rust CLI on Windows, 64 MiB).**
+A debug APK built with `--features quic` and the Rust optimised (`CARGO_PROFILE_DEV_OPT_LEVEL=3`),
+the session picked by the `qrdrop:native-session` key, each run timed in the page from Confirm or
+Accept to the done screen:
+- **Phone receives:** the JS session over LAN 11.4-13.3 MB/s; the native session over QUIC
+  8.4-11.8. Not better, on one network.
+- **Phone sends:** the JS session over WebRTC 5.2-6.8, since a Windows receiver never listens; the
+  native session 6.0-7.3, with every byte at the CLI and its digest right, but the phone reporting
+  the transfer failed. Two bugs, both fixed in the tree and neither yet re-measured on the phone:
+  a sender read its idle LAN socket closing at the end of a QUIC transfer as the link it was
+  using, because "up" stood in for "carrying"; and a direct link closing after the last chunk
+  could beat the receiver's `done` there, so a sender now waits `LINK_CLOSE_GRACE` for it.
+- **The QUIC handshake was quick.** The CLI took 27 ms from the phone's offer to a connection;
+  the phone's offer came 1.35 s after the CLI's, which is its STUN lookup.
+- **Not measured:** the native session over LAN alone, in either direction.
+- The app gained a `quic` feature for this, off in every shipped build.
+
 **Left for a device:**
 - **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and
   measure phone to CLI across two networks against the WebRTC path. Mind ColorOS's socket kill

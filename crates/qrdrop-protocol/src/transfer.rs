@@ -400,6 +400,14 @@ impl Session {
         self.consider_pause();
     }
 
+    /// Every chunk of the outgoing file is sealed and queued, and the
+    /// receiver's `done` is all that is left to wait for.
+    pub fn awaiting_done(&self) -> bool {
+        self.outgoing
+            .as_ref()
+            .is_some_and(|o| o.state == Out::AwaitingDone)
+    }
+
     /// A file is being received into an open sink.
     pub fn busy(&self) -> bool {
         matches!(

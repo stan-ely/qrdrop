@@ -50,6 +50,16 @@ pub const LEAVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// polls: the selected pair is not reported the instant a connection opens.
 pub const PATH_WAIT: Duration = Duration::from_secs(3);
 
+/// How long a sender whose direct link closed after its last chunk waits for
+/// the receiver's `done` before calling the transfer failed. The receiver
+/// closes that link when it has the whole file, and the close comes by
+/// another road than the `done` (TCP or QUIC against WebRTC), so it can
+/// overtake it: measured from a phone sending 64 MiB to the CLI, which had
+/// received every byte and checked the digest while the phone said the
+/// connection closed. A link that died with frames still in it gets no
+/// `done`, and this ends that wait with the error it always had.
+pub const LINK_CLOSE_GRACE: Duration = Duration::from_secs(5);
+
 /// Bytes queued for the writer and not yet handed to the transport. Chunks
 /// are read only while the queue is under this; the transport's own buffer
 /// (4 MiB in tryst) is behind it.
@@ -679,6 +689,9 @@ struct Driver {
     link_tx: Inbox,
     /// The sender waits here at Accept, for a link, until this.
     link_wait: Option<Instant>,
+    /// A direct link closed after the last chunk: unless the `done` lands
+    /// first, fail with this message at this time (LINK_CLOSE_GRACE).
+    link_grace: Option<(Instant, &'static str)>,
     mine: Option<NetworkPath>,
     theirs: NetworkPath,
     path_tx: watch::Sender<Option<NetworkPath>>,
@@ -760,6 +773,7 @@ pub(crate) fn start(
         pending_location: None,
         link_tx: link.link_tx.clone(),
         link_wait: None,
+        link_grace: None,
         mine: None,
         theirs: NetworkPath::Unknown,
         path_tx,
@@ -837,10 +851,14 @@ impl Driver {
         loop {
             let wanting = self.source.is_some() && self.session.chunk_wanted().is_some();
             let room = self.queued.load(Ordering::Relaxed) < OUT_HIGH;
-            let timer = [self.session.poll_timeout(), self.link_wait]
-                .into_iter()
-                .flatten()
-                .min();
+            let timer = [
+                self.session.poll_timeout(),
+                self.link_wait,
+                self.link_grace.map(|(t, _)| t),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             let sleep = async {
                 match timer {
                     Some(t) => tokio::time::sleep_until(t.into()).await,
@@ -877,6 +895,14 @@ impl Driver {
                     self.session.handle_timeout(now);
                     if self.link_wait.is_some_and(|t| now >= t) {
                         self.proceed(true);
+                    }
+                    if let Some((t, why)) = self.link_grace
+                        && now >= t
+                    {
+                        self.link_grace = None;
+                        if self.source.is_some() {
+                            self.session.abort(why);
+                        }
                     }
                 }
             }
@@ -953,24 +979,43 @@ impl Driver {
                 // Only a stream that was carrying the file loses anything by
                 // ending: frames went down it and WebRTC has not got them.
                 if carried && (self.session.busy() || self.source.is_some()) {
-                    self.session.abort(quic::QUIC_CLOSED);
+                    self.link_closed(quic::QUIC_CLOSED);
                 }
             }
             LinkIn::Left => self.session.peer_left(),
             LinkIn::LanClosed => {
-                let carried = self
-                    .lan
-                    .as_ref()
-                    .is_some_and(|l| l.carrying || l.state == LinkState::Up);
+                // A receiver counts a link that was up as carrying, since the
+                // sender may have switched and lost frames in it before the
+                // first one arrived. A sender knows: it set `carrying` when
+                // it switched. Reading "up" as "carrying" there was right
+                // while LAN was the only direct link, and wrong once QUIC
+                // could win: the idle LAN socket closing at the end of a
+                // QUIC transfer failed a file the receiver already had
+                // (measured from a phone sending 64 MiB to the CLI).
+                let carried = self.lan.as_ref().is_some_and(|l| {
+                    l.carrying || (self.role == Role::Guest && l.state == LinkState::Up)
+                });
                 if let Some(l) = &mut self.lan {
                     l.state = LinkState::None;
                 }
-                // The sender's frames stopped arriving over the link while
-                // WebRTC may still be up, so no leave is coming to end this.
-                if (carried && self.session.busy()) || self.source.is_some() {
-                    self.session.abort(LAN_CLOSED);
+                // The frames stopped arriving over the link while WebRTC
+                // may still be up, so no leave is coming to end this.
+                if carried && (self.session.busy() || self.source.is_some()) {
+                    self.link_closed(LAN_CLOSED);
                 }
             }
+        }
+    }
+
+    /// A direct link closed under a transfer. A sender with every chunk
+    /// already out waits LINK_CLOSE_GRACE for the `done` that is probably
+    /// behind the close; anyone else has lost frames, and fails now.
+    fn link_closed(&mut self, why: &'static str) {
+        if self.source.is_some() && self.session.awaiting_done() {
+            self.link_grace
+                .get_or_insert((Instant::now() + LINK_CLOSE_GRACE, why));
+        } else {
+            self.session.abort(why);
         }
     }
 
@@ -1191,7 +1236,10 @@ impl Driver {
 
     fn switch_to_lan(&mut self) {
         #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
-        if let Some(tx) = self.lan.as_mut().and_then(|l| l.tx.take()) {
+        if let Some(l) = self.lan.as_mut()
+            && let Some(tx) = l.tx.take()
+        {
+            l.carrying = true;
             let _ = self.out.send(Out::UseLan(tx));
             self.emit(SessionEvent::Lan);
         }

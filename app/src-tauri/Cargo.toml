@@ -79,6 +79,12 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 qrdrop-protocol = { path = "../../crates/qrdrop-protocol" }
 qrdrop-session = { path = "../../crates/qrdrop-session", features = ["lan-dial"] }
 
+[features]
+# The QUIC path to another Rust peer (crates/qrdrop-session/src/quic.rs).
+# Off in every shipped build until the phone gate in docs/notes/rust-session.md
+# passes; `--features quic` builds one to measure it.
+quic = ["qrdrop-session/quic"]
+
 [target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
 qrdrop-session = { path = "../../crates/qrdrop-session", features = ["lan-dial", "lan-listen"] }
 
