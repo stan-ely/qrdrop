@@ -1323,8 +1323,9 @@ went from 5.2-6.8 to 4.1-5.5.
 - **Both fixes hold.** Five native sends, every one ending on "sent", with all 67,108,864 bytes
   at the CLI.
 - **Phone sends:** the native session with QUIC 3.2-5.9 MB/s; native with the CLI on
-  `QRDROP_QUIC=0`, which is WebRTC, since a Windows receiver never listens, 4.2-4.7; JS over
-  WebRTC 4.1-5.5. All three are the same within the spread. On this network, nothing on the send
+  `QRDROP_QUIC=0` 4.2-4.7; JS 4.1-5.5. All three are the same within the spread. The last two
+  were first written down as WebRTC, on the reasoning that a Windows receiver never listens.
+  The fourth session found them on LAN: the phone is the side that listens. On this network, nothing on the send
   side comes near the phase 7 gate's 15.5.
 - **Phone receives:** native over QUIC 9.5-10.6; native over LAN alone (the CLI on
   `QRDROP_QUIC=0`) 12.9-13.6, with one run at 6.9; JS over LAN 12.6-12.9.
@@ -1349,12 +1350,12 @@ receiving and 576 sending; two runs of each, so a first look and not a result).*
 - **Phone receives:** native over QUIC 24.0 and 18.7 MB/s; native over LAN alone 33.7 and 9.2;
   JS over LAN 9.4 and 9.7. The JS session's ceiling sits near 9.5 wherever the radio allows more,
   which fits its sink's road into Rust being the limit and not the link.
-- **Phone sends:** native, QUIC likely, 14.4 and 12.8; native over WebRTC (the CLI on
-  `QRDROP_QUIC=0`) 19.6 and 16.3; JS over WebRTC 18.6 and 0.57. The route label on a phone send
-  is the receiving CLI's and means nothing, since only a sender prints the QUIC line.
-- **Against the phase 7 gate:** receiving clears 5.8 on every route. Sending clears 15.5 on the
-  native session over WebRTC, and QUIC sends fall short of it. That points at quinn's cost on the
-  phone as a sender, not the radio; quinn's stats from the phone's end would say.
+- **Phone sends:** native over QUIC 14.4 and 12.8; native over LAN (the CLI on
+  `QRDROP_QUIC=0`) 19.6 and 16.3; JS over LAN 18.6 and 0.57. These were first recorded as
+  WebRTC; the fourth session corrects that. The route label on a phone send is the receiving
+  CLI's and means nothing, since the receiver never switches.
+- **Against the phase 7 gate:** receiving clears 5.8 on every route, and sending clears 15.5
+  over LAN. QUIC sends at 64 MiB fall short. The fourth session found why.
 - **A receiver failed a QUIC transfer when its idle LAN socket closed**, 24 MB in, over the
   hotspot tried first. A receiver counted any LAN link that was up as carrying; it now counts one
   only while no frame has come over QUIC.
@@ -1364,6 +1365,30 @@ receiving and 576 sending; two runs of each, so a first look and not a result).*
   bound to the other interface. Binding the room to the hotspot address (a local patch, not kept)
   paired at once. A host candidate per interface, as quic.rs gathers them, is the fix if this
   matters; it has not been made.
+
+**The fourth device session (2026-10-18, same 5 GHz link; quinn's counters and the writer's
+waits logged once a second from the phone by a temporary patch, not kept).**
+- **The ceiling.** Plain TCP from the phone (`dd | nc -l` on the phone, a Python reader on the PC)
+  measured 25.6, 25.2 and 28.6 MB/s.
+- **Every phone send recorded as WebRTC was on LAN.** That covers both sessions above. `ss -tn` on
+  the phone shows the file in a TCP connection the PC dialled to the phone. The JS session does
+  the same, at 25.0 MB/s for 128 MiB. No phone send in these sessions was measured on WebRTC.
+- **The phone is not CPU-bound.** Its Rust threads together used about 65% of one core, out of
+  eight. The writer spent 80-90% of each second blocked in quinn's `write_all`, with the session
+  keeping it fed.
+- **A QUIC send loses a burst early and pays for it in a short file.**
+  - In the first second, slow start overshoots: 500-678 packets lost and 3-7 congestion events.
+  - Cubic then regrows the window. RTT rises from a 4 ms floor to 11-58 ms, which is queueing.
+  - At 64 MiB the file is over while the window is still regrowing. One run held 274-407 KB of
+    window and 13-17 MB/s on the wire, and finished at 10.6 end to end.
+- **At 256 MiB, QUIC settles at 22-25 MB/s on the wire, near the TCP ceiling.** End to end it
+  measured 19.5, 20.7 and 19.8, against LAN's 23.8, 23.9 and 21.3, alternated.
+- **So QUIC is about 15% behind kernel TCP on a phone's Wi-Fi uplink, more on a short file.**
+  The usual suspects are ruled out: not the radio, not the phone's CPU, and not loss after the
+  first second. What is left is quinn's slow-start overshoot, and userspace UDP against kernel TCP
+  with segmentation offload on the same air. The levers are the start (pacing, or a congestion
+  controller with HyStart-style exit) and BBR on this link. BBR was tried only on 2.4 GHz, where
+  the radio decided everything.
 
 **Left for a device:**
 - **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and
