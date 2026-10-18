@@ -82,11 +82,14 @@ jobs:
 
       # A static C runtime on Windows, so the exe needs no Visual C++
       # redistributable on a machine that has never had one. Linux musl is
-      # static by default.
+      # static by default. Symbols stripped here and not in the workspace's
+      # release profile, which the app's reproducible build shares: the first
+      # Linux binary was 13.8 MB unstripped.
       - name: Build
         shell: bash
         env:
           RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+          CARGO_PROFILE_RELEASE_STRIP: symbols
         run: cargo build --release --locked -p qrdrop-cli --features web --target ${{ matrix.target }}
 
       # The binary runs and is the version this tree says, on the runner that

@@ -15,14 +15,15 @@ session that works on it starts by reading the **Status** section and ends by up
 | 5. `qrdrop-session` and LAN | done, 2026-10-18 | `2982bea` | two Rust sessions pair, verify and move a file over the stand-ins and over the public relays; TURN in `tryst`; see "Phase 5: what it found" |
 | 6. Rust CLI and the cross-implementation suite | done, 2026-10-18 | `aa5026a` | the Rust CLI passes the interop matrix against the Node CLI in all four pairings, WebRTC and LAN, and a Chromium tab both ways; see "Phase 6: what it found" |
 | 7. The apps on the native session | desktop done, 2026-10-18; device runs pending | `a142b52`, `04504bc`, `7573183`, `5b959bd` | the desktop app runs a transfer on `qrdrop-session` both ways against the Node CLI; on by default on Linux only, until the RMX3868 gate is measured; see "Phase 7: what it found" |
-| 8. CLI distribution switch | not started | | |
+| 8. CLI distribution switch | done in the tree, 2026-10-18; first release pending | `ec79928` | `qrdrop` runs the Rust CLI from a per-platform npm package and falls back to the Node CLI; all five targets build on CI; the npm names need a first publish by hand; see "Phase 8: what it found" |
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 7's device runs, which need the RMX3868 attached: switch the phone to the
-native session (`localStorage.setItem('qrdrop:native-session', '1')` in the WebView's devtools),
-measure against the gate, then make it the default on Android. Phase 8 can start beside it; it
-needs the distribution decision first (see Phase 8).
+**Next step:** Phase 9, the QUIC path, which can go ahead while two things wait on a person:
+- **Phase 7's device runs** need the RMX3868 attached (switch the phone with
+  `localStorage.setItem('qrdrop:native-session', '1')` in the WebView's devtools).
+- **Phase 8's first release** needs the five platform names published once by hand, and a Trusted
+  Publishing entry for each (see "Phase 8: what it found").
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -30,6 +31,9 @@ needs the distribution decision first (see Phase 8).
 - **Same wire.** The Rust side must interoperate with today's website and Node CLI.
 - **QUIC signalling.** The QUIC path rendezvouses through the Trystero-compatible signalling, not
   through a discovery or relay system of its own. iroh is not assumed.
+- **CLI distribution (phase 8).** Release binaries per target; the npm `qrdrop` package becomes a
+  launcher over per-platform optional packages, so `npx qrdrop` keeps working; Homebrew and Scoop
+  point at the binaries. Decided 2026-10-18, on the recommendation below.
 - **Location.** The code lives in this repo under `crates/` until the Trystero-compatible layer is
   mature enough to publish on its own.
 - **Crate names.** `tryst` for the Trystero-compatible rooms, named apart from Trystero so a later
@@ -1135,6 +1139,66 @@ Handle these together:
 - `qrdrop web` embedding `site/dist`;
 - an explicit exception to CLAUDE.md's "no new runtime dependencies";
 - what happens to the `./node` export.
+
+### Phase 8: what it found
+
+Done in the tree on 2026-10-18 (`ec79928`). It reaches users at the next `v*` tag, once the npm
+setup below has been done.
+
+**The shape.**
+- **The command.** `bin/qrdrop.js` is the package's `bin`. It runs
+  `qrdrop-<platform>-<arch>`'s binary where npm installed that package, and imports `src/cli.js`
+  everywhere else.
+- **The list.** `scripts/npm-platforms.mjs` holds the five platforms, and the build matrix,
+  the staging, the wiring and the placeholders all come from it.
+- **The builds.** `cli-binaries.yml` builds them, called from `publish.yml` on a tag and run by
+  itself on main.
+- **Brew and Scoop.** The Release carries an archive per platform. The Homebrew formula and the
+  Scoop manifest point at those and no longer need Node.
+
+**The open questions, and how they were settled:**
+- **Trusted Publishing for each platform package.** Each name needs its own entry on npmjs.com,
+  against `publish.yml`. npm configures one only on a package that already exists, so the
+  first publish of each name is by hand: `node scripts/npm-platforms.mjs --placeholders <dir>`,
+  then `npm publish` in each directory it writes, then the entry.
+- **Never renaming `publish.yml`.** Not renamed. The binary build became a second workflow that
+  `publish.yml` calls, and the publishing steps stay in `publish.yml` itself.
+- **`qrdrop web` embedding `site/dist`.** Each matrix job runs `npm run build` and builds with
+  `--features web`.
+- **The exception to "no new runtime dependencies".** Written into CLAUDE.md: optional, this
+  project's own packages, one installed per machine, each nothing but the binary.
+- **The `./node` export.** Unchanged, and so are `node-datachannel` and the Node CLI. They are the
+  fallback, and the library API is not the CLI's to remove.
+
+**Measured:**
+- **The build.** A Windows release build is 11 MB and imports no Visual C++ runtime
+  (`+crt-static`). CI built all five targets, each smoke-tested for its version, with Linux
+  checked as static. CI's x86_64 Linux binary runs as is in WSL's Ubuntu (`static-pie linked`).
+- **The install.** npm installed the wired `qrdrop` tarball plus the win32 package, and skipped
+  the four platform packages not yet on the registry without an error.
+- **A transfer through it.** The installed command moved 300 KB both ways against the Node CLI,
+  and once more with `QRDROP_CLI=native`, which proves it was the binary.
+- **Ctrl-C, unverified since phase 6, checked on Linux in WSL.** A SIGINT mid-transfer of 512 MB,
+  to the sender and then to the receiver. The interrupted side printed `Cancelled.` and exited
+  130 in 154 and 112 ms. The other side reported the disconnect 415 and 115 ms after the
+  signal, and no partial file was left. That is the Node CLI's message, and well inside its
+  2 s bound.
+
+**Found on the way:**
+- **No test may assert that `package.json` has no platform dependencies.** `npm publish` runs
+  the suite again from `prepublishOnly`, after the wiring, and such a test would refuse every
+  release.
+- **Unstripped, the Linux binary was 13.8 MB.** The build now strips symbols, through an
+  environment variable rather than the workspace's release profile, which the app's
+  reproducible build shares.
+- **winget's blocker is gone.** It was a vendored Node runtime, and an 11 MB portable exe in a
+  zip is what winget takes. Not done here: a first submission to `microsoft/winget-pkgs` is by
+  hand.
+
+**Left for a person:**
+- **The npm names.** Publish the five placeholders and add the five Trusted Publishing entries
+  before the next `v*` tag. Without them, that tag's `publish` job fails at the first platform
+  package, before `qrdrop` itself is published.
 
 ### Phase 9: QUIC path, Rust to Rust
 
