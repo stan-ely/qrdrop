@@ -14,13 +14,15 @@ session that works on it starts by reading the **Status** section and ends by up
 | 4. `tryst` signalling clients | done, 2026-10-18 | `a798f24` | a Rust peer and Node Trystero pair over the public relays and trackers, both roles; see "Phase 4: what it found" |
 | 5. `qrdrop-session` and LAN | done, 2026-10-18 | `2982bea` | two Rust sessions pair, verify and move a file over the stand-ins and over the public relays; TURN in `tryst`; see "Phase 5: what it found" |
 | 6. Rust CLI and the cross-implementation suite | done, 2026-10-18 | `aa5026a` | the Rust CLI passes the interop matrix against the Node CLI in all four pairings, WebRTC and LAN, and a Chromium tab both ways; see "Phase 6: what it found" |
-| 7. The apps on the native session | not started | | |
+| 7. The apps on the native session | desktop done, 2026-10-18; device runs pending | `a142b52`, `04504bc`, `7573183`, `5b959bd` | the desktop app runs a transfer on `qrdrop-session` both ways against the Node CLI; on by default on Linux only, until the RMX3868 gate is measured; see "Phase 7: what it found" |
 | 8. CLI distribution switch | not started | | |
 | 9. QUIC path, Rust to Rust | not started | | |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 7, the apps on the native session. Settle the open question below first: the
-app's path dependency on `crates/` and `app-reproducible.yml`.
+**Next step:** Phase 7's device runs, which need the RMX3868 attached: switch the phone to the
+native session (`localStorage.setItem('qrdrop:native-session', '1')` in the WebView's devtools),
+measure against the gate, then make it the default on Android. Phase 8 can start beside it; it
+needs the distribution decision first (see Phase 8).
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -1055,6 +1057,69 @@ needs a Linux run or a person at a terminal.
   WebRTC.
 - **Linux** gets network transfers.
 - **CLAUDE.md.** Update the Tauri section and the platform seam.
+
+### Phase 7: what it found
+
+The desktop half was done on 2026-10-18; the gate is a phone, and none was attached.
+
+**The app had to join the root workspace first** (`a142b52`). A path dependency outside a
+workspace's root is hashed into Cargo's metadata by its absolute path, so the app depending on
+`crates/` from its own workspace built differently in every checkout directory, and
+`app-reproducible.yml` builds in two. As a member, every path is relative to one root. The app
+keeps its own `target/` (`app/src-tauri/.cargo/config.toml`), because every workflow and the
+`gen/` Gradle project look for it there, and `default-members` keeps a bare `cargo` at the root
+from compiling Tauri. Merging the two lock files unified 17 semver-compatible crates on the
+higher version.
+
+**What landed** (`5b959bd`):
+- `src-tauri/src/native.rs`: commands to start a send or a receive and to pass the page's words
+  (confirm, reject, accept, decline, cancel) into a running transfer, and its events back over a
+  Tauri `Channel`.
+- `sink.rs` split into `open_new`, `finish` and `discard`, which its own commands call too, so
+  the native receive writes through exactly the JS sink's `storage.rs` choice.
+- The page seam: `Platform.session`, registered only by `app/src/main.js`, and two methods in
+  `element.js` that draw the existing screens from the events. The ids the e2e suite reads, the
+  verify screen's controls and the done outcomes are unchanged.
+- The sentences the CLI and the app both say moved into `qrdrop_session::messages` (`04504bc`).
+
+**Where it differs from the plan:**
+- **Android sends from a picked file keep the JS session.** plugin-dialog's `open()` returns a
+  `content://` URI there with no display name, and getting the name needs new Kotlin. Share
+  handoffs, which are real paths in the cache directory, do go native. A pasted or HTML-dropped
+  `File` keeps the JS session everywhere, as planned.
+- **The relay cap is checked just after the sender's Confirm, not just before it.** The route
+  needs a running session, and the session starts only on Confirm, because starting it is what
+  sends the lan-hello. The manifest still never goes out.
+- **On by default on Linux only.** `QRDROP_NATIVE_SESSION` and a localStorage key switch it
+  elsewhere. Linux itself is compiled by `app.yml` and was not run here.
+
+**Measured on Windows:** `e2e/app-native.e2e.mjs` launches the real debug app with WebView2's
+debugging port and attaches Playwright over CDP. Both directions against the Node CLI, plus a
+decline. 1 MiB each way, SAS and digest equal on both ends, the bytes on disk identical: **3/3**.
+The first runs failed in the harness alone, attaching while the webview was still at
+`about:blank`. The test now waits for the app's origin.
+
+**One real flow-control gap, found by chasing a CI flake.** `a_slow_sink_holds_the_sender_back`
+failed once on CI at `7b55d7e` (8.4 MB against a bound of 7) and passed on the next commit.
+- **The cause.** `receiver.js` counts a frame toward its pause on arrival, before decrypting it.
+  The Rust protocol counted only what it had opened, so frames waiting in the session's inbound
+  queue were a backlog the pause never heard about. `Session::set_queued` now folds that queue
+  into the pause and the resume, and the session's `Inbox` counts it on every road in (`7573183`).
+- **The test's own share.** The memory link had no receive window, which no real transport
+  lacks, so it now has one. And the test subtracted a current figure from a stale one, which
+  overflowed once the window slowed the sender. It now samples the backlog in the sink.
+- **Result.** With four copies pinned to two cores: 2 failures in 24 before, 0 in 40 after. With
+  the pause switched off, the test fails at 29.6 MB.
+
+**Housekeeping worth knowing:** the disk filled during this phase (`app/src-tauri/target/debug`
+alone was 28.6 GB). Deleting the two `debug/incremental` directories freed 13 GB, and nothing
+else was touched.
+
+**Still to do for phase 7:**
+- The RMX3868 runs and the gate (above).
+- Then the native session as Android's default.
+- A Linux run of the app.
+- An Android pick with a display name.
 
 ### Phase 8: CLI distribution switch
 
