@@ -3,7 +3,8 @@
 How qrdrop pairs two devices, derives its keys, and moves a file, and the
 design decisions behind each step. The [README](../README.md#how-it-works) has
 the short version; the [threat model](threat-model.md) says what all of this
-does and does not protect.
+does and does not protect. [Networking, end to end](networking.md) follows a
+transfer across the network, and says which route carries the file.
 
 ## Pairing and keys
 

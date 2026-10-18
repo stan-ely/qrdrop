@@ -76,6 +76,10 @@ That interoperability is the reason this is one package rather than three.
   WebRTC's own encryption, and a four-emoji SAS that gets exactly one attempt per
   secret. WebCrypto only. [Protocol](docs/protocol.md) ·
   [Threat model](docs/threat-model.md)
+- **No server of its own.** Public relays introduce the two devices and drop out.
+  The file then goes straight between them, over WebRTC, a direct local-network
+  connection or QUIC, whichever is fastest and up.
+  [Networking, end to end](docs/networking.md)
 - **A fountain code for no network at all.** Beam animates LT-coded QR frames, so
   a receiver needs *enough* frames rather than *particular* ones — 1.58 × N
   frames at 10% loss, against 3.89 × N for numbered chunks on a loop, measured

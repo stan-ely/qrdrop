@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    participant S as Sender
+    participant X as Relays and STUN
+    participant R as Receiver
+
+    Note over S,R: 1 · Pairing
+    S-->>R: QR code: 32 random bytes, by camera
+    S->>X: join the derived room, on every network at once
+    R->>X: join the derived room, on every network at once
+    X-->>S: the peer and its session description, sealed with the code
+    X-->>R: the peer and its session description, sealed with the code
+    S->>X: STUN: what is my public address?
+    R->>X: STUN: what is my public address?
+    Note over S,R: ICE settles a route (local, direct, or TURN) and the WebRTC data channel opens
+    S->>R: ECDH public key
+    R->>S: ECDH public key
+
+    Note over S,R: 2 · Verifying: four emoji, compared by the two people
+    Note over S: They match
+
+    Note over S,R: 3 · Negotiating, every message sealed, on the data channel
+    S->>R: path verdict · lan-hello · quic-hello
+    R->>S: path verdict · lan-hello · quic-hello, in reply
+    R->>S: the listener's offer: addresses, port, token, answer
+    S-->>R: dial the offer: token in, answer back
+    S->>R: manifest: name and size
+    Note over R: Accept
+    R->>S: accept
+    Note over S: the sender moves to the best route that is up, here and only here
+
+    Note over S,R: 4 · Moving the file
+    S->>R: sealed chunks, over LAN, QUIC or WebRTC
+    R->>S: pause / resume, always on WebRTC
+    S->>R: complete, with the file's digest
+    R->>S: done
+
+    Note over S,R: 5 · Leaving: a leave message, then every socket closes

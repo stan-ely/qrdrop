@@ -1,0 +1,16 @@
+flowchart LR
+    sa["Sending device<br/>app, CLI or browser tab"]
+    sb["Receiving device<br/>app, CLI or browser tab"]
+
+    sig["Signalling<br/>7 Nostr relays · 2 WebTorrent trackers<br/>introduce the devices, then drop out"]
+    stun["STUN servers<br/>Google · Twilio · Cloudflare · Metered<br/>tell each device its public address"]
+    turn["TURN relay, the Open Relay Project<br/>only when no direct route works<br/>forwards sealed bytes, up to 100 MiB"]
+
+    sa -. "QR code, by camera" .- sb
+    sa -- "pairing" --- sig
+    sig -- "pairing" --- sb
+    sa -- "lookup" --- stun
+    stun -- "lookup" --- sb
+    sa == "the file, sealed<br/>WebRTC, LAN or QUIC" ==> sb
+    sa -. "fallback" .- turn
+    turn -. "fallback" .-> sb

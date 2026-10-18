@@ -1,0 +1,23 @@
+flowchart TB
+    start(["The receiver presses Accept"])
+    native{"Both ends native?<br/>the app or the CLI, not a browser tab"}
+    quiet{"Can either end listen<br/>without a firewall prompt?<br/>Android and Linux can"}
+    lanup{"LAN link up<br/>within 2 s?"}
+    rust{"Both ends the Rust session,<br/>built with QUIC?<br/>today: the Rust CLI"}
+    quicup{"QUIC link up<br/>within 3 s?"}
+
+    lan["LAN WebSocket<br/>the OS's TCP, on one network"]
+    quic["QUIC<br/>direct UDP, crosses most NATs"]
+    webrtc["WebRTC data channel<br/>direct, or through TURN"]
+
+    start --> native
+    native -- no --> webrtc
+    native -- yes --> quiet
+    quiet -- yes --> lanup
+    quiet -- no --> rust
+    lanup -- yes --> lan
+    lanup -- no --> rust
+    rust -- no --> webrtc
+    rust -- yes --> quicup
+    quicup -- yes --> quic
+    quicup -- no --> webrtc

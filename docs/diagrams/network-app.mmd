@@ -1,0 +1,19 @@
+flowchart TB
+    subgraph js["JS session · Windows, macOS, Android"]
+        direction LR
+        p1["Webview page<br/>Trystero, WebRTC, sealing"]
+        r1["Rust LAN relay<br/>127.0.0.1 and the LAN<br/>reads no frame"]
+        o1["The other device"]
+        p1 == "WebRTC, or LAN dialled out" ==> o1
+        o1 == "LAN, dialled in" ==> r1
+        r1 -- "127.0.0.1" --- p1
+    end
+    subgraph ns["Native session · Linux, opt-in elsewhere"]
+        direction LR
+        p2["Webview page<br/>draws the screens"]
+        n2["Rust session<br/>qrdrop-session, tryst, str0m"]
+        o2["The other device"]
+        p2 -- "IPC: words in, events out" --- n2
+        n2 == "WebRTC or LAN" ==> o2
+    end
+    js ~~~ ns
