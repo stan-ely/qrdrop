@@ -1389,6 +1389,27 @@ waits logged once a second from the phone by a temporary patch, not kept).**
   with segmentation offload on the same air. The levers are the start (pacing, or a congestion
   controller with HyStart-style exit) and BBR on this link. BBR was tried only on 2.4 GHz, where
   the radio decided everything.
+- **Then the controllers, switched on the phone by a file in its cache (a temporary patch, not
+  kept).** Default Cubic, BBR, NewReno, and Cubic with a 1 MiB initial window, two rounds each at
+  64 and 256 MiB. Default Cubic alone swung from 19.0 to 8.8 at 64 MiB, so two rounds separated
+  nothing, with one exception. BBR held 21 at 256 MiB while losing 26,000-37,000 packets, 10-15%
+  of what it sent, for no more speed than the others, so it is out.
+- **Five alternated rounds at 64 MiB:**
+
+  | Route | MB/s | Mean |
+  |---|---|---|
+  | LAN | 17.8, 22.0, 17.6, 22.2, 19.2 | 19.8 |
+  | QUIC, Cubic, 1 MiB initial window | 16.4, 11.7, 15.1, 17.8, 14.2 | 15.0 |
+  | QUIC, default Cubic | 14.9, 13.5, 11.2, 10.6, 13.3 | 12.7 |
+
+  LAN won every round. The larger initial window recovers about a fifth of the gap and no more.
+  Two default runs that lost no packets at all still came in at 10.6 and 11.2, so slow start's
+  loss is not the whole story. What is left is the cost of quinn's userspace UDP on the phone's
+  uplink against kernel TCP. It does not show as CPU, and the RTT rises under load with no loss.
+- **So for a phone sender, LAN beats QUIC wherever both are up**, and the route order (QUIC over
+  LAN) is wrong in that case. QUIC still matters where LAN cannot reach: across NATs and between
+  networks. Whether to change the order, or the initial window, is a decision these runs inform
+  and have not made.
 
 **Left for a device:**
 - **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and
