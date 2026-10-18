@@ -39,7 +39,17 @@ pub async fn start() -> SocketAddr {
 /// As [`start`], but every connection for which `drop_it(n)` is true (n
 /// counting accepts from 0) is closed straight after its handshake.
 pub async fn start_with(drop_it: impl Fn(u64) -> bool + Send + 'static) -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    serve_on("127.0.0.1:0", drop_it).await
+}
+
+/// As [`start`], on a given address, for a peer in another network
+/// namespace (`examples/bench.rs` in qrdrop-session).
+pub async fn start_on(addr: &str) -> SocketAddr {
+    serve_on(addr, |_| false).await
+}
+
+async fn serve_on(addr: &str, drop_it: impl Fn(u64) -> bool + Send + 'static) -> SocketAddr {
+    let listener = TcpListener::bind(addr).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let shared = Arc::new(Mutex::new(Shared::default()));
     tokio::spawn(async move {

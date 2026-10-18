@@ -317,6 +317,62 @@ async fn resolve(socket: &UdpSocket, host: &str) -> Option<SocketAddr> {
         .find(|a| a.is_ipv4() == v4)
 }
 
+/// The socket buffers every UDP socket here asks for. Measured in phase 9
+/// (docs/notes/rust-session.md) between two sessions under netem: with the
+/// platform defaults the sender's bursts overran the receiver's buffer and
+/// SCTP lived in loss recovery, 7.9 MB/s at no delay and 1.1 at 100 ms; with
+/// these, 23 and 8.3. Phase 1 had found the same and asked for it, and the
+/// runtime was written without it. The OS may grant less (Linux caps it at
+/// `net.core.rmem_max`, and doubles what it grants); a refusal is not an
+/// error, only a slower socket.
+pub const SOCKET_BUFFER: usize = 4 << 20;
+
+/// Ask for [`SOCKET_BUFFER`] each way.
+pub fn size_buffers(socket: &UdpSocket) {
+    let r = socket2::SockRef::from(socket);
+    let _ = r.set_recv_buffer_size(SOCKET_BUFFER);
+    let _ = r.set_send_buffer_size(SOCKET_BUFFER);
+}
+
+/// This socket's address as every STUN server sees it, deduplicated, after
+/// at most [`STUN_TIMEOUT`]. For a transport beside the room's -- the QUIC
+/// path in qrdrop-session -- that has to learn its own mapping on its own
+/// socket, since a NAT maps each socket apart.
+pub async fn reflexive(socket: &UdpSocket, stun: &[String]) -> Vec<SocketAddr> {
+    let mut asks = vec![];
+    for s in stun {
+        if let Some(a) = resolve(socket, s.trim_start_matches("stun:")).await {
+            let (tid, req) = crate::stun::request();
+            if socket.send_to(&req, a).await.is_ok() {
+                asks.push(tid);
+            }
+        }
+    }
+    let mut found = vec![];
+    let deadline = tokio::time::Instant::now() + STUN_TIMEOUT;
+    let mut buf = [0u8; 2048];
+    while !asks.is_empty() {
+        match tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await {
+            Ok(Ok((n, _))) => {
+                if let Some(i) = asks
+                    .iter()
+                    .position(|t| crate::stun::mapped_address(&buf[..n], t).is_some())
+                {
+                    let addr =
+                        crate::stun::mapped_address(&buf[..n], &asks[i]).expect("matched above");
+                    asks.swap_remove(i);
+                    if !found.contains(&addr) {
+                        found.push(addr);
+                    }
+                }
+            }
+            Ok(Err(_)) => {}
+            Err(_) => break,
+        }
+    }
+    found
+}
+
 /// Ask every STUN server for our mapped address and start an allocation on
 /// every TURN server, on the room's own socket, and wait -- up to
 /// [`STUN_TIMEOUT`], or [`TURN_TIMEOUT`] for a relay-only room, whose only
@@ -426,6 +482,7 @@ pub async fn join(cfg: JoinConfig) -> Result<RoomHandle, JoinError> {
     let socket = UdpSocket::bind(SocketAddr::new(ip, 0))
         .await
         .map_err(JoinError::Socket)?;
+    size_buffers(&socket);
     let local = socket.local_addr().map_err(JoinError::Socket)?;
     let mut rtc_cfg = if cfg.relay_only {
         RtcConfig { candidates: vec![] }

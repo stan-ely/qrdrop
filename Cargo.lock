@@ -5080,6 +5080,7 @@ dependencies = [
  "serde_json",
  "sha1 0.10.7",
  "sha2",
+ "socket2",
  "str0m",
  "tokio",
  "tokio-tungstenite 0.30.0",
