@@ -25,11 +25,11 @@ use crate::wire::{Frame, Payload, decode_chunk, unwrap_frame};
 fn recordings() -> [Value; 2] {
     [
         serde_json::from_str(include_str!(
-            "../../../test/vectors/trystero-recording.json"
+            "../vectors/trystero-recording.json"
         ))
         .unwrap(),
         serde_json::from_str(include_str!(
-            "../../../test/vectors/trystero-recording-live.json"
+            "../vectors/trystero-recording-live.json"
         ))
         .unwrap(),
     ]

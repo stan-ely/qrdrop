@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn the_vector_event_is_byte_identical() {
         let v: Value =
-            serde_json::from_str(include_str!("../../../test/vectors/trystero.json")).unwrap();
+            serde_json::from_str(include_str!("../vectors/trystero.json")).unwrap();
         let e = &v["nostr_event"];
         let sk = crate::vectors::unhex(e["secret_key"].as_str().unwrap());
         let aux: [u8; 32] = crate::vectors::unhex(e["aux_rand"].as_str().unwrap())

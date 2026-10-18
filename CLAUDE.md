@@ -33,14 +33,16 @@ node scripts/bench-beam.mjs                # beam loss/overhead tables, ~3 min; 
 unshare -rn bash crates/qrdrop-session/examples/netem.sh   # Linux/WSL, no root: two Rust sessions over netem; nat.sh puts each behind a NAT.
                                            # Build first: cargo build --release -p qrdrop-session --examples --features quic. Source of CAPABILITIES' QUIC tables
 
-node scripts/make-vectors.mjs              # rewrite test/vectors/ from src/core/ and Trystero; --check exits 1 if stale
+node scripts/make-vectors.mjs              # rewrite test/vectors/ from src/core/, and crates/tryst/vectors/ from Trystero; --check exits 1 if stale
 node scripts/record-trystero.mjs           # re-record two real peers over Trystero; --live goes through the public relays
 mise run rust:test                         # the crates under crates/; the app, a member but not a default one, is `cargo test` in app/src-tauri
 ```
 
 `test/vectors/` is the contract between the JS core and the Rust session
 (`docs/notes/rust-session.md`), and `test/vectors.test.mjs` fails the moment the JS
-moves away from it. A change to `src/core/` that trips it is a change to the wire:
+moves away from it. Trystero's vectors and recordings are the same contract for `tryst`
+and live in `crates/tryst/vectors/`, because a crate is packaged from its own directory
+and its tests `include_str!` them. A change to `src/core/` that trips it is a change to the wire:
 re-run `make-vectors.mjs` and read the diff before committing it. The other side of the
 contract reads the same files: `crates/qrdrop-protocol/src/vectors.rs` `include_str!`s
 them, so regenerated vectors that the Rust has not caught up with fail

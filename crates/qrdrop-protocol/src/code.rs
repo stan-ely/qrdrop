@@ -141,7 +141,7 @@ impl Secret {
 
     /// The password Trystero encrypts signals under. A string because that is
     /// what Trystero takes; it hashes it once into its key (no PBKDF2 and no
-    /// salt, see test/vectors/trystero.json), which is enough only because
+    /// salt, see crates/tryst/vectors/trystero.json), which is enough only because
     /// this is 256 bits of HKDF output rather than a passphrase.
     pub fn password(&self) -> String {
         let mut out = [0u8; 32];

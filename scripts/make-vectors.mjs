@@ -2,7 +2,7 @@
 /**
  * Writes test/vectors/*.json: fixed inputs and what the real JS produces from
  * them, for the Rust session to be tested against (docs/notes/rust-session.md,
- * phase 0).
+ * phase 0). trystero.json goes to crates/tryst/vectors/ instead (vectorUrl).
  *
  *   node scripts/make-vectors.mjs           # rewrite the files
  *   node scripts/make-vectors.mjs --check   # exit 1 if they are stale
@@ -56,6 +56,21 @@ import {
 import { schnorr } from '@noble/secp256k1'
 
 const OUT = new URL('../test/vectors/', import.meta.url)
+
+/**
+ * Where a vector file lives. Trystero's go beside the crate they test,
+ * because a crate on crates.io is packaged from its own directory alone:
+ * tryst's tests read them with include_str!, and a path out of the crate
+ * builds here and fails for anyone who downloads it. qrdrop's own stay in
+ * test/vectors/, where qrdrop-protocol reads them; that crate is not
+ * published.
+ * @param {string} name
+ */
+export const vectorUrl = name => name.startsWith('trystero')
+  ? new URL(`../crates/tryst/vectors/${name}`, import.meta.url)
+  : new URL(name, OUT)
+/** @param {string} name */
+const vectorPath = name => vectorUrl(name).pathname.slice(new URL('..', import.meta.url).pathname.length)
 const enc = new TextEncoder()
 
 const APP_ID = 'qrdrop'
@@ -611,14 +626,14 @@ async function main() {
   await mkdir(OUT, { recursive: true })
   let stale = 0
   for (const [name, value] of Object.entries(files)) {
-    const url = new URL(name, OUT)
+    const url = vectorUrl(name)
     const text = serialise(value)
     if (check) {
       const current = await readFile(url, 'utf8').catch(() => null)
-      if (current !== text) { stale++; console.error(`stale: test/vectors/${name}`) }
+      if (current !== text) { stale++; console.error(`stale: ${vectorPath(name)}`) }
     } else {
       await writeFile(url, text)
-      console.log(`wrote test/vectors/${name}`)
+      console.log(`wrote ${vectorPath(name)}`)
     }
   }
   if (stale) process.exit(1)

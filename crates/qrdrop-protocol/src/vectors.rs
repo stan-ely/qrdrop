@@ -1,6 +1,6 @@
 //! test/vectors/, written by scripts/make-vectors.mjs from the JS core. Every
 //! case in secret, session, frames and digest is checked here; trystero.json
-//! and the recordings are phase 3's.
+//! and the recordings are tryst's, and live in crates/tryst/vectors/.
 
 use serde_json::Value;
 

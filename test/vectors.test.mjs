@@ -1,5 +1,7 @@
 /**
- * The wire vectors in test/vectors/, held to the JS that ships.
+ * The wire vectors in test/vectors/ and crates/tryst/vectors/ (Trystero's,
+ * which travel with the crate that is tested against them), held to the JS
+ * that ships.
  *
  * They exist for the Rust session (docs/notes/rust-session.md): a second
  * implementation of this protocol that has to keep agreeing with the website.
@@ -26,16 +28,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 
-import { buildVectors, fixedKeypair, fromHex, mod251, serialise } from '../scripts/make-vectors.mjs'
+import { buildVectors, fixedKeypair, fromHex, mod251, serialise, vectorUrl } from '../scripts/make-vectors.mjs'
 import { establishSession } from '../src/core/session.js'
 import { open, seal } from '../src/core/frame.js'
 import { hex } from '../src/core/digest.js'
 import { actionReader, createEvent, crypto as tc, strToNum } from './helpers/trystero.mjs'
 import { schnorr } from '@noble/secp256k1'
 
-const DIR = new URL('./vectors/', import.meta.url)
 /** @param {string} name @returns {any} */
-const load = name => JSON.parse(readFileSync(new URL(name, DIR), 'utf8'))
+const load = name => JSON.parse(readFileSync(vectorUrl(name), 'utf8'))
 /** @param {Bytes} b */
 const sha256 = async b => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', b)))
 /** @param {string} s */
@@ -49,8 +50,8 @@ test('the committed vectors are exactly what the JS produces today', async () =>
   const built = await buildVectors()
   for (const [name, value] of Object.entries(built)) {
     assert.equal(
-      readFileSync(new URL(name, DIR), 'utf8'), serialise(value),
-      `test/vectors/${name} is stale: re-run node scripts/make-vectors.mjs and review the diff`,
+      readFileSync(vectorUrl(name), 'utf8'), serialise(value),
+      `${name} is stale: re-run node scripts/make-vectors.mjs and review the diff`,
     )
   }
 })
@@ -169,7 +170,7 @@ async function assertNostrEvent(event) {
   assert.ok(await schnorr.verifyAsync(fromHex(event.sig), fromHex(event.id), fromHex(event.pubkey)), 'BIP-340 signature')
 }
 
-for (const name of readdirSync(DIR).filter(f => f.startsWith('trystero-recording'))) {
+for (const name of readdirSync(new URL('.', vectorUrl('trystero.json'))).filter(f => f.startsWith('trystero-recording'))) {
   test(`${name} is traffic Trystero would have produced`, async () => {
     const r = load(name)
     const key = tc.genKey(r.password, r.app_id, r.topic)

@@ -1,4 +1,4 @@
-//! test/vectors/trystero.json, written by scripts/make-vectors.mjs from
+//! vectors/trystero.json, written by qrdrop's scripts/make-vectors.mjs from
 //! Trystero 0.25.4's own modules. Every value in it is checked here.
 
 use serde_json::Value;
@@ -26,7 +26,7 @@ fn mod251(n: u64) -> Vec<u8> {
 }
 
 fn load() -> Value {
-    serde_json::from_str(include_str!("../../../test/vectors/trystero.json")).unwrap()
+    serde_json::from_str(include_str!("../vectors/trystero.json")).unwrap()
 }
 
 #[test]

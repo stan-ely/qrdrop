@@ -75,7 +75,7 @@ export async function deriveTopic(secret, epoch = null) {
  * nothing here ever depended on it: all of the strength is ours, because this
  * is 256 bits of HKDF output rather than a passphrase, which is exactly the
  * case where a single hash is enough. A Rust peer has to reproduce the hash,
- * not a key-stretching function (test/vectors/trystero.json).
+ * not a key-stretching function (crates/tryst/vectors/trystero.json).
  *
  * Trystero without a password derives its key from the app ID and room name,
  * both of which any relay observer already has. That would leave the DTLS

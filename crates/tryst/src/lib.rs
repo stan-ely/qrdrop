@@ -2,7 +2,7 @@
 //!
 //! What goes here, and the wire it must speak, is in
 //! `docs/notes/rust-session.md` under "The wire, as the Rust side must speak
-//! it"; `test/vectors/trystero.json` and the recordings beside it are what it
+//! it"; `vectors/trystero.json` and the recordings beside it are what it
 //! is tested against.
 //!
 //! The split this crate keeps: a sans-IO core with no feature gates, and the

@@ -3,8 +3,8 @@
  * Records real Trystero 0.25.4 traffic between two real qrdrop peers
  * (docs/notes/rust-session.md, phase 0).
  *
- *   node scripts/record-trystero.mjs          # -> test/vectors/trystero-recording.json
- *   node scripts/record-trystero.mjs --live   # -> test/vectors/trystero-recording-live.json
+ *   node scripts/record-trystero.mjs          # -> crates/tryst/vectors/trystero-recording.json
+ *   node scripts/record-trystero.mjs --live   # -> crates/tryst/vectors/trystero-recording-live.json
  *
  * RECORD_DEBUG=1 prints each relay message as it passes, which is the quickest
  * way to see where a pairing that times out stopped.
@@ -64,7 +64,7 @@ const live = process.argv.includes('--live')
 // Two files rather than one, so a live run that the relays happen to answer
 // strangely never replaces the recording the test suite reads.
 const OUT_NAME = live ? 'trystero-recording-live.json' : 'trystero-recording.json'
-const OUT = new URL(`../test/vectors/${OUT_NAME}`, import.meta.url)
+const OUT = new URL(`../crates/tryst/vectors/${OUT_NAME}`, import.meta.url)
 const childRole = process.argv[process.argv.indexOf('--child') + 1]
 
 if (process.argv.includes('--child')) await child(/** @type {'host' | 'guest'} */ (childRole))
@@ -101,7 +101,7 @@ async function parent() {
     runs,
   }
   await writeFile(OUT, `${JSON.stringify(recording, null, 2)}\n`)
-  console.log(`wrote test/vectors/${OUT_NAME}`)
+  console.log(`wrote crates/tryst/vectors/${OUT_NAME}`)
 }
 
 /**

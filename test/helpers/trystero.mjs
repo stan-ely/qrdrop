@@ -10,8 +10,8 @@
  * the index, so they are imported here by file path. One module holds every
  * such path, so a Trystero upgrade that moves a file breaks in one place.
  *
- * It also pins the version, and throws on any other. The vectors in
- * test/vectors/ describe 0.25.4 specifically, and the Rust side is tested
+ * It also pins the version, and throws on any other. The Trystero vectors in
+ * crates/tryst/vectors/ describe 0.25.4 specifically, and the Rust side is tested
  * against them; an upgrade that changed the wire and silently regenerated them
  * would hand the Rust crate a new target with nothing in any diff saying the
  * old one had moved. Bumping Trystero means re-reading "The wire, as the Rust
