@@ -1344,6 +1344,27 @@ went from 5.2-6.8 to 4.1-5.5.
   network can say whether the native session clears the phase 7 gate: 15.5 MB/s of sending is
   past what a 137 Mbps link carries. That needs the phone on 5 GHz.
 
+**The third device session (same evening, the phone on the router's 5 GHz, channel 52, 864 Mbps
+receiving and 576 sending; two runs of each, so a first look and not a result).**
+- **Phone receives:** native over QUIC 24.0 and 18.7 MB/s; native over LAN alone 33.7 and 9.2;
+  JS over LAN 9.4 and 9.7. The JS session's ceiling sits near 9.5 wherever the radio allows more,
+  which fits its sink's road into Rust being the limit and not the link.
+- **Phone sends:** native, QUIC likely, 14.4 and 12.8; native over WebRTC (the CLI on
+  `QRDROP_QUIC=0`) 19.6 and 16.3; JS over WebRTC 18.6 and 0.57. The route label on a phone send
+  is the receiving CLI's and means nothing, since only a sender prints the QUIC line.
+- **Against the phase 7 gate:** receiving clears 5.8 on every route. Sending clears 15.5 on the
+  native session over WebRTC, and QUIC sends fall short of it. That points at quinn's cost on the
+  phone as a sender, not the radio; quinn's stats from the phone's end would say.
+- **A receiver failed a QUIC transfer when its idle LAN socket closed**, 24 MB in, over the
+  hotspot tried first. A receiver counted any LAN link that was up as carrying; it now counts one
+  only while no frame has come over QUIC.
+- **tryst cannot pair across a second interface.** Over a Windows Mobile Hotspot (phone on
+  192.168.137.x) neither session paired. tryst binds one socket to the default route's address
+  (192.168.1.x) and offers only that, and Windows will not route between the two from a socket
+  bound to the other interface. Binding the room to the hotspot address (a local patch, not kept)
+  paired at once. A host candidate per interface, as quic.rs gathers them, is the fix if this
+  matters; it has not been made.
+
 **Left for a device:**
 - **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and
   measure phone to CLI across two networks against the WebRTC path. Mind ColorOS's socket kill

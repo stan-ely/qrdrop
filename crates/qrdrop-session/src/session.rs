@@ -991,9 +991,16 @@ impl Driver {
                 // while LAN was the only direct link, and wrong once QUIC
                 // could win: the idle LAN socket closing at the end of a
                 // QUIC transfer failed a file the receiver already had
-                // (measured from a phone sending 64 MiB to the CLI).
+                // (measured from a phone sending 64 MiB to the CLI). The
+                // receiver's guess has the same hole from the other side:
+                // once a frame has come over QUIC, the sender switched there
+                // and not here, so this socket carried nothing. Measured on a
+                // phone receiving over a hotspot, whose idle LAN socket closed
+                // 24 MB into a QUIC transfer and failed it.
+                let over_quic = self.quic.as_ref().is_some_and(|q| q.carrying);
                 let carried = self.lan.as_ref().is_some_and(|l| {
-                    l.carrying || (self.role == Role::Guest && l.state == LinkState::Up)
+                    l.carrying
+                        || (self.role == Role::Guest && l.state == LinkState::Up && !over_quic)
                 });
                 if let Some(l) = &mut self.lan {
                     l.state = LinkState::None;
