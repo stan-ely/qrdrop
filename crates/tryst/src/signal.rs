@@ -60,7 +60,9 @@ pub trait Connector {
 /// addressed by `offer_id`, with the whole SDP in each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Strategy {
+    /// Signal through Nostr relays: events on topics, with candidates trickled.
     Nostr,
+    /// Signal through WebTorrent trackers: offers in announces, whole SDPs.
     Torrent,
 }
 
@@ -73,28 +75,44 @@ impl Strategy {
     }
 }
 
+/// What a [`Signaller`] asks the driver to send or do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Output {
     /// Publish `content` (a JSON object, as a string) to `topic` on `relay`.
     /// Nostr only: the client wraps it in a signed event.
     Publish {
+        /// The index of the relay to publish on.
         relay: usize,
+        /// The topic the event is addressed to.
         topic: String,
+        /// The event content: a JSON object serialised to a string.
         content: String,
     },
     /// A tracker answer: `{answer: {type: "answer", sdp}, offer_id,
     /// to_peer_id}`, sent through `relay`.
     TrackerAnswer {
+        /// The index of the tracker to answer through.
         relay: usize,
+        /// The peer ID the answer is for.
         to_peer: String,
+        /// The `offer_id` of the offer being answered.
         offer_id: String,
+        /// The answer SDP, as plain text.
         sdp: String,
     },
     /// A peer's offer or answer did not decrypt: its password differs.
     /// Trystero reports this through `onJoinError` and carries on.
-    WrongPassword { peer: String },
+    WrongPassword {
+        /// The peer whose signal did not decrypt.
+        peer: String,
+    },
     /// The connection is up and belongs to `peer`; hand it to the room.
-    Connected { peer: String, conn: ConnId },
+    Connected {
+        /// The peer the connection is with.
+        peer: String,
+        /// The connection, as the [`Connector`] numbered it.
+        conn: ConnId,
+    },
     /// Announce again on every relay now, as Trystero does after a
     /// connection drops, so the peer can find us again quickly.
     Reannounce,
@@ -121,6 +139,8 @@ struct PeerState {
     candidates: HashMap<String, Vec<String>>,
 }
 
+/// One strategy's signalling for one room: the offers, answers and candidates
+/// exchanged with other peers, and which connection belongs to which peer.
 #[derive(Debug)]
 pub struct Signaller {
     strategy: Strategy,
@@ -136,6 +156,8 @@ pub struct Signaller {
 }
 
 impl Signaller {
+    /// A signaller for `self_id` in the given room. `password` keys the cipher
+    /// that every SDP and candidate is encrypted under.
     pub fn new(
         strategy: Strategy,
         app_id: &str,
@@ -157,6 +179,7 @@ impl Signaller {
         }
     }
 
+    /// The names this signaller's room is known by.
     pub fn topics(&self) -> &Topics {
         &self.topics
     }
@@ -515,6 +538,7 @@ impl Signaller {
         }
     }
 
+    /// The earliest time an unfinished offer or answer expires, if any.
     pub fn poll_timeout(&self) -> Option<Instant> {
         self.peers
             .values()
@@ -529,6 +553,7 @@ impl Signaller {
             .min()
     }
 
+    /// The next thing for the driver to send or do, if any.
     pub fn poll_output(&mut self) -> Option<Output> {
         self.outputs.pop_front()
     }
@@ -567,9 +592,13 @@ impl Signaller {
 /// `offer_id`, which the answer must name.
 #[derive(Clone, Copy, Debug)]
 pub struct TrackerOffer<'a> {
+    /// The index of the tracker that relayed the offer.
     pub relay: usize,
+    /// The offering peer's ID.
     pub peer: &'a str,
+    /// The offer SDP.
     pub offer: &'a str,
+    /// The offer ID the answer must name.
     pub offer_id: &'a str,
     /// Whether we hold pooled offers, which is what makes glare apply on
     /// this wire: both sides always have offers out.

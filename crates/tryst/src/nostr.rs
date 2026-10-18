@@ -34,6 +34,7 @@ impl std::fmt::Debug for Keys {
 }
 
 impl Keys {
+    /// A new random keypair.
     pub fn generate() -> Self {
         Self::from_key(SigningKey::random(&mut OsRng))
     }
@@ -110,21 +111,34 @@ pub fn subscribe(topics: &[&str], since: u64) -> (String, String) {
 #[derive(Clone, Debug, PartialEq)]
 pub enum RelayMsg {
     /// An event on one of our subscriptions: its topic tag and content.
-    Event { topic: String, content: String },
+    Event {
+        /// The value of the event's topic tag.
+        topic: String,
+        /// The event's content string.
+        content: String,
+    },
     /// `OK`: whether the relay took the event, and why not.
     Ok {
+        /// The ID of the event the relay is answering about.
         event_id: String,
+        /// Whether the relay took the event.
         accepted: bool,
+        /// The relay's stated reason, which may be empty.
         reason: String,
     },
     /// `CLOSED`: the relay ended a subscription, which Trystero treats as the
     /// relay refusing us for good.
-    Closed { reason: String },
+    Closed {
+        /// The relay's stated reason, which may be empty.
+        reason: String,
+    },
     /// Anything else: `EOSE`, `NOTICE`, `AUTH`.
     Other,
 }
 
 impl RelayMsg {
+    /// Parse a relay's text frame, or `None` if it is not a JSON array of a
+    /// shape this crate reads.
     pub fn parse(text: &str) -> Option<Self> {
         let v: Value = serde_json::from_str(text).ok()?;
         let a = v.as_array()?;
@@ -173,6 +187,7 @@ impl RelayMsg {
         }
     }
 
+    /// Whether this is an `OK false` whose reason starts with `rate-limited:`.
     pub fn is_rate_limited(&self) -> bool {
         matches!(self, RelayMsg::Ok { accepted: false, reason, .. } if reason.starts_with("rate-limited:"))
     }
@@ -184,8 +199,7 @@ mod tests {
 
     #[test]
     fn the_vector_event_is_byte_identical() {
-        let v: Value =
-            serde_json::from_str(include_str!("../vectors/trystero.json")).unwrap();
+        let v: Value = serde_json::from_str(include_str!("../vectors/trystero.json")).unwrap();
         let e = &v["nostr_event"];
         let sk = crate::vectors::unhex(e["secret_key"].as_str().unwrap());
         let aux: [u8; 32] = crate::vectors::unhex(e["aux_rand"].as_str().unwrap())

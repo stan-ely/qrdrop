@@ -59,6 +59,8 @@ pub struct Topics {
 }
 
 impl Topics {
+    /// The names for the room `room_id` of the app `app_id`. Both are the
+    /// strings Trystero is given, and an empty one is hashed as it stands.
     pub fn new(app_id: &str, room_id: &str) -> Self {
         let root_plain = format!("{LIB_NAME}@{app_id}@{room_id}");
         Topics {
@@ -115,6 +117,8 @@ impl std::fmt::Debug for SignalCipher {
 }
 
 impl SignalCipher {
+    /// A cipher keyed by `password`, `app_id` and `room_id`: the key is the
+    /// SHA-256 of `password:appId:roomId`, as Trystero derives it.
     pub fn new(password: &str, app_id: &str, room_id: &str) -> Self {
         let key = Sha256::digest(format!("{password}:{app_id}:{room_id}"));
         SignalCipher {

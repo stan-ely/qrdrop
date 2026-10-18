@@ -33,7 +33,9 @@ pub const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// `max` for ever.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Backoff {
+    /// The delay before the first retry.
     pub first: Duration,
+    /// The longest delay between two attempts.
     pub max: Duration,
 }
 
@@ -52,8 +54,11 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// it was opened from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelayEvent {
+    /// The socket to the relay is open.
     Up(usize),
+    /// The socket to the relay closed, or could not be opened.
     Down(usize),
+    /// A text frame from the relay.
     Text(usize, String),
 }
 
@@ -87,6 +92,7 @@ impl Relay {
         }
     }
 
+    /// The relay's URL.
     pub fn url(&self) -> &str {
         &self.url
     }

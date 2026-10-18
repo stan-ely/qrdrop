@@ -54,11 +54,16 @@ const TRACKER_DEDUPE: Duration = Duration::from_secs(4);
 /// had to ignore pulls the next one forward. See `on_tracker`.
 const TRACKER_NUDGE_GAP: Duration = Duration::from_secs(2);
 
+/// What [`join`] needs to find a room and connect to its peers.
 #[derive(Clone, Debug)]
 pub struct JoinConfig {
+    /// Which signalling wire to use.
     pub strategy: Strategy,
+    /// The Trystero `appId`.
     pub app_id: String,
+    /// The room ID within that app.
     pub room_id: String,
+    /// The room password, which keys the signal encryption and the handshake.
     pub password: String,
     /// `wss://` (or `ws://`) relay URLs: Nostr relays or WebTorrent trackers.
     pub relays: Vec<String>,
@@ -82,6 +87,8 @@ pub struct JoinConfig {
 }
 
 impl JoinConfig {
+    /// A config for one room with default timeouts, no STUN or TURN servers and
+    /// a generated peer ID. `relays` are the Nostr relay or tracker URLs.
     pub fn new(
         strategy: Strategy,
         app_id: &str,
@@ -111,10 +118,13 @@ impl JoinConfig {
 pub struct TurnServer {
     /// `host:port`; a `turn:` prefix is accepted, and `?transport=udp`.
     pub url: String,
+    /// The long-term credential's username.
     pub username: String,
+    /// The long-term credential's password.
     pub credential: String,
 }
 
+/// Why [`join`] failed.
 #[derive(Debug)]
 pub enum JoinError {
     /// No relay came up within the join timeout. Names the cause, which is
@@ -122,6 +132,7 @@ pub enum JoinError {
     NoRelay,
     /// This build has no client for the strategy.
     StrategyNotBuilt(Strategy),
+    /// The UDP socket could not be opened.
     Socket(io::Error),
 }
 
@@ -137,21 +148,27 @@ impl std::fmt::Display for JoinError {
 
 impl std::error::Error for JoinError {}
 
+/// Something that happened in a joined room.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RoomEvent {
     /// Trystero's `onPeerJoin`: the handshake passed both ways.
     Joined(String),
     /// Trystero's `onPeerLeave`, for a peer that had joined.
     Left(String),
+    /// A message from a joined peer on an action the caller owns.
     Message {
+        /// The sender.
         peer: String,
+        /// What it sent.
         message: Message,
     },
     /// A peer's signal did not open under our password.
     WrongPassword(String),
     /// How many relays are up, out of how many are still in use.
     Relays {
+        /// The number of relays currently connected.
         up: usize,
+        /// The number of relays still in use, which excludes any that refused us.
         total: usize,
     },
 }
@@ -200,6 +217,7 @@ pub struct RoomSender {
 }
 
 impl RoomHandle {
+    /// This side's peer ID.
     pub fn self_id(&self) -> &str {
         &self.sender.self_id
     }
@@ -209,6 +227,7 @@ impl RoomHandle {
         self.rx.recv().await
     }
 
+    /// A cloneable sending half of this room.
     pub fn sender(&self) -> RoomSender {
         self.sender.clone()
     }
@@ -245,6 +264,7 @@ impl RoomHandle {
 }
 
 impl RoomSender {
+    /// This side's peer ID.
     pub fn self_id(&self) -> &str {
         &self.self_id
     }

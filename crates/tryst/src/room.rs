@@ -32,31 +32,47 @@ const PONG: &str = "@_pong";
 /// reports the same way.
 pub const WRONG_PASSWORD: &str = "incorrect password for overlapping room";
 
+/// What a [`Room`] needs to know about itself.
 #[derive(Clone, Debug)]
 pub struct RoomConfig {
+    /// The Trystero `appId`, which names the application on the wire.
     pub app_id: String,
+    /// The room ID within that app.
     pub room_id: String,
+    /// The room password. A peer with a different one fails the handshake with
+    /// [`WRONG_PASSWORD`].
     pub password: String,
+    /// This side's peer ID, as the other peers know it.
     pub self_id: String,
 }
 
+/// Something that happened in a [`Room`], in the order it happened.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     /// The handshake has passed both ways: the peer is in the room, and
     /// messages to and from it now flow. Trystero's `onPeerJoin`.
     Joined(String),
     /// A message from a joined peer, on an action the caller owns.
-    Message { peer: String, message: Message },
+    Message {
+        /// The sender.
+        peer: String,
+        /// What it sent.
+        message: Message,
+    },
     /// The peer is gone from the room and its connection should be closed.
     /// `joined` says whether a `Joined` was ever reported for it, which is
     /// when Trystero fires `onPeerLeave`.
     Closed {
+        /// The peer that is gone.
         peer: String,
+        /// Whether a `Joined` was reported for the peer.
         joined: bool,
+        /// Why the peer is gone.
         reason: CloseReason,
     },
 }
 
+/// Why a peer was removed from a [`Room`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CloseReason {
     /// It sent `@_leave`.
@@ -72,7 +88,9 @@ pub enum CloseReason {
 /// One data-channel message for one peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transmit {
+    /// The peer to send to.
     pub peer: String,
+    /// The bytes to put on that peer's data channel, one whole room frame.
     pub data: Vec<u8>,
 }
 
@@ -87,6 +105,9 @@ struct PeerState {
     reassembler: Reassembler,
 }
 
+/// One room's peers and their password handshake, sans-IO: data-channel
+/// messages go in, and [`Transmit`]s and [`Event`]s come out through the
+/// `poll_*` methods. It owns no sockets and no clock.
 #[derive(Debug)]
 pub struct Room {
     cfg: RoomConfig,
@@ -104,6 +125,7 @@ fn challenge() -> String {
 }
 
 impl Room {
+    /// A room with no peers yet.
     pub fn new(cfg: RoomConfig) -> Self {
         Room {
             topics: Topics::new(&cfg.app_id, &cfg.room_id),
@@ -123,10 +145,12 @@ impl Room {
         self
     }
 
+    /// This side's peer ID.
     pub fn self_id(&self) -> &str {
         &self.cfg.self_id
     }
 
+    /// The names this room is known by on each channel.
     pub fn topics(&self) -> &Topics {
         &self.topics
     }
@@ -358,6 +382,7 @@ impl Room {
         }
     }
 
+    /// Whether [`Room::leave`] has been called.
     pub fn has_left(&self) -> bool {
         self.left
     }
@@ -385,10 +410,12 @@ impl Room {
             .min()
     }
 
+    /// The next data-channel message to send, if any.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         self.transmits.pop_front()
     }
 
+    /// The next event for the caller, if any.
     pub fn poll_event(&mut self) -> Option<Event> {
         self.events.pop_front()
     }

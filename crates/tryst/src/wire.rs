@@ -27,8 +27,11 @@ const FLAG_JSON: u8 = 8;
 /// `Json` here never holds a `Value::String` -- that is `Text`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Payload {
+    /// A JS string: UTF-8 text.
     Text(String),
+    /// Any JS value other than a string or bytes, as its JSON text.
     Json(Value),
+    /// Raw bytes, as a JS typed array.
     Binary(Vec<u8>),
 }
 
@@ -51,6 +54,7 @@ impl Payload {
     }
 }
 
+/// Why an action could not be encoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WireError {
     /// An action name longer than 32 bytes, or empty. Trystero refuses both
@@ -112,13 +116,21 @@ fn progress(i: usize, total: usize) -> u8 {
 /// One decoded action chunk.
 #[derive(Debug, PartialEq)]
 pub struct Chunk<'a> {
+    /// The action name, with its NUL padding removed.
     pub action: String,
+    /// The action's message counter; every chunk of one message shares it.
     pub nonce: u16,
+    /// Whether this is the message's last chunk.
     pub last: bool,
+    /// Whether this chunk carries the message's metadata and not its payload.
     pub meta: bool,
+    /// The binary type bit. Test it before `json`: bytes set both.
     pub binary: bool,
+    /// The JSON type bit.
     pub json: bool,
+    /// Progress through the message, 0 to 255, as the sender wrote it.
     pub progress: u8,
+    /// The chunk's body, after the header.
     pub payload: &'a [u8],
 }
 
@@ -147,8 +159,11 @@ pub fn decode_chunk(buf: &[u8]) -> Option<Chunk<'_>> {
 /// A whole action message, reassembled.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
+    /// The action name.
     pub action: String,
+    /// The reassembled payload.
     pub payload: Payload,
+    /// The metadata sent with the message, if there was any and it parsed.
     pub meta: Option<Value>,
 }
 
@@ -183,6 +198,7 @@ impl Default for Reassembler {
 }
 
 impl Reassembler {
+    /// A reassembler that drops any message over `max_bytes`.
     pub fn new(max_bytes: usize) -> Self {
         Reassembler {
             pending: HashMap::new(),
@@ -257,10 +273,23 @@ pub fn wrap_presence(token: &str, present: bool) -> Vec<u8> {
     f
 }
 
+/// A data-channel message with its outer frame read.
 #[derive(Debug, PartialEq)]
 pub enum Frame<'a> {
-    Room { token: String, chunk: &'a [u8] },
-    Presence { token: String, present: bool },
+    /// A message for a room: the room token and the action chunk it carries.
+    Room {
+        /// The room token the sender prefixed.
+        token: String,
+        /// The action chunk, which [`decode_chunk`] reads.
+        chunk: &'a [u8],
+    },
+    /// A peer saying whether it is present in a room.
+    Presence {
+        /// The room token the sender prefixed.
+        token: String,
+        /// Whether the peer is now in the room.
+        present: bool,
+    },
 }
 
 /// A data-channel message's outer frame, or `None` for anything else -- a

@@ -52,6 +52,7 @@ pub const STATS_INTERVAL: Duration = Duration::from_secs(1);
 /// classification reads on the JS side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CandidateType {
+    /// An address of a local interface.
     Host,
     /// Server-reflexive: the address a STUN server saw.
     Srflx,
@@ -76,12 +77,18 @@ impl From<CandidateKind> for CandidateType {
 /// The candidate pair a connection settled on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectedPair {
+    /// The local socket address of the pair.
     pub local: SocketAddr,
+    /// The kind of the local candidate.
     pub local_type: CandidateType,
+    /// The remote socket address of the pair.
     pub remote: SocketAddr,
+    /// The kind of the remote candidate. [`CandidateType::Prflx`] when the
+    /// address was never signalled.
     pub remote_type: CandidateType,
 }
 
+/// How a [`WebRtc`] is set up.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// The local addresses to offer as host candidates, one per socket the
@@ -105,11 +112,15 @@ impl Config {
 /// A datagram to send: from one of the driver's sockets to a peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Datagram {
+    /// The local socket the datagram leaves from.
     pub source: SocketAddr,
+    /// The remote address it goes to.
     pub destination: SocketAddr,
+    /// The datagram's payload.
     pub contents: Vec<u8>,
 }
 
+/// Something that happened on a connection, reported by [`WebRtc::poll_event`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PeerEvent {
     /// The data channel is open: tell the signaller, then the room.
@@ -148,6 +159,9 @@ fn sdp_candidates(sdp: &str, into: &mut HashMap<SocketAddr, CandidateType>) {
     }
 }
 
+/// The peer connections of one room, sans-IO: datagrams and the current time
+/// go in, and [`Datagram`]s and [`PeerEvent`]s come out. It owns no sockets
+/// and has no clock of its own.
 pub struct WebRtc {
     cfg: Config,
     provider: Arc<CryptoProvider>,
@@ -167,6 +181,8 @@ impl std::fmt::Debug for WebRtc {
 }
 
 impl WebRtc {
+    /// A set of connections with none made yet, starting at `now`. Every
+    /// connection offers the local candidates in `cfg`.
     pub fn new(cfg: Config, now: Instant) -> Self {
         WebRtc {
             cfg,
@@ -412,14 +428,17 @@ impl WebRtc {
         })
     }
 
+    /// Whether the data channel of `id` is open.
     pub fn is_open(&self, id: ConnId) -> bool {
         self.conns.get(&id).is_some_and(|c| c.channel.is_some())
     }
 
+    /// The next datagram to send, if any.
     pub fn poll_transmit(&mut self) -> Option<Datagram> {
         self.transmits.pop_front()
     }
 
+    /// The next event, if any.
     pub fn poll_event(&mut self) -> Option<PeerEvent> {
         self.events.pop_front()
     }
