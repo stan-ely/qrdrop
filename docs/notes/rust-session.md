@@ -16,12 +16,15 @@ session that works on it starts by reading the **Status** section and ends by up
 | 6. Rust CLI and the cross-implementation suite | done, 2026-10-18 | `aa5026a` | the Rust CLI passes the interop matrix against the Node CLI in all four pairings, WebRTC and LAN, and a Chromium tab both ways; see "Phase 6: what it found" |
 | 7. The apps on the native session | desktop done, 2026-10-18; device runs pending | `a142b52`, `04504bc`, `7573183`, `5b959bd` | the desktop app runs a transfer on `qrdrop-session` both ways against the Node CLI; on by default on Linux only, until the RMX3868 gate is measured; see "Phase 7: what it found" |
 | 8. CLI distribution switch | done in the tree, 2026-10-18; first release pending | `ec79928` | `qrdrop` runs the Rust CLI from a per-platform npm package and falls back to the Node CLI; all five targets build on CI; the npm names need a first publish by hand; see "Phase 8: what it found" |
-| 9. QUIC path, Rust to Rust | not started | | |
+| 9. QUIC path, Rust to Rust | done for the CLI, 2026-10-18; the phone pending | `1a4f465` | the session moves a file over quinn after the SAS, through two NATs, and falls back to WebRTC; three to ten times SCTP under netem; on in the Rust CLI, off in the app until the RMX3868 gate; see "Phase 9: what it found" |
 | 10. Extraction prep | not started | | |
 
-**Next step:** Phase 9, the QUIC path, which can go ahead while two things wait on a person:
+**Next step:** Phase 10, extraction prep, which can go ahead while three things wait on a person
+or a device. Its last step, the crates.io publish, is the owner's to approve.
 - **Phase 7's device runs** need the RMX3868 attached (switch the phone with
   `localStorage.setItem('qrdrop:native-session', '1')` in the WebView's devtools).
+- **Phase 9's phone gate** needs the same phone, and an app built with `qrdrop-session/quic`;
+  the QUIC path is the CLI's alone until then.
 - **Phase 8's first release** needs the five platform names published once by hand, and a Trusted
   Publishing entry for each (see "Phase 8: what it found").
 
@@ -29,8 +32,10 @@ session that works on it starts by reading the **Status** section and ends by up
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
   core.
 - **Same wire.** The Rust side must interoperate with today's website and Node CLI.
-- **QUIC signalling.** The QUIC path rendezvouses through the Trystero-compatible signalling, not
-  through a discovery or relay system of its own. iroh is not assumed.
+- **QUIC signalling.** The QUIC path rendezvouses through the Trystero-compatible room, not
+  through a discovery or relay system of its own. iroh is not assumed. Phase 9 put the candidates
+  on the room's sealed control stream after the SAS rather than in the signal itself, which anyone
+  holding the code can read (see "Phase 9: what it found").
 - **CLI distribution (phase 8).** Release binaries per target; the npm `qrdrop` package becomes a
   launcher over per-platform optional packages, so `npx qrdrop` keeps working; Homebrew and Scoop
   point at the binaries. Decided 2026-10-18, on the recommendation below.
@@ -133,7 +138,7 @@ property instead of a runtime check.
 | `tryst` | `webrtc` | str0m (chosen in phase 1), `stun-proto`, `turn-client-proto` | everyone, by default; off only in a Rust-only build |
 | `qrdrop-session` | `lan-dial` | WebSocket client | the CLI, every app target |
 | `qrdrop-session` | `lan-listen` | WebSocket server, getifaddrs | the CLI; the app on Android and Linux only |
-| `qrdrop-session` | `quic` | quinn, rustls | off until phase 9 passes its gate |
+| `qrdrop-session` | `quic` | quinn, rustls, if-addrs | the CLI, by default; not the app until its phone gate |
 | `qrdrop-session` | `fs` | std file `Source` / `Sink` | the CLI and desktop apps; Android uses its own sink |
 | `qrdrop-cli` | `web` | embedded `site/dist` for `qrdrop web` | release builds |
 | `qrdrop-cli` | `qr` | terminal QR rendering | release builds |
@@ -412,6 +417,8 @@ sent as 64 lowercase hex characters.
 | `pause` / `resume` | `{t}`; pause at 4 MiB written-but-unflushed, resume at 1 MiB; the sender gives up after 120 s paused | receiver |
 | `lan-hello` | `{t, listen}`, one of quiet / prompt / none | sender first, receiver only in reply |
 | `lan-offer` | `{t, addrs, port, token}`; token is 32 hex characters | whichever side listens |
+| `quic-hello` | `{t}` | Rust only: sender first, receiver only in reply |
+| `quic-offer` | `{t, addrs, fp}`; addrs are `ip:port`, fp the certificate's SHA-256 as 64 hex characters | Rust only: both, once each |
 
 Unknown types are ignored, and still consume their index. A waiter for `error` matches any `seq`.
 
@@ -454,6 +461,29 @@ always after it.
 - **Switching.** Only the sender switches, at Accept. A sender that sees Accept with no `lan-hello`
   from the peer treats it as an older build and does not wait.
 - **Send buffer.** High mark 1 MiB, low mark 256 KiB.
+
+### QUIC path (`crates/qrdrop-session/src/quic.rs`), Rust to Rust
+
+Not part of the JS wire: a JS peer ignores the sender's one `quic-hello` and never sends one.
+
+- **Negotiation.** After the SAS, on the control stream, with `lan-hello`'s timing: the sender's
+  `quic-hello` follows its confirm, and a receiver's is only a reply, queued ahead of its Accept.
+  Then each side binds a UDP socket, learns its reflexive address from the STUN servers, makes a
+  fresh self-signed P-256 certificate and sends one `quic-offer`.
+- **A valid offer.** 1 to 8 IPv4 `ip:port` candidates, none unspecified, broadcast, multicast or
+  port 0, and loopback only when this side is bound to loopback (a test or the bench); a
+  fingerprint matching `^[0-9a-f]{64}$`.
+- **Roles.** The receiver is the QUIC server and the sender the client. The server punches each
+  client candidate with a one-byte datagram every 200 ms, twenty times; the client dials every server
+  candidate at once, and the first handshake wins. 8 s for either.
+- **TLS.** 1.3 only, ALPN `qrdrop/1`, mutual: each end accepts exactly the certificate whose SHA-256
+  the other offered, and still checks the handshake signature against it.
+- **Stream.** One unidirectional stream from the sender; each frame is a 4-byte big-endian length
+  and the sealed frame, at most 64 KiB. Windows of 16 MiB; the receiver reads at most 4 MiB ahead of
+  the session.
+- **Switching.** As LAN: only the sender switches, at Accept, waiting up to 3 s for a pending
+  connection. With both up, QUIC wins.
+- **A stream that closes** while carrying the file fails the transfer, as a LAN socket does.
 
 ### The CLI's contract (`src/cli.js`, `e2e/interop.e2e.mjs`)
 
@@ -1213,6 +1243,67 @@ setup below has been done.
   QUIC stream. Larger frames on this path are a separate protocol decision.
 - **Keep it only if it wins.** Measure under netem at 20, 50 and 100 ms RTT, and on the phone. Keep
   it only if it clearly beats SCTP.
+
+### Phase 9: what it found
+
+Done for the CLI on 2026-10-18 (`1a4f465`). The Rust CLI offers the path by default; the app is built
+without it until the phone has been measured.
+
+**The shape.** `crates/qrdrop-session/src/quic.rs` holds the endpoint and the offer's rules, and
+the driver negotiates it beside LAN. The wire is under "QUIC path" above; `docs/protocol.md` has
+the reader's version and `docs/threat-model.md` the trust argument.
+
+**What changed from the plan, and why:**
+- **Not in the signal.** The plan put the candidates in Trystero's signal, as a field a JS peer
+  ignores. That signal is sealed with a key derived from the code alone, so anyone holding the
+  code reads it, and it goes out before the SAS: a fingerprint there would be one an attacker
+  could swap before anyone had compared four symbols. So the offer travels on the session's own
+  control stream, after the confirm, with `lan-hello`'s timing and its reasoning: only the sender
+  switches, at Accept, the one moment every WebRTC frame already sent is provably handled. The
+  room still does the rendezvous, so the decision above holds.
+- **A JS peer is not asked to ignore a field; it ignores a control type.** Control types it does
+  not know are advisory and dropped, after the AEAD and with their index consumed, which the
+  interop matrix's QUIC leg proves against the Node CLI in both directions.
+- **No TURN fallback of its own.** When the punch fails the transfer stays on WebRTC, which brings
+  its own TURN. The dead openrelay entries are still the owner's decision.
+- **The same frames.** 16 KiB sealed frames, one per length prefix on one stream. Larger frames
+  remain a protocol decision of their own, and nothing measured here asked for them.
+
+**Measured** (`app/CAPABILITIES.md`, "The QUIC path, against SCTP"). Between two sessions on
+WSL, one pinned core per side:
+- **Clean delay.** QUIC carried 101-108, 93, 51 and 32 MB/s at 0, 20, 50 and 100 ms, against
+  WebRTC's 25-27, 17-18, 12-13 and 8.5.
+- **Loss.** Five to thirty-five times WebRTC at 0.5% loss, and four to ten times with a 100 Mbit/s
+  bottleneck and 0.1%.
+- **Two NATs.** 105 and 50 MB/s at 0 and 50 ms, punched from the reflexive candidates alone.
+- **Fallback.** With QUIC's handshake blocked, the transfer went over WebRTC after the 3 s wait.
+- **So the gate passes on netem**, by a margin no tuning of SCTP came near (see the 2026-09-26
+  netem grid, where Chromium's SCTP capped a WAN at 1-2 MB/s). It has not been measured on the
+  phone.
+
+**Found on the way:**
+- **The WebRTC baseline was a third of what phase 1 measured**, because the runtime had been
+  written without the 4 MB socket buffers phase 1 called for. Fixed first (`84cecc6`), so that the
+  comparison is against SCTP at its best rather than its worst.
+- **The offer handler took both halves before checking them.** When the peer's offer arrived
+  before this side's own endpoint was ready, it was taken, found alone and dropped, and the path
+  never came up. It now checks both and takes neither until both are there.
+- **The first two-NAT run failed for a reason that was the harness's.** Unsolicited checks were
+  delivered to the NAT namespace and confirmed conntrack entries on the tuple the peer behind it
+  was about to use, so MASQUERADE changed its port. A real router drops that input. The finding
+  is recorded in `examples/nat.sh` and in CAPABILITIES, because it reads exactly like a traversal
+  bug.
+- **Windows and WSL cannot stand in for two machines.** WSL's mirrored networking gives both the
+  host's address, so a pairing between them is one host talking to itself through two stacks, and
+  it timed out. A cross-machine run needs a second device.
+- **Cubic stays.** A raw quinn spike measured BBR ahead at 20 and 50 ms and behind on a clean link
+  and at 100 ms. Nothing there justifies leaving quinn's default before a real path is measured.
+
+**Left for a device:**
+- **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and
+  measure phone to CLI across two networks against the WebRTC path. Mind ColorOS's socket kill
+  in the background (`app/CAPABILITIES.md`), which a UDP socket of the app's own may meet
+  differently from WebRTC's.
 
 ### Phase 10: extraction prep
 
