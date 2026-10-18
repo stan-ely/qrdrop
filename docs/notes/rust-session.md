@@ -1317,6 +1317,21 @@ Accept to the done screen:
 - **Not measured:** the native session over LAN alone, in either direction.
 - The app gained a `quic` feature for this, off in every shipped build.
 
+**The second device session (same day, same setup, the APK and CLI built from `6657835`).** The
+Wi-Fi was slower than in the first session: the JS session's send, unchanged between the two,
+went from 5.2-6.8 to 4.1-5.5.
+- **Both fixes hold.** Five native sends, every one ending on "sent", with all 67,108,864 bytes
+  at the CLI.
+- **Phone sends:** the native session with QUIC 3.2-5.9 MB/s; native with the CLI on
+  `QRDROP_QUIC=0`, which is WebRTC, since a Windows receiver never listens, 4.2-4.7; JS over
+  WebRTC 4.1-5.5. All three are the same within the spread. On this network, nothing on the send
+  side comes near the phase 7 gate's 15.5.
+- **Phone receives:** native over QUIC 9.5-10.6; native over LAN alone (the CLI on
+  `QRDROP_QUIC=0`) 12.9-13.6, with one run at 6.9; JS over LAN 12.6-12.9. **On one network, QUIC
+  costs the phone about a quarter against the LAN path**, so "QUIC wins over LAN when both are
+  up" is the wrong order wherever the peers share a LAN. Native over LAN equals JS over LAN,
+  which puts the limit in the link and not in the session.
+
 **Left for a device:**
 - **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and
   measure phone to CLI across two networks against the WebRTC path. Mind ColorOS's socket kill
