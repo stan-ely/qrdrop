@@ -22,7 +22,7 @@
     "cli"
   ],
   "bin": {
-    "qrdrop": "./src/cli.js"
+    "qrdrop": "./bin/qrdrop.js"
   },
   "exports": {
     ".": "./src/index.js",
@@ -31,6 +31,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "bin",
     "src",
     "types",
     "site/dist"

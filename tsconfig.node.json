@@ -18,6 +18,7 @@
     "src/transport/**/*.js",
     "src/node/**/*.js",
     "src/cli.js",
+    "bin/**/*.js",
     "scripts/**/*.mjs",
     "test/**/*.mjs",
     "e2e/**/*.mjs",

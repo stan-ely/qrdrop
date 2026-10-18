@@ -5,6 +5,22 @@ is the finer-grained record.
 
 ## Unreleased
 
+**The command line is now a single native binary.** `npx qrdrop`, `npm i -g qrdrop`,
+`brew install stan-ely/tap/qrdrop` and `scoop install stan-ely/qrdrop` all install the
+same commands, flags and output as before, now built in Rust. It is one self-contained
+file, about 11 MB on Windows, with nothing else to install: the Homebrew formula and the
+Scoop manifest no longer pull in Node, and the binary for each platform is also attached
+to the GitHub Release. Through npm, the binary arrives as a package matched to your
+platform (`qrdrop-linux-x64`, `qrdrop-darwin-arm64`, and so on). On a platform with no
+binary, or with optional dependencies turned off, the `qrdrop` command runs the
+JavaScript version exactly as it always has. `QRDROP_CLI=js` picks the JavaScript one on
+purpose. Both speak the same protocol, and transfers between them were tested in every
+pairing. One visible difference: an unknown option is a usage error that exits 2, where
+the JavaScript version printed a stack trace and exited 1.
+
+For code using the package directly, nothing changes. `qrdrop`, `qrdrop/web` and
+`qrdrop/node` export what they did.
+
 **Several times faster between two native devices on one network.** When both ends run
 the command line or the qrdrop app, and one of them can accept a connection without the
 operating system asking its person first, the file itself now moves over a direct

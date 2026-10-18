@@ -1,0 +1,115 @@
+# The Rust CLI, built for every platform it ships on, as workflow artifacts.
+#
+# publish.yml calls this on a v* tag and publishes what it builds: one npm
+# package per platform, plus the archives on the Release that the Homebrew
+# formula and the Scoop manifest point at. It also runs by itself on a push
+# that touches what goes into the binary, and that half is the reason it is a
+# file of its own. publish.yml runs only on a tag, so without it a target that
+# stopped building -- a musl link, a cross-compile -- would be found on release
+# day, after the npm version is spent.
+#
+# The matrix is scripts/npm-platforms.mjs's PLATFORMS, read at run time, so
+# the targets built and the packages published are one list.
+name: cli-binaries
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'vendor/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/npm-platforms.mjs'
+      - '.github/workflows/cli-binaries.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.read.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        run: echo "platforms=$(node scripts/npm-platforms.mjs --matrix)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.platforms) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # node and rust only, uncached, for the reasons .github/actions/app-setup
+      # gives: a bare mise-action installs a JDK and the Android SDK as well,
+      # and its cache is keyed on mise.toml alone.
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: node rust
+          cache: false
+
+      - run: rustup target add ${{ matrix.target }}
+
+      # Per target, saved from main only: a tag can restore main's cache and
+      # never another tag's, which is the case app-setup makes too.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # ring compiles C, and a musl target needs a musl C compiler to do it:
+      # musl-tools provides musl-gcc for the runner's own architecture, which
+      # is why arm64 Linux builds on an arm64 runner rather than crossing.
+      - name: Install the musl toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          triple="${{ matrix.target }}"
+          echo "CC_${triple//-/_}=musl-gcc" >> "$GITHUB_ENV"
+
+      # The page `qrdrop web` serves is embedded at compile time (the `web`
+      # feature, crates/qrdrop-cli/build.rs), so site/dist has to exist first.
+      - run: npm ci
+      - run: npm run build
+
+      # A static C runtime on Windows, so the exe needs no Visual C++
+      # redistributable on a machine that has never had one. Linux musl is
+      # static by default.
+      - name: Build
+        shell: bash
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+        run: cargo build --release --locked -p qrdrop-cli --features web --target ${{ matrix.target }}
+
+      # The binary runs and is the version this tree says, on the runner that
+      # built it -- under Rosetta for x86_64 macOS. `web --help`-style checks
+      # need nothing on the network, so this is the whole of what can be run
+      # here; the transfer itself is e2e/interop.e2e.mjs's.
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/${{ matrix.exe }}"
+          want="$(node -p "require('./package.json').version")"
+          got="$("$bin" --version)"
+          echo "$bin --version: $got"
+          [ "$got" = "$want" ] || { echo "expected $want" >&2; exit 1; }
+          "$bin" --help > /dev/null
+          if [ "${{ runner.os }}" = Linux ]; then
+            file "$bin"
+            # "static-pie linked" is what a PIE musl build reports.
+            file "$bin" | grep -Eq 'statically linked|static-pie linked' || { echo "not static" >&2; exit 1; }
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.exe }}
+          if-no-files-found: error

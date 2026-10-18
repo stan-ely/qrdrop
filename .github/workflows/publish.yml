@@ -1,5 +1,14 @@
-# Everything that happens when a v* tag is pushed: npm, the GitHub Release, and
-# the Homebrew tap. Three jobs, in that order, each gating the next.
+# Everything that happens when a v* tag is pushed: the Rust CLI built for every
+# platform, npm, the GitHub Release, the Homebrew tap and the Scoop bucket. Each
+# job gates the next.
+#
+# The `qrdrop` command is the Rust CLI wherever there is a binary for the
+# platform (docs/notes/rust-session.md, phase 8). `binaries` builds them
+# (cli-binaries.yml, which also runs on main so a broken target is found
+# before a tag); `publish` publishes one npm package per platform and then
+# `qrdrop` itself, whose launcher (bin/qrdrop.js) runs the binary and falls
+# back to the Node CLI where none fits; the Release carries the same binaries
+# as archives, and the formula and the manifest point at those.
 #
 # DO NOT RENAME THIS FILE. npm Trusted Publishing is configured on npmjs.com
 # against a specific repository *and workflow filename*. Renaming this to
@@ -34,7 +43,11 @@ permissions:
   attestations: write # build provenance for the files attached to the Release
 
 jobs:
+  binaries:
+    uses: ./.github/workflows/cli-binaries.yml
+
   publish:
+    needs: binaries
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -85,12 +98,46 @@ jobs:
       - name: CHANGELOG must have an entry for this version
         run: node scripts/release-notes.mjs "${{ steps.version.outputs.version }}" > /dev/null
 
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          path: binaries
+
+      # One package per platform, each with one binary, from the list in
+      # scripts/npm-platforms.mjs; it refuses a binary that is missing rather
+      # than publish a release some platforms silently lack.
+      - run: node scripts/npm-platforms.mjs --stage binaries npm-platforms
+
       # No NODE_AUTH_TOKEN here on purpose: with trusted publishing configured
-      # for this package on npmjs.com, npm CLI >=11.5.1 detects the CI OIDC
+      # for each package on npmjs.com, npm CLI >=11.5.1 detects the CI OIDC
       # environment on its own and exchanges it for a publish token, then
-      # discards it. --provenance still ties the published tarball to this
-      # workflow run, so a consumer can verify the package was built from
-      # this repo at this commit.
+      # discards it. --provenance still ties each tarball to this workflow run,
+      # so a consumer can verify the package was built from this repo at this
+      # commit. Each platform package needs its own trusted-publisher entry,
+      # against this file's name, exactly as qrdrop does.
+      #
+      # The platform packages go first, so no moment exists in which qrdrop's
+      # new version is installable and its binaries are not. A version already
+      # on the registry is skipped rather than failed: a re-run after the main
+      # publish failed would otherwise stop here, on bytes that are already
+      # right, and npm never lets a version be published twice anyway.
+      - name: Publish the platform packages
+        run: |
+          for dir in npm-platforms/*/; do
+            name="$(node -p "require('./$dir/package.json').name")"
+            if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+              echo "$name@$VERSION is already published; skipping."
+              continue
+            fi
+            npm publish "$dir" --provenance --access public
+          done
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      # The optionalDependencies are written in here and never committed: a
+      # dependency on a version that is not on the registry yet would break
+      # `npm ci` in this repository every time the version moved.
+      - run: node scripts/npm-platforms.mjs --wire package.json
       - run: npm publish --provenance --access public
 
   # The Release is the page people land on from the repo. v0.2.0 and v0.3.0 got
@@ -122,9 +169,28 @@ jobs:
       # rebuild it would replace.
       - run: npm run build
 
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          path: binaries
+
       - name: Assemble the artifacts
         run: |
           mkdir -p dist-release
+
+          # The CLI for each platform, the binary alone at the archive's root:
+          # a zip for Windows, which Scoop and Explorer both open, and a tarball
+          # elsewhere, whose mode bit says it is executable -- the artifact
+          # download did not keep it, so it is set again first.
+          for dir in binaries/cli-*; do
+            target="${dir#binaries/cli-}"
+            if [ -f "$dir/qrdrop.exe" ]; then
+              (cd "$dir" && zip -q "$GITHUB_WORKSPACE/dist-release/qrdrop-$VERSION-$target.zip" qrdrop.exe)
+            else
+              chmod 755 "$dir/qrdrop"
+              tar -czf "dist-release/qrdrop-$VERSION-$target.tar.gz" -C "$dir" qrdrop
+            fi
+          done
 
           # The same tarball npm serves, so the sha256 the tap job takes below
           # is a hash of bytes a user can verify against the registry.
@@ -135,19 +201,23 @@ jobs:
           # wants site/dist/ prefixed onto every entry.
           (cd site/dist && zip -qr "$GITHUB_WORKSPACE/dist-release/qrdrop-site-$VERSION.zip" .)
 
-          (cd dist-release && sha256sum ./*.tgz ./*.zip > SHA256SUMS)
+          # Bare names, not ./*: scoop's autoupdate finds an archive's hash in
+          # this file by its basename, and a leading ./ defeats that match while
+          # staying invisible to sha256sum -c. The app's release says the same.
+          (cd dist-release && sha256sum -- *.tgz *.tar.gz *.zip > SHA256SUMS)
           cat dist-release/SHA256SUMS
 
       # Matches the posture `npm publish --provenance` already establishes for
       # the tarball: a consumer can check these files were produced by this
       # workflow, at this commit, rather than uploaded by hand. SHA256SUMS is
-      # deliberately not attested -- it is a manifest of the two files that are,
+      # deliberately not attested -- it is a manifest of the files that are,
       # and attesting a list of hashes adds nothing over attesting the things
       # hashed.
       - uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist-release/*.tgz
+            dist-release/*.tar.gz
             dist-release/*.zip
 
       - name: Create the Release
@@ -163,8 +233,8 @@ jobs:
 
   # Homebrew is the install path for everyone on macOS and Linux who does not
   # want a global npm package. The formula lives in stan-ely/homebrew-tap and
-  # points at the npm registry tarball, so this job's whole job is to move the
-  # new version and its hash into it.
+  # points at this release's own binaries, one per OS and architecture, so it
+  # needs no Node at all; this job moves the version and the four hashes in.
   #
   # HOMEBREW_TAP_TOKEN is a fine-grained PAT with contents:write scoped to the
   # tap repository and nothing else. GITHUB_TOKEN cannot stand in for it: that
@@ -181,38 +251,24 @@ jobs:
     env:
       VERSION: ${{ needs.publish.outputs.version }}
     steps:
-      # Hash the registry's copy, not a local `npm pack`. The formula's url
-      # points at the registry, so the registry's bytes are the ones whose hash
-      # has to be right -- and if the two ever disagree, this is where it should
-      # be found out, not in someone's `brew install`.
-      #
-      # The retry loop is not defensive padding: the registry CDN can take
-      # minutes to serve a version published one job ago, and a cold 404 here
-      # would fail a release that is otherwise entirely fine. It was sized for
-      # "a few seconds" at first (six tries, 15 s apart), and v0.6.0 404'd for
-      # about five minutes after `npm view` already listed the version, failing
-      # this job until a hand re-run. So it is a deadline now, with room to
-      # spare over what was measured, not a count of tries.
-      - name: Resolve the published tarball
-        id: tarball
+      # Hash the Release's copies, downloaded from the Release, not the files
+      # the release job had on disk. The formula's urls point at the Release,
+      # so those bytes are the ones whose hash has to be right -- and if the
+      # two ever disagree, this is where it should be found out, not in
+      # someone's `brew install`.
+      - name: Hash the released archives
+        id: hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          url="https://registry.npmjs.org/qrdrop/-/qrdrop-$VERSION.tgz"
-          deadline=$(( SECONDS + 900 ))
-          attempt=0
-          while (( SECONDS < deadline )); do
-            attempt=$(( attempt + 1 ))
-            if curl -fsSL "$url" -o tarball.tgz; then
-              sha="$(sha256sum tarball.tgz | cut -d' ' -f1)"
-              echo "url=$url" >> "$GITHUB_OUTPUT"
-              echo "sha256=$sha" >> "$GITHUB_OUTPUT"
-              echo "Resolved on attempt $attempt: $sha"
-              exit 0
-            fi
-            echo "Attempt $attempt: not on the registry CDN yet; waiting."
-            sleep 20
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --dir archives
+          for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+            file="archives/qrdrop-$VERSION-$target.tar.gz"
+            [ -f "$file" ] || { echo "no $file on the Release" >&2; exit 1; }
+            # aarch64-apple-darwin -> aarch64_darwin, and so on.
+            key="$(echo "$target" | cut -d- -f1,3)"
+            echo "${key//-/_}=$(sha256sum "$file" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           done
-          echo "qrdrop@$VERSION was not fetchable at $url within 15 minutes" >&2
-          exit 1
 
       - uses: actions/checkout@v7
         with:
@@ -226,8 +282,11 @@ jobs:
       # standing and silently keep it forever.
       - name: Update the formula
         env:
-          TARBALL_URL: ${{ steps.tarball.outputs.url }}
-          TARBALL_SHA: ${{ steps.tarball.outputs.sha256 }}
+          BASE: https://github.com/${{ github.repository }}/releases/download/v${{ needs.publish.outputs.version }}
+          SHA_MAC_ARM: ${{ steps.hashes.outputs.aarch64_darwin }}
+          SHA_MAC_INTEL: ${{ steps.hashes.outputs.x86_64_darwin }}
+          SHA_LINUX_ARM: ${{ steps.hashes.outputs.aarch64_linux }}
+          SHA_LINUX_INTEL: ${{ steps.hashes.outputs.x86_64_linux }}
         run: |
           mkdir -p tap/Formula
           cat > tap/Formula/qrdrop.rb <<RUBY
@@ -237,25 +296,34 @@ jobs:
           class Qrdrop < Formula
             desc "Send a file straight from one device to another, end-to-end encrypted"
             homepage "https://github.com/stan-ely/qrdrop"
-            url "$TARBALL_URL"
-            sha256 "$TARBALL_SHA"
+            version "$VERSION"
             license "MIT"
 
-            # Rather than vendoring a runtime: brew's node is well past the
-            # engines floor of 22, and a bundled Node is ~58 MB against a
-            # published tarball of about 660 kB.
-            depends_on "node"
+            # The Rust CLI, one binary per platform from the GitHub Release.
+            # Linux's is static (musl), so it runs on any distribution.
+            on_macos do
+              on_arm do
+                url "$BASE/qrdrop-$VERSION-aarch64-apple-darwin.tar.gz"
+                sha256 "$SHA_MAC_ARM"
+              end
+              on_intel do
+                url "$BASE/qrdrop-$VERSION-x86_64-apple-darwin.tar.gz"
+                sha256 "$SHA_MAC_INTEL"
+              end
+            end
+            on_linux do
+              on_arm do
+                url "$BASE/qrdrop-$VERSION-aarch64-unknown-linux-musl.tar.gz"
+                sha256 "$SHA_LINUX_ARM"
+              end
+              on_intel do
+                url "$BASE/qrdrop-$VERSION-x86_64-unknown-linux-musl.tar.gz"
+                sha256 "$SHA_LINUX_INTEL"
+              end
+            end
 
             def install
-              # std_npm_args passes --ignore-scripts, which is safe here for a
-              # specific reason worth writing down: node-datachannel ships its
-              # native binary as eight per-platform npm packages that npm picks
-              # between using os/cpu, not as a postinstall that downloads one.
-              # If it ever goes back to prebuild-install, this formula breaks
-              # into a CLI that pairs and then cannot open a peer connection --
-              # the failure src/node/rtc.js writes its long error message for.
-              system "npm", "install", *std_npm_args
-              bin.install_symlink Dir["#{libexec}/bin/*"]
+              bin.install "qrdrop"
             end
 
             test do
@@ -296,13 +364,10 @@ jobs:
           fi
           echo "Formula/qrdrop.rb is at $VERSION in the tap."
 
-  # Scoop is Windows' answer to the tap job above, and it is worth saying why
-  # this exists when the "No winget" note in CLAUDE.md rules that ecosystem out.
-  # winget was rejected because it has no npm step and only partly honours
-  # PackageDependencies, so a real package there means vendoring a ~58 MB Node
-  # runtime. Scoop has neither problem: `depends` pulls nodejs from the main
-  # bucket and `post_install` runs npm in the package directory -- which is the
-  # same shape the Homebrew formula already has, not a new posture.
+  # Scoop is Windows' answer to the tap job above: a manifest pointing at this
+  # release's Windows binary, in a zip. It used to point at the npm tarball and
+  # depend on nodejs, with a .cmd wrapper written by post_install because
+  # Scoop cannot shim a .js file; a binary needs none of that.
   #
   # SCOOP_BUCKET_TOKEN is the counterpart of HOMEBREW_TAP_TOKEN: a fine-grained
   # PAT with contents:write scoped to stan-ely/scoop-bucket and nothing else.
@@ -319,15 +384,17 @@ jobs:
     env:
       VERSION: ${{ needs.publish.outputs.version }}
     steps:
-      # The registry's bytes, hashed here for the same reason the tap job hashes
-      # them: the manifest's url points at the registry, so that is the copy
-      # whose hash has to be right. The retry loop is not needed a second time
-      # -- `needs: tap` means the tarball was already fetchable one job ago.
-      - name: Hash the published tarball
-        id: tarball
+      # The Release's bytes, hashed here for the tap job's reason: the
+      # manifest's url points at the Release, so that is the copy whose hash
+      # has to be right.
+      - name: Hash the released zip
+        id: zip
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL "https://registry.npmjs.org/qrdrop/-/qrdrop-$VERSION.tgz" -o tarball.tgz
-          echo "sha256=$(sha256sum tarball.tgz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          name="qrdrop-$VERSION-x86_64-pc-windows-msvc.zip"
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --pattern "$name"
+          echo "sha256=$(sha256sum "$name" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         with:
@@ -335,65 +402,40 @@ jobs:
           token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
           path: scoop
 
-      # THE .cmd WRAPPER IS NOT OPTIONAL, and it is the whole reason this
-      # manifest is more than four lines. Scoop's shim generator switches on the
-      # target's extension -- .exe/.com, .cmd/.bat, .ps1, .jar, .py -- and .js is
-      # not among them; it falls through to a generic branch that tries to
-      # translate the path for WSL or Cygwin. Pointing `bin` straight at
-      # src/cli.js therefore installs cleanly, produces a shim, and fails the
-      # moment anyone runs it. post_install writes a two-line cmd that execs node
-      # against the same file, and `bin` shims that instead.
+      # checkver reads the REGISTRY, because that is where this package's version
+      # actually lives -- a GitHub tag that failed to publish should not move the
+      # manifest, and this repository's newest release is as often an app-v*
+      # one. autoupdate points at the Release, and takes the hash from its
+      # SHA256SUMS, which is written with bare names so scoop can find the line.
       #
-      # --ignore-scripts mirrors std_npm_args in the Homebrew formula and is safe
-      # here for the reason written out at length there: node-datachannel ships
-      # its native binary as eight per-platform npm packages selected by os/cpu,
-      # not as a postinstall that downloads one. If it ever goes back to
-      # prebuild-install, both package managers break the same way and that
-      # comment is the one to read.
-      #
-      # checkver and autoupdate point at the REGISTRY rather than this repo's
-      # releases, because the registry is where this package's version actually
-      # lives -- a GitHub tag that failed to publish should not move the
-      # manifest. autoupdate deliberately carries no `hash` block: with none,
-      # scoop downloads the new tarball and hashes it itself, which is what we
-      # want. The registry's own `dist.shasum` is the obvious thing to point at
-      # and is WRONG -- it is SHA-1, and scoop would compare it against a SHA-256
-      # and refuse every update. `dist.integrity` is SHA-512 in base64 where
-      # scoop wants hex.
-      #
-      # Built by piping JS into node through a QUOTED heredoc. Two things here
-      # cannot survive shell expansion: scoop's $version and $dir placeholders,
-      # which bash would empty, and the quoting inside the post_install command.
-      # <<'JS' passes bytes through untouched and JSON.stringify makes malformed
-      # JSON unrepresentable. `node -e '...'` was the first draft and lost a
-      # Windows path's backslashes to quoting -- valid JSON, broken command,
-      # which no JSON check can catch. The cmd wrapper below now uses forward
-      # slashes, which cmd.exe and node both accept, so there is no backslash
-      # left in this manifest to lose.
+      # Built by piping JS into node through a QUOTED heredoc. scoop's $version
+      # placeholder is a bash variable too, and an unquoted heredoc would empty
+      # it; <<'JS' passes bytes through untouched and JSON.stringify makes
+      # malformed JSON unrepresentable.
       - name: Write the scoop manifest
         env:
-          TARBALL_SHA: ${{ steps.tarball.outputs.sha256 }}
+          ZIP_SHA: ${{ steps.zip.outputs.sha256 }}
         run: |
           mkdir -p scoop/bucket
           node <<'JS' > scoop/bucket/qrdrop.json
-          const registry = 'https://registry.npmjs.org/qrdrop/-/qrdrop'
+          const base = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download`
+          const zip = v => `${base}/v${v}/qrdrop-${v}-x86_64-pc-windows-msvc.zip`
           process.stdout.write(JSON.stringify({
             '##': 'Generated by .github/workflows/publish.yml in stan-ely/qrdrop. Hand edits here are overwritten on the next release.',
             version: process.env.VERSION,
             description: 'Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.',
             homepage: 'https://github.com/stan-ely/qrdrop',
             license: 'MIT',
-            depends: 'main/nodejs',
-            url: `${registry}-${process.env.VERSION}.tgz`,
-            hash: process.env.TARBALL_SHA,
-            extract_dir: 'package',
-            post_install: [
-              'npm install --omit=dev --ignore-scripts --prefix "$dir"',
-              'Set-Content -Encoding ASCII -Path "$dir/qrdrop.cmd" -Value @("@echo off", "node ""%~dp0src/cli.js"" %*")'
-            ],
-            bin: 'qrdrop.cmd',
+            architecture: {
+              '64bit': { url: zip(process.env.VERSION), hash: process.env.ZIP_SHA },
+            },
+            bin: 'qrdrop.exe',
             checkver: { url: 'https://registry.npmjs.org/qrdrop/latest', jsonpath: '$.version' },
-            autoupdate: { url: `${registry}-$version.tgz` }
+            autoupdate: {
+              architecture: {
+                '64bit': { url: zip('$version'), hash: { url: `${base}/v$version/SHA256SUMS` } },
+              },
+            },
           }, null, 2) + '\n')
           JS
           cat scoop/bucket/qrdrop.json

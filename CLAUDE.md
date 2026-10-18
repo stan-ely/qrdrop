@@ -296,13 +296,48 @@ a check.
 A `v*` tag runs both `.github/workflows/publish.yml` (below) and `pages.yml` (above),
 independently and in parallel.
 
-`publish.yml` is four jobs in a chain:
-`publish` (suite, typecheck, build, tag-matches-`package.json`, `npm publish` over OIDC),
-then `release` (a GitHub Release whose body is the CHANGELOG section for that version,
-carrying the npm tarball, `qrdrop-site-<version>.zip`, `SHA256SUMS`, and a build
-provenance attestation), then `tap` (rewrites `Formula/qrdrop.rb` in `stan-ely/homebrew-tap`
-from a template in that file), then `scoop` (the same for `bucket/qrdrop.json` in
-`stan-ely/scoop-bucket`).
+`publish.yml` is six jobs in a chain:
+`binaries` (`cli-binaries.yml`, called: the Rust CLI for every platform in
+`scripts/npm-platforms.mjs`'s `PLATFORMS`), then `publish` (suite, typecheck, build,
+tag-matches-`package.json`, then one npm package per platform and then `qrdrop` itself,
+all over OIDC), then `release` (a GitHub Release whose body is the CHANGELOG section for
+that version, carrying the npm tarball, `qrdrop-site-<version>.zip`, the CLI archive for
+each platform, `SHA256SUMS`, and a build provenance attestation), then `tap` (rewrites
+`Formula/qrdrop.rb` in `stan-ely/homebrew-tap` from a template in that file), then
+`scoop` (the same for `bucket/qrdrop.json` in `stan-ely/scoop-bucket`).
+
+**The `qrdrop` command is the Rust CLI wherever a binary fits, and the Node CLI
+everywhere else.** `bin/qrdrop.js` is the package's `bin`: it resolves
+`qrdrop-<process.platform>-<process.arch>`, an optional dependency npm installs only where
+`os` and `cpu` match, and runs the binary in it; with no such package — a platform not in
+the list, an install with `--omit=optional`, a checkout — it imports `src/cli.js`, which
+speaks the same wire with the same flags, exit codes and stdout. The fallback is silent
+on purpose, because neither is a degraded mode of the other; `QRDROP_CLI=js` and
+`QRDROP_CLI=native` pin one. The launcher ignores SIGINT, since the terminal already
+delivered it to the child, and forwards SIGTERM and SIGHUP, which a supervisor sends to
+it alone. Three things there are load-bearing:
+
+- **The platform dependencies are written into `package.json` at publish time and never
+  committed** (`npm-platforms.mjs --wire`). A dependency on a version not yet on the
+  registry would break `npm ci` in this repository every time the version moved. For the
+  same reason no test may assert their absence: `npm publish` runs the suite again from
+  `prepublishOnly`, after the wiring.
+- **The platform packages are published before `qrdrop`**, so no moment exists in which
+  the new version installs without its binaries; one already on the registry is skipped,
+  so a re-run after a failed main publish gets past them.
+- **Each platform package needs its own Trusted Publishing entry** against `publish.yml`,
+  and npm configures one only on a package that already exists. The first publish of a new
+  name is by hand: `node scripts/npm-platforms.mjs --placeholders <dir>` writes empty
+  `0.0.0` packages for it.
+
+**`cli-binaries.yml` also runs on its own, on main**, for any change to the crates, the
+lock or the platform list. `publish.yml` runs only on a tag, so without it a target that
+stopped building would be found after the npm version was spent. Linux is **musl and
+static**, built on a runner of its own architecture because ring needs `musl-gcc` for the
+target; a glibc build would carry the runner's glibc floor and fail on an older system with
+a loader error. Windows links the C runtime statically (`+crt-static`) so the exe needs no
+Visual C++ redistributable. x86_64 macOS is cross-compiled on the Apple-silicon runner and
+smoke-tested there under Rosetta.
 
 **Never rename `publish.yml`.** npm Trusted Publishing is configured on npmjs.com against a
 repository *and a workflow filename*. The file has long since grown past what its name says
@@ -320,29 +355,27 @@ here. Widening one PAT to cover both taps was the alternative and is worse than 
 secret called `HOMEBREW_TAP_TOKEN` that also writes a Scoop bucket cannot be reasoned about
 from the workflow that uses it, and one leak then moves two package indexes.
 
-**Scoop is not the winget case** (below), and that distinction is the whole reason
-`bucket/qrdrop.json` exists. Scoop has `depends` and `post_install`, so the manifest pulls
-`nodejs` from the main bucket and runs `npm install` in the package directory — the same
-shape `Formula/qrdrop.rb` already has, not a new posture. What it does not have is a way to
-run a `.js` file: **Scoop's shim generator switches on extension** — `.exe`/`.com`,
-`.cmd`/`.bat`, `.ps1`, `.jar`, `.py` — and `.js` is not among them, falling through to a
-generic branch that tries to translate the path for WSL or Cygwin. Pointing `bin` at
-`src/cli.js` installs cleanly, writes a shim, and fails the moment anyone runs it, so
-`post_install` writes a two-line `qrdrop.cmd` and `bin` shims that. It uses forward slashes
-deliberately: `cmd.exe` and node both accept them, and the manifest is then free of
-backslashes for a shell to eat.
+**The formula and the Scoop manifest point at the Release's binaries, not at npm.**
+Neither needs Node any more. The formula has an `on_macos`/`on_linux` × `on_arm`/`on_intel`
+`url` and `sha256` for each archive, and the `tap` job hashes each one **downloaded from the
+Release**, not the copy the `release` job had on disk, because the URL in a formula is what
+an install fetches. The Scoop manifest has a `64bit` zip and `bin: qrdrop.exe`. They both
+used to install the npm tarball with `node` as a dependency. Scoop needed a `post_install`
+that wrote a `.cmd` wrapper, because its shim generator cannot run a `.js` file. All of that
+went with the switch.
 
-Both manifests are built by piping JS into `node` through a **quoted** heredoc (`<<'JS'`),
-not `node -e`. A scoop manifest is written in scoop's own `$version`, `$dir` and `$basename`
-placeholders, which are bash variables too — an unquoted heredoc empties them silently. The
-first draft used `node -e '…'` and lost a Windows path's backslashes to shell quoting, which
-produced entirely valid JSON containing a broken command. That is a failure no JSON check can
-see, which is why the generator is shaped this way rather than more simply.
+The Scoop manifest is still built by piping JS into `node` through a **quoted** heredoc
+(`<<'JS'`), not `node -e`. Its autoupdate URL is written in scoop's own `$version`
+placeholder, which is a bash variable too, and an unquoted heredoc empties it silently. An
+earlier draft used `node -e '…'` and lost a Windows path's backslashes to shell quoting.
+The result was entirely valid JSON containing a broken command, a failure no JSON check can
+see.
 
-The CLI manifest's `autoupdate` carries **no `hash` block**, so scoop downloads the new
-tarball and hashes it. The registry's `dist.shasum` is the obvious field to point at and is
-wrong: it is SHA-1, and scoop would compare it against a SHA-256 and refuse every update.
-`dist.integrity` is SHA-512 in base64 where scoop wants hex.
+The manifest's `checkver` reads **the registry**, since that is where this package's version
+lives and this repository's newest GitHub release is as often an `app-v*` one. Its
+`autoupdate` takes the hash from the Release's `SHA256SUMS`, which is why that file is
+written with bare names (`sha256sum -- *`, not `./*`): scoop finds the line by basename, and a
+leading `./` defeats the match while staying invisible to `sha256sum -c`.
 
 Release notes are extracted, not generated: `scripts/release-notes.mjs <version>` prints the
 matching `## <version>` section of `CHANGELOG.md` and exits non-zero if there is none. The
@@ -350,21 +383,11 @@ matching `## <version>` section of `CHANGELOG.md` and exits non-zero if there is
 release can still be re-run — after publishing, the only fix is a hand-edited Release body.
 Run it locally before tagging to see exactly what the Release will say.
 
-The formula's `sha256` is taken from the *registry's* tarball, not a local `npm pack`, since
-the registry URL is what the formula points at. That step retries until a 15-minute
-deadline: the CDN can take minutes to serve a version published one job earlier (v0.6.0's
-tarball 404'd for about five after `npm view` listed it), and a cold 404 there would fail an
-otherwise fine release. It was six tries 15 s apart until that happened.
-
-No winget. It has no npm step and its `PackageDependencies` field is only partly honoured by
-the client, so a real Windows package means shipping a self-contained ~58 MB bundle (Node
-runtime, `src/`, `site/dist`, platform-correct `node_modules`) plus a launcher shim, per
-target. **This paragraph is about winget specifically and not about Windows package managers
-generally** — it read that way for a while, and Scoop is the counterexample: it has both of
-the things winget lacks, which is why the `scoop` job above is a manifest pointing at the
-registry tarball rather than a vendored runtime. Windows users get `scoop install`, `npx`,
-`npm i -g`, or the deployed site. If winget changes, it is one more job in the same file, not
-a rewrite.
+No winget yet, but the reason is gone. It was that winget has no npm step and honours
+`PackageDependencies` only in part, so a package meant vendoring a ~58 MB Node runtime. The
+Release now carries an 11 MB self-contained `qrdrop.exe` in a zip, which is exactly the
+portable package winget takes. It is one more job in `publish.yml` when someone wants it,
+plus a first manifest submitted to `microsoft/winget-pkgs` by hand.
 
 ## Invariants
 
@@ -628,7 +651,9 @@ room must add it too.
 
 **No new runtime dependencies.** Four, plus one optional. The stated position
 (`src/cli.js` header) is that every dependency is one more thing between `npm install`
-and a working transfer. The virtual DOM in `src/web/vdom.js` is hand-rolled for this
+and a working transfer. The one exception is the CLI's platform packages
+(`scripts/npm-platforms.mjs`). They are optional, they are this project's own, npm installs
+one of them on any machine, and each holds nothing but the Rust CLI built from this tree. The virtual DOM in `src/web/vdom.js` is hand-rolled for this
 reason rather than using preact.
 
 ## Web UI architecture

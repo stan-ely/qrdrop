@@ -64,7 +64,8 @@ const RUST_CLI = process.env.QRDROP_RUST_CLI
 
 /**
  * A launcher name to the command that runs it.
- * @param {string} which `js`, `rust`, or a path.
+ * @param {string} which `js`, `rust`, or a path -- to a binary, or to a
+ *   script, which runs under this node.
  * @returns {{ name: string, command: string, prefix: string[] }}
  */
 function launcher(which) {
@@ -73,6 +74,9 @@ function launcher(which) {
   if (!fs.existsSync(command)) {
     throw new Error(`no CLI at ${command}: build it with \`mise exec -- cargo build -p qrdrop-cli\``)
   }
+  // A script runs under this node: an installed package's bin/qrdrop.js, say,
+  // which is the launcher that picks the binary or the Node CLI itself.
+  if (command.endsWith('.js')) return { name: path.basename(command), command: process.execPath, prefix: [command] }
   return { name: which === 'rust' ? 'rust' : path.basename(command), command, prefix: [] }
 }
 
