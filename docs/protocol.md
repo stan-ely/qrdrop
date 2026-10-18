@@ -273,6 +273,10 @@ above holds for it:
 - **The switch happens at Accept, and only there.** A browser or the Node CLI
   ignores the sender's `quic-hello` as an unknown type and never answers, so
   the sender knows at Accept that the path is not there and does not wait.
+- **The local-network path wins when both are up.** On a phone sending over
+  Wi-Fi, the LAN path's kernel TCP measured about half as fast again as QUIC.
+  QUIC carries the file where LAN cannot: between networks, or when neither
+  end can listen quietly.
 
 `--no-lan` keeps the Rust CLI's file on WebRTC, which turns this path off too.
 

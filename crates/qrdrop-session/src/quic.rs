@@ -64,6 +64,17 @@ pub const MAX_FRAME: usize = 64 * 1024;
 /// a phone's AEAD does. SCTP's equivalent under str0m is 1 MiB, which is
 /// exactly what held the WebRTC path to 8.5 MB/s at 100 ms.
 pub const WINDOW: u32 = 16 * 1024 * 1024;
+/// The congestion window a connection opens with. quinn's default is ten
+/// packets, about 14 KB, and from there slow start overshoots, loses a burst
+/// and spends the rest of a short file regrowing. A phone sending 64 MiB over
+/// Wi-Fi averaged 15.0 MB/s at 1 MiB against 12.7 at the default, over five
+/// alternated rounds. That is a fifth of its gap to LAN and no more
+/// (docs/notes/rust-session.md, the fourth device session). On a slow
+/// uplink between networks it costs little: quinn paces the window across
+/// the RTT, and slow start would have reached 1 MiB about six round trips in
+/// and overshot the same link anyway. What it skips is those round trips.
+/// BBR was tried in its place: no faster, and it lost 10-15% of what it sent.
+pub const INITIAL_WINDOW: u64 = 1024 * 1024;
 /// How far the reader runs ahead of the session: frames read off the stream
 /// and not yet handled. Past it the reader stops reading, quinn stops
 /// granting credit, and the sender stalls on its window -- the transport's
@@ -287,6 +298,11 @@ mod endpoint {
         // ever opened, so nothing else is allowed.
         t.max_concurrent_bidi_streams(VarInt::from_u32(0));
         t.max_concurrent_uni_streams(VarInt::from_u32(1));
+        // Cubic, as quinn's default, but opening at INITIAL_WINDOW rather than
+        // about 14 KB.
+        let mut cubic = quinn::congestion::CubicConfig::default();
+        cubic.initial_window(INITIAL_WINDOW);
+        t.congestion_controller_factory(Arc::new(cubic));
         Arc::new(t)
     }
 

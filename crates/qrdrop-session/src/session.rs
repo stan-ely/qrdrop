@@ -1180,8 +1180,14 @@ impl Driver {
     /// without the path, recognised without a timeout: a receiver queues its
     /// reply inside its handling of our hello, ahead of its Accept.
     ///
-    /// With both paths on offer, QUIC wins: it crosses a LAN as well as
-    /// anything else does, and a NAT besides.
+    /// With both paths on offer, LAN wins. QUIC used to, on the reasoning
+    /// that it crosses a LAN as well as anything does and a NAT besides. A
+    /// phone sending over Wi-Fi measured otherwise: five alternated rounds
+    /// of 64 MiB averaged 19.8 MB/s over LAN, a TCP socket in the kernel,
+    /// against 12.7 over QUIC, which is UDP in userspace. LAN won every round,
+    /// and no congestion controller closed the gap (docs/notes/rust-session.md,
+    /// the fourth device session). QUIC is still the path wherever LAN is
+    /// not: between networks, and when neither end can listen quietly.
     fn at_accept(&mut self) {
         let wait = [
             self.lan_pending().then_some(lan::LINK_WAIT),
@@ -1191,7 +1197,7 @@ impl Driver {
         .flatten()
         .max();
         match wait {
-            Some(w) if !self.quic_up() => self.link_wait = Some(Instant::now() + w),
+            Some(w) if !self.lan_up() => self.link_wait = Some(Instant::now() + w),
             _ => self.proceed(true),
         }
     }
@@ -1216,15 +1222,21 @@ impl Driver {
         self.quic.as_ref().is_some_and(|q| q.state == LinkState::Up)
     }
 
+    fn lan_up(&self) -> bool {
+        self.lan.as_ref().is_some_and(|l| l.state == LinkState::Up)
+    }
+
     /// A sender parked at Accept goes on, over the best link that is up --
     /// unless one is still settling and `last` is false, when it waits on.
+    /// A QUIC link already up still waits for a LAN link settling beside
+    /// it, at most lan::LINK_WAIT, since LAN is the better of the two.
     fn proceed(&mut self, last: bool) {
-        if self.quic_up() {
-            self.switch_to_quic();
+        if self.lan_up() {
+            self.switch_to_lan();
         } else if !last && (self.quic_pending() || self.lan_pending()) {
             return;
-        } else if self.lan.as_ref().is_some_and(|l| l.state == LinkState::Up) {
-            self.switch_to_lan();
+        } else if self.quic_up() {
+            self.switch_to_quic();
         }
         self.link_wait = None;
         self.start_chunks();

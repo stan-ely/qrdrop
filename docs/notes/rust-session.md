@@ -483,7 +483,7 @@ Not part of the JS wire: a JS peer ignores the sender's one `quic-hello` and nev
   and the sealed frame, at most 64 KiB. Windows of 16 MiB; the receiver reads at most 4 MiB ahead of
   the session.
 - **Switching.** As LAN: only the sender switches, at Accept, waiting up to 3 s for a pending
-  connection. With both up, QUIC wins.
+  connection. With both up, QUIC won until the fourth device session, and LAN wins now.
 - **A stream that closes** while carrying the file fails the transfer, as a LAN socket does.
 
 ### The CLI's contract (`src/cli.js`, `e2e/interop.e2e.mjs`)
@@ -1408,8 +1408,13 @@ waits logged once a second from the phone by a temporary patch, not kept).**
   uplink against kernel TCP. It does not show as CPU, and the RTT rises under load with no loss.
 - **So for a phone sender, LAN beats QUIC wherever both are up**, and the route order (QUIC over
   LAN) is wrong in that case. QUIC still matters where LAN cannot reach: across NATs and between
-  networks. Whether to change the order, or the initial window, is a decision these runs inform
-  and have not made.
+  networks.
+- **Receives agree, by more.** The CLI sent 64 MiB to the phone, five alternated rounds: LAN
+  30.4, 34.4, 31.7, 34.0 and 33.3 (mean 32.8); QUIC 22.0, 20.0, 19.2, 20.3 and 18.7 (mean 20.0).
+  The third session's 9.2 over LAN did not recur. After the change, the CLI with QUIC on took
+  LAN by itself, at 32.8 and 32.0.
+- Both changes followed: LAN now wins over QUIC (`at_accept` in session.rs), and QUIC
+  opens with a 1 MiB window (`quic::INITIAL_WINDOW`).
 
 **Left for a device:**
 - **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and

@@ -387,6 +387,36 @@ async fn two_rust_peers_move_the_file_over_quic() {
     );
 }
 
+/// Both direct paths up: LAN carries the file and QUIC carries nothing. A
+/// phone sender measured LAN well ahead of QUIC on one network (session.rs,
+/// `at_accept`). The QUIC endpoint idling beside it must not fail the
+/// transfer as it closes, either.
+#[cfg(all(feature = "quic", feature = "lan-listen", feature = "lan-dial"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn with_both_direct_paths_up_the_file_takes_the_lan() {
+    if private_address().is_none() {
+        eprintln!("skipped: no private IPv4 address on this machine");
+        return;
+    }
+    let url = format!("ws://{}", standin::start().await);
+    let (h, g, _) = pair_up(&url).await;
+    let both = |listen| SessionOptions {
+        lan: Some(LanConfig { listen }),
+        ..quic_options()
+    };
+    let hs = h.confirm(Role::Host, both(LanListen::Prompt)).await;
+    let gs = g.confirm(Role::Guest, both(LanListen::Quiet)).await;
+    let (host_seen, guest_seen) = transfer("lan-and-quic", 8 * 1024 * 1024, hs, gs).await;
+    assert!(
+        host_seen.contains(&SessionEvent::Lan) && !host_seen.contains(&SessionEvent::Quic),
+        "{host_seen:?}"
+    );
+    assert!(
+        guest_seen.contains(&SessionEvent::Lan) && !guest_seen.contains(&SessionEvent::Quic),
+        "{guest_seen:?}"
+    );
+}
+
 /// A sender with the path and a receiver without it -- a JS peer, or a
 /// build without the feature -- never hears a `quic-hello` back, and goes on
 /// at Accept over WebRTC without waiting out quic::LINK_WAIT.

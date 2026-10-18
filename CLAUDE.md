@@ -635,7 +635,13 @@ instead is the tempting shortcut, since it would save a round trip. That signal 
 only with the code's password, so anyone holding the code reads it and can race the real
 peer to a public address. Each end's TLS accepts only the certificate the other named, and
 still checks the handshake signature, because a certificate is public. Only the sender
-switches, at Accept, and QUIC wins over LAN when both are up. A JS peer ignores the hello,
+switches, at Accept, and **LAN wins over QUIC when both are up**. That used to be the
+other way round, on the reasoning that QUIC crosses a LAN as well as anything does. A
+phone on Wi-Fi measured LAN's kernel TCP ahead of QUIC in both directions, in every one
+of five rounds each way: sending, 19.8 MB/s against 12.7; receiving, 32.8 against 20.0.
+No congestion controller closed the gap (`docs/notes/rust-session.md`, the fourth device
+session). So a QUIC link that is already up still waits for a LAN link settling beside
+it, and `with_both_direct_paths_up_the_file_takes_the_lan` pins the order. A JS peer ignores the hello,
 so a Rust sender's wait at Accept costs it nothing. `--no-lan` turns QUIC off as well,
 keeping the file on WebRTC as its help says, and the interop suite pins `QRDROP_QUIC=0`
 except in its `--quic` leg. The app is built without the `quic` feature until the phone
