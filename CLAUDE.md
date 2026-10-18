@@ -625,7 +625,18 @@ carries bytes from Rust back to a page. `ws:` is in the app channel's CSP only
 (`buildCSP`'s `lan` flag). The website has no `LanPlatform`, and it must not gain
 one. `test/lan.test.mjs` counts the frames that cross the socket, so a change that
 quietly falls back to WebRTC fails there rather than passing as "still delivers the
-file". `npm run test:e2e:interop:lan` is the live check.
+file". `npm run test:e2e:interop:lan` is the live check. **The listener proves
+itself with the offer's `answer`, and a link counts as carrying only after a frame
+over it passes its tag.** Each was found in a security review. A dialler used to take
+a one-byte ACK from whoever answered, so anyone on the path could become the link,
+and since LAN wins, a pinned QUIC link lost to them. A receiver used to count a link
+as carrying from its first message, so one junk frame and a close failed a transfer
+that was arriving whole by another way. The answer must stay independent of the
+token, because the dialler sends the token to whoever took the connection. A
+malformed answer refuses the offer rather than reading as absent, since absent
+means accepting ACK. The four ends are `transport/lan.js`, `node/lan-server.js`,
+`app/src-tauri/src/lan.rs` and `qrdrop-session`'s `lan.rs`, and a change to one
+changes them all.
 
 **The QUIC path between two Rust peers keeps every one of those rules, and its
 addresses never go in the signalling.** `crates/qrdrop-session/src/quic.rs`: `quic-hello`

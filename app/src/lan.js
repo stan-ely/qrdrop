@@ -44,9 +44,9 @@ export async function createTauriLan() {
   return {
     listen,
 
-    async open(token) {
+    async open(token, answer) {
       /** @type {{ port: number, localPort: number, addrs: string[] }} */
-      const { port, localPort, addrs } = await invoke('lan_listen', { token: toHex(token) })
+      const { port, localPort, addrs } = await invoke('lan_listen', { token: toHex(token), answer: toHex(answer) })
       let arrived = false
       const accepted = dialWebSocket(WebSocketImpl, `ws://127.0.0.1:${localPort}/`, LOCAL_DIAL_MS)
         .then(socket => clientHandshake(socket, token))

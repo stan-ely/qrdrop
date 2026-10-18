@@ -25,7 +25,12 @@ before relying on it. The mechanisms referred to here are described in
   addresses the paired peer sealed, and its listener takes one connection that
   presents a one-time token. Someone else on the Wi-Fi who finds the port
   learns that a transfer is happening between two addresses, which they could
-  see from the traffic anyway, and cannot put a frame into it.
+  see from the traffic anyway, and cannot put a frame into it. The listener
+  answers with a second sealed secret, so someone on the path who takes the
+  dialler's connection cannot pose as the listener and swallow the frames.
+  Handshakes run concurrently, so a stranger holding the port open cannot keep
+  the peer out either. Someone on the path can still drop the traffic, as
+  they can on any path.
 - The QUIC path between two Rust peers (see [protocol.md](protocol.md), "The
   QUIC path") carries the same sealed frames too, and its addresses and
   certificate fingerprints are sealed in the same way, after the SAS. Its

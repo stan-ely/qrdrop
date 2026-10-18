@@ -137,6 +137,7 @@ pub enum Event {
         addrs: Vec<String>,
         port: u64,
         token: String,
+        answer: Option<String>,
     },
     PeerQuicHello,
     PeerQuicOffer {
@@ -500,11 +501,13 @@ impl Session {
         addrs: Vec<String>,
         port: u16,
         token: String,
+        answer: Option<String>,
     ) -> Result<(), UsageError> {
         self.send_advisory(Control::LanOffer {
             addrs,
             port: u64::from(port),
             token,
+            answer,
         })
     }
 
@@ -779,9 +782,18 @@ impl Session {
                 self.pause_deadline = None;
             }
             Control::LanHello { listen } => self.events.push_back(Event::PeerLanHello(listen)),
-            Control::LanOffer { addrs, port, token } => {
-                self.events
-                    .push_back(Event::PeerLanOffer { addrs, port, token });
+            Control::LanOffer {
+                addrs,
+                port,
+                token,
+                answer,
+            } => {
+                self.events.push_back(Event::PeerLanOffer {
+                    addrs,
+                    port,
+                    token,
+                    answer,
+                });
             }
             Control::QuicHello => self.events.push_back(Event::PeerQuicHello),
             Control::QuicOffer { addrs, fp } => {

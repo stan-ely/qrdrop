@@ -62,6 +62,12 @@ test('parseOffer keeps private IPv4 addresses and refuses everything it would be
   assert.equal(parseOffer({ addrs: ['192.168.1.7'], port: 70000, token }), null)
   assert.equal(parseOffer({ addrs: ['192.168.1.7'], port: 4000, token: 'short' }), null)
   assert.equal(parseOffer({ addrs: '192.168.1.7', port: 4000, token }), null)
+  // The answer is read when it is there, and a malformed one refuses the
+  // offer: reading it as absent would take ACK from whoever answers.
+  assert.equal(parseOffer({ addrs: ['192.168.1.7'], port: 4000, token })?.answer, undefined)
+  assert.equal(parseOffer({ addrs: ['192.168.1.7'], port: 4000, token, answer: 'cd'.repeat(16) })?.answer?.[0], 0xcd)
+  assert.equal(parseOffer({ addrs: ['192.168.1.7'], port: 4000, token, answer: 'short' }), null)
+  assert.equal(parseOffer({ addrs: ['192.168.1.7'], port: 4000, token, answer: 7 }), null)
 })
 
 test('the switchable channel sends through whichever target is current', async () => {
@@ -113,8 +119,9 @@ function memoryLan() {
     const end = (peer, dir) => createLanSocket({
       send: bytes => {
         if (!open) return
-        // Frames only: the one-byte ACK and the token are the handshake.
-        if (bytes.length > 16) frames[dir] += 1
+        // Frames only: the token (17 bytes with KEYED) and the answer, or
+        // the one-byte ACK, are the handshake.
+        if (bytes.length > 17) frames[dir] += 1
         const copy = bytes.slice()
         setImmediate(() => { if (open) peer().deliver(copy) })
       },
@@ -140,15 +147,15 @@ function memoryLan() {
       const p = {
         listen,
         opened: 0,
-        /** @param {Bytes} token */
-        async open(token) {
+        /** @param {Bytes} token @param {Bytes} answer */
+        async open(token, answer) {
           p.opened += 1
           const port = nextPort++
           /** @type {(s: LanSocket) => void} */ let resolve = () => {}
           /** @type {Promise<LanSocket>} */
           const accepted = new Promise(r => { resolve = r })
           listeners.set(`10.0.0.1:${port}`, sock => {
-            serverHandshake(sock, token, 2000).then(resolve, () => {})
+            serverHandshake(sock, token, 2000, answer).then(resolve, () => {})
           })
           return { port, addrs: ['10.0.0.1'], accepted, close: () => { listeners.delete(`10.0.0.1:${port}`) } }
         },
@@ -220,7 +227,7 @@ function side({ room, role, platform, onOffer, onFileDone, written = [], onLost,
       send: msg => sendControl({ channel: room.channel, key: room.session.sendKey, nextControlIndex }, msg),
     })
   }
-  room.onFrame(frame => { receiver.handleFrame(frame).catch(() => {}) })
+  room.onFrame(frame => receiver.handleFrame(frame).catch(() => false))
   return { control, nextControlIndex, receiver, lan }
 }
 
@@ -433,6 +440,63 @@ test('the Node listener closes a message larger than any frame instead of buffer
   } finally {
     listener.close()
   }
+})
+
+test('the Node listener answers a dialler that holds the answer with it, and an older one with ACK', async () => {
+  const token = crypto.getRandomValues(new Uint8Array(16))
+  const answer = crypto.getRandomValues(new Uint8Array(16))
+  for (const holds of [true, false]) {
+    const listener = await listenLan({ token, answer, host: '127.0.0.1', addresses: () => ['127.0.0.1'] })
+    try {
+      const socket = await dialWebSocket(WS, `ws://127.0.0.1:${listener.port}/`, 2000)
+      await clientHandshake(socket, token, 2000, holds ? answer : undefined)
+      await listener.accepted
+      socket.close()
+    } finally {
+      listener.close()
+    }
+  }
+})
+
+test('a dialler holding the answer refuses a host that takes its connection and says ACK', async () => {
+  const token = crypto.getRandomValues(new Uint8Array(16))
+  const answer = crypto.getRandomValues(new Uint8Array(16))
+  // An older listener is exactly such a host: it answers anyone with the
+  // token ACK, and never the answer.
+  const impostor = await listenLan({ token, host: '127.0.0.1', addresses: () => ['127.0.0.1'] })
+  try {
+    // It hears the token and KEYED, which an older listener reads as a wrong token.
+    const socket = await dialWebSocket(WS, `ws://127.0.0.1:${impostor.port}/`, 2000)
+    await assert.rejects(clientHandshake(socket, token, 2000, answer))
+  } finally {
+    impostor.close()
+  }
+  // And one that knows the token, as a host on the path that heard it would,
+  // and answers ACK.
+  const { socket, deliver } = createLanSocket({
+    send: () => deliver(Uint8Array.of(0x06)),
+    bufferedAmount: () => 0, isOpen: () => true, drained: async () => {}, close: () => {},
+  })
+  await assert.rejects(clientHandshake(socket, token, 2000, answer), /something other than an acknowledgement/)
+})
+
+test('a LAN socket that brings only frames failing their tag is neither the file\'s link nor lost', async () => {
+  const { host, guest } = await pairRooms()
+  const { receiver } = side({ room: guest, role: 'receiver', platform: null })
+  let lost = 0
+  let carrying = 0
+  const { socket, deliver, closed } = createLanSocket({
+    send: () => {}, bufferedAmount: () => 0, isOpen: () => true, drained: async () => {}, close: () => {},
+  })
+  guest.attachLan(socket, { onLost: () => { lost += 1 }, onCarrying: () => { carrying += 1 } })
+  deliver(new Uint8Array(64).fill(1))
+  await receiver.settled()
+  closed()
+  for (let i = 0; i < 5; i++) await new Promise(r => setImmediate(r))
+  assert.equal(receiver.dropped, 1)
+  assert.equal(carrying, 0, 'a junk frame does not light the fast-path badge')
+  assert.equal(lost, 0, 'and its socket closing does not fail the transfer')
+  await Promise.all([host.close(), guest.close()])
 })
 
 test('closing a listener nobody reached settles its accepted promise', async () => {

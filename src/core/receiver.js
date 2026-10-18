@@ -79,7 +79,7 @@ const RESUME_AT = 1 * 1024 * 1024
  *   person chose not to save -- a dismissed dialog -- and is a decline.
  *   Rejecting means saving failed, and is not one: see accept().
  * @returns {{
- *   handleFrame: (bytes: Bytes) => Promise<void>,
+ *   handleFrame: (bytes: Bytes) => Promise<boolean>,
  *   cancel: () => Promise<void>,
  *   settled: () => Promise<void>,
  *   readonly busy: boolean,
@@ -439,7 +439,14 @@ export function createReceiver({
    */
   let queue = Promise.resolve()
 
-  /** @param {Bytes} bytes */
+  /**
+   * Resolves false for a frame that failed its tag and was dropped, true for
+   * any other. room.attachLan reads it: a LAN link counts as carrying the
+   * file only once a frame over it has passed its tag.
+   *
+   * @param {Bytes} bytes
+   * @returns {Promise<boolean>}
+   */
   function handleFrame(bytes) {
     // Counted here, synchronously, because here is where the backlog forms:
     // every call appends one closure to `queue` and returns, whether or not
@@ -448,9 +455,13 @@ export function createReceiver({
     pending += bytes.length
     considerPause()
 
-    const next = queue.then(() => processFrame(bytes))
+    const next = queue.then(async () => {
+      const before = dropped
+      await processFrame(bytes)
+      return dropped === before
+    })
     // One frame failing must not break the chain for those behind it.
-    queue = next.catch(() => {})
+    queue = next.then(() => {}, () => {})
 
     // Decrement once this frame is through processFrame -- for a chunk that
     // means past sink.write(). .finally keeps the returned promise settling

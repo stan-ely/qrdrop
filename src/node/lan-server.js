@@ -202,12 +202,14 @@ function adopt(tcp, head) {
  *
  * @param {object} args
  * @param {Bytes} args.token
+ * @param {Bytes} [args.answer] The offer's, for a dialler that asks for it
+ *   (transport/lan.js, "THE ANSWER"). Without one, every dialler gets ACK.
  * @param {string} [args.host]
  * @param {number} [args.port] 0 picks a free one.
  * @param {() => string[]} [args.addresses] Overridable for tests.
  * @returns {Promise<LanListener>}
  */
-export async function listenLan({ token, host = '0.0.0.0', port = 0, addresses = lanAddresses }) {
+export async function listenLan({ token, answer, host = '0.0.0.0', port = 0, addresses = lanAddresses }) {
   /** @type {Set<import('node:net').Socket>} */
   const pending = new Set()
   let done = false
@@ -244,7 +246,7 @@ export async function listenLan({ token, host = '0.0.0.0', port = 0, addresses =
 
     const sock = /** @type {import('node:net').Socket} */ (tcp)
     pending.add(sock)
-    serverHandshake(adopt(sock, head), token, HANDSHAKE_MS).then(
+    serverHandshake(adopt(sock, head), token, HANDSHAKE_MS, answer).then(
       socket => {
         pending.delete(sock)
         if (done) return socket.close()

@@ -148,8 +148,12 @@ interface PairedRoom {
   session: SessionKeys
   peerId: string
   channel: Channel
-  /** Registers the single inbound-frame handler. Replaces any previous one. */
-  onFrame(callback: (bytes: Bytes) => void): void
+  /**
+   * Registers the single inbound-frame handler. Replaces any previous one.
+   * Resolving whether the frame passed its tag is what lets attachLan count
+   * a LAN link as carrying.
+   */
+  onFrame(callback: (bytes: Bytes) => unknown): void
   /** Fires only for the paired peer, not for anyone else in the room. */
   onPeerLeave(callback: () => void): void
   /**
@@ -212,9 +216,9 @@ interface ResolvedAttempt {
   strategy: string
   room: import('@trystero-p2p/nostr').Room
   frameAction: import('@trystero-p2p/nostr').MessageAction
-  setFrameHandler: (fn: (bytes: Bytes) => void) => void
-  /** Hands one of the paired peer's frames in, or holds it until onFrame(). */
-  deliver: (bytes: Bytes) => void
+  setFrameHandler: (fn: (bytes: Bytes) => unknown) => void
+  /** Hands one of the paired peer's frames in, or holds it until onFrame(). Returns the handler's verdict, if it gives one. */
+  deliver: (bytes: Bytes) => unknown
   session: SessionKeys
   peerId: string
 }
@@ -285,11 +289,13 @@ type ControlMessage =
    * 'lan-offer' comes from whichever side the two hellos chose to listen. It
    * holds the addresses, the port, and a one-time token for the other side to
    * present. The token is a bearer secret for one connection and travels
-   * only here, sealed. Every field is peer-supplied and is checked
-   * (lan.js's parseOffer) before anything dials it.
+   * only here, sealed. So does the answer, which the listener gives back to
+   * prove it is the peer (lan.js, "THE ANSWER"); an older listener sends
+   * none. Every field is peer-supplied and is checked (lan.js's parseOffer)
+   * before anything dials it.
    */
   | { t: 'lan-hello'; listen: LanListenMode }
-  | { t: 'lan-offer'; addrs: string[]; port: number; token: string }
+  | { t: 'lan-offer'; addrs: string[]; port: number; token: string; answer?: string }
 
 type ControlType = ControlMessage['t']
 
@@ -344,8 +350,12 @@ interface LanListener {
  */
 interface LanPlatform {
   listen: LanListenMode
-  /** Present whenever `listen` is not 'none'. Binds only when called. */
-  open?(token: Bytes): Promise<LanListener>
+  /**
+   * Present whenever `listen` is not 'none'. Binds only when called. The
+   * listener answers a dialler that asks with `answer`, and one that does
+   * not with ACK.
+   */
+  open?(token: Bytes, answer: Bytes): Promise<LanListener>
   /** Opens `ws://host:port/` and resolves once the socket is open. */
   dial(url: string, timeoutMs: number): Promise<LanSocket>
 }

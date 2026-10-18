@@ -1508,7 +1508,7 @@ export class QRDropElement extends HTMLElement {
     })
 
     // handleFrame serialises internally, so a burst of frames cannot race.
-    room.onFrame(frame => { receiver.handleFrame(frame).catch(e => this._fail(e)) })
+    room.onFrame(frame => receiver.handleFrame(frame).catch(e => { this._fail(e); return false }))
 
     // Cancel, a failure and a finished transfer all end in _teardown, which
     // on this path used to be _establish's room.close() alone. The sink stayed

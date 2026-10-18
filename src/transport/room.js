@@ -702,7 +702,7 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
   // Null until the caller registers onFrame(). Frames the paired peer sends
   // before then wait in `early` and are handed over, in order, the moment it
   // does -- see deliver() below for why they cannot be dropped.
-  /** @type {((bytes: Bytes) => void) | null} */
+  /** @type {((bytes: Bytes) => unknown) | null} */
   let frameHandler = null
   /** @type {Bytes[]} */
   const early = []
@@ -961,8 +961,9 @@ export async function openRoom({
     channel,
 
     /**
-     * Register the inbound frame handler.
-     * @param {(bytes: Bytes) => void} callback
+     * Register the inbound frame handler. It may resolve whether the frame
+     * passed its tag, as receiver.handleFrame does; attachLan needs that.
+     * @param {(bytes: Bytes) => unknown} callback
      */
     onFrame(callback) {
       setFrameHandler(callback)
@@ -1031,16 +1032,26 @@ export async function openRoom({
       if (closing) return socket.close()
       lan?.close()
       lan = socket
+      // Carried means a frame that passed its tag came over the socket, as
+      // the frame handler reports it. Counting the first message would let
+      // anyone who got onto the socket with one junk frame make it look like
+      // the file's link, and then fail a receiver's transfer by closing it
+      // while the file was arriving whole over WebRTC. The close is read
+      // behind the last verdict, so a real frame still in decryption counts.
       let carried = false
+      /** @type {Promise<void>} */
+      let checked = Promise.resolve()
       socket.onclose = () => {
-        if (carried && !closing) onLost?.()
+        checked.then(() => { if (carried && !closing) onLost?.() })
       }
       socket.onmessage = bytes => {
-        if (!carried) {
+        const verdict = deliver(bytes)
+        if (carried) return
+        checked = Promise.resolve(verdict).then(ok => {
+          if (ok !== true || carried) return
           carried = true
           onCarrying?.()
-        }
-        deliver(bytes)
+        }, () => {})
       }
     },
 

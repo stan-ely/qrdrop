@@ -44,12 +44,27 @@
  *
  * THE TOKEN. The listener's offer carries 16 random bytes, sealed like every
  * control message. The connecting side's first WebSocket message is that
- * token, and the listener answers one byte, ACK, before anything else moves.
- * The listener takes one connection that presents it and then stops
- * listening. A stranger on the network who reaches the port gets closed. Even
- * a stranger who somehow presented the token could only inject frames, and
- * those fail their tag and are dropped: the token keeps the socket for our
- * peer, and the AEAD keeps the frames ours.
+ * token, and the listener takes one connection that presents it and then
+ * stops listening. A stranger on the network who reaches the port gets
+ * closed. Even a stranger who somehow presented the token could only inject
+ * frames, and those fail their tag and are dropped: the token keeps the
+ * socket for our peer, and the AEAD keeps the frames ours.
+ *
+ * THE ANSWER. The token proves the dialler to the listener, and for a while
+ * nothing proved the listener to the dialler: it answered one byte, ACK, and
+ * any host that took the connection could say the same. Someone on the path
+ * who answered ACK became the link, and since a sender prefers LAN to every
+ * other path, its frames went into that socket and the transfer stalled.
+ * Nothing leaked, the frames being sealed, but it displaced even a QUIC link
+ * whose certificate was pinned. So the offer now carries a second 16 random
+ * bytes, the answer, independent of the token. A dialler that sees one
+ * presents the token followed by KEYED, and accepts only the answer back.
+ * Deriving the answer from the token would not do: the dialler sends the
+ * token first, to whoever took the connection, so anything computed from it
+ * is computable by them. An offer without an answer is an older listener,
+ * and there the dialler takes ACK as before. That is not a downgrade a
+ * stranger can choose, because the offer is sealed. The listener knows an
+ * older dialler by its bare token, and answers it ACK.
  *
  * Isomorphic. No DOM, no fs, and no socket of its own: a runtime lends its
  * WebSocket constructor and its listener through a LanPlatform (node/lan.js
@@ -68,6 +83,13 @@ const TOKEN_BYTES = 16
 
 /** The listener's one-byte answer to a good token. Frames are never one byte. */
 const ACK = 0x06
+
+/**
+ * After the token, from a dialler that holds the offer's answer and wants it
+ * back in place of ACK. Seventeen bytes is a wrong token to an older
+ * listener, but an older listener never offers the answer that prompts it.
+ */
+const KEYED = 0x01
 
 // More than an offer ever needs (a machine with Wi-Fi, Ethernet and a VPN has
 // three), and a bound on how many sockets one offer can make this side open.
@@ -116,14 +138,20 @@ function listenMode(mode) {
  * cannot aim this side at a host on the internet, or at a service on this
  * machine.
  *
- * @param {{ addrs?: unknown, port?: unknown, token?: unknown }} offer
- * @returns {{ addrs: string[], port: number, token: Bytes } | null}
+ * An answer that is present and malformed refuses the whole offer rather
+ * than reading as absent: absent means taking ACK, and a broken peer must not
+ * be the way this side comes to accept it.
+ *
+ * @param {{ addrs?: unknown, port?: unknown, token?: unknown, answer?: unknown }} offer
+ * @returns {{ addrs: string[], port: number, token: Bytes, answer?: Bytes } | null}
  */
 export function parseOffer(offer) {
-  const { addrs, port, token } = offer
+  const { addrs, port, token, answer } = offer
+  const hex = new RegExp(`^[0-9a-f]{${TOKEN_BYTES * 2}}$`)
   if (!Array.isArray(addrs) || addrs.length === 0) return null
   if (!Number.isInteger(port) || /** @type {number} */ (port) < 1 || /** @type {number} */ (port) > 65535) return null
-  if (typeof token !== 'string' || !new RegExp(`^[0-9a-f]{${TOKEN_BYTES * 2}}$`).test(token)) return null
+  if (typeof token !== 'string' || !hex.test(token)) return null
+  if (answer !== undefined && (typeof answer !== 'string' || !hex.test(answer))) return null
   const usable = addrs
     .slice(0, MAX_ADDRS)
     .filter(a => typeof a === 'string'
@@ -131,7 +159,8 @@ export function parseOffer(offer) {
       && !a.startsWith('127.')
       && isPrivateAddress(a))
   if (usable.length === 0) return null
-  return { addrs: usable, port: /** @type {number} */ (port), token: fromHex(token) }
+  const parsed = { addrs: usable, port: /** @type {number} */ (port), token: fromHex(token) }
+  return typeof answer === 'string' ? { ...parsed, answer: fromHex(answer) } : parsed
 }
 
 /** @param {Bytes} bytes */
@@ -313,18 +342,21 @@ export function dialWebSocket(WebSocketImpl, url, timeoutMs) {
 }
 
 /**
- * The connecting side's handshake: present the token, wait for ACK.
+ * The connecting side's handshake: present the token, and wait for the
+ * offer's answer, or for ACK from a listener that offered none (the header,
+ * "THE ANSWER").
  *
  * Also used by the app's page against its own Rust relay on 127.0.0.1, with
- * no timeout, since there the ACK means "your peer has arrived", which takes
- * as long as the peer takes.
+ * no timeout and no answer, since there the ACK means "your peer has
+ * arrived", which takes as long as the peer takes.
  *
  * @param {LanSocket} socket
  * @param {Bytes} token
  * @param {number} [timeoutMs] Omitted, the wait is bounded only by the socket closing.
+ * @param {Bytes} [answer] The offer's, when it carried one.
  * @returns {Promise<LanSocket>}
  */
-export function clientHandshake(socket, token, timeoutMs) {
+export function clientHandshake(socket, token, timeoutMs, answer) {
   return new Promise((resolve, reject) => {
     /** @param {Error | null} error */
     const finish = error => {
@@ -339,30 +371,40 @@ export function clientHandshake(socket, token, timeoutMs) {
       ? undefined
       : setTimeout(() => finish(new Error('The other device did not answer on the local network')), timeoutMs)
     socket.onclose = () => finish(new Error('The local network link closed during its handshake'))
-    socket.onmessage = bytes => finish(bytes.length === 1 && bytes[0] === ACK
+    socket.onmessage = bytes => finish((answer ? equalBytes(bytes, answer) : bytes.length === 1 && bytes[0] === ACK)
       ? null
       : new Error('The local network link answered with something other than an acknowledgement'))
-    socket.send(token)
+    if (!answer) return socket.send(token)
+    const keyed = new Uint8Array(token.length + 1)
+    keyed.set(token)
+    keyed[token.length] = KEYED
+    socket.send(keyed)
   })
 }
 
 /**
- * The listening side's handshake: the first message must be the token.
+ * The listening side's handshake: the first message must be the token. The
+ * reply is the answer to a dialler that asked for it with KEYED, and ACK to
+ * one that sent the token alone, which is an older build.
  *
  * @param {LanSocket} socket
  * @param {Bytes} token
  * @param {number} timeoutMs
+ * @param {Bytes} [answer] The one this side offered.
  * @returns {Promise<LanSocket>} Rejects, having closed the socket, on anything else.
  */
-export function serverHandshake(socket, token, timeoutMs) {
+export function serverHandshake(socket, token, timeoutMs, answer) {
   return new Promise((resolve, reject) => {
-    /** @param {Error | null} error */
-    const finish = error => {
+    /**
+     * @param {Error | null} error
+     * @param {Bytes} [reply]
+     */
+    const finish = (error, reply) => {
       clearTimeout(timer)
       socket.onmessage = null
       socket.onclose = null
-      if (!error) {
-        socket.send(Uint8Array.of(ACK))
+      if (!error && reply) {
+        socket.send(reply)
         return resolve(socket)
       }
       socket.close()
@@ -370,7 +412,11 @@ export function serverHandshake(socket, token, timeoutMs) {
     }
     const timer = setTimeout(() => finish(new Error('No token')), timeoutMs)
     socket.onclose = () => finish(new Error('Closed before presenting a token'))
-    socket.onmessage = bytes => finish(equalBytes(bytes, token) ? null : new Error('Wrong token'))
+    socket.onmessage = bytes => {
+      const keyed = answer !== undefined && bytes.length === token.length + 1 && bytes[token.length] === KEYED
+      if (!equalBytes(keyed ? bytes.subarray(0, token.length) : bytes, token)) return finish(new Error('Wrong token'))
+      finish(null, keyed && answer ? answer : Uint8Array.of(ACK))
+    }
   })
 }
 
@@ -429,10 +475,11 @@ export function createLanLink({ role, platform, room, send, onLost, onCarrying }
 
   async function listen() {
     const token = crypto.getRandomValues(new Uint8Array(TOKEN_BYTES))
+    const answer = crypto.getRandomValues(new Uint8Array(TOKEN_BYTES))
     /** @type {LanListener | null} */
     let opened = null
     try {
-      if (platform.open) opened = await platform.open(token)
+      if (platform.open) opened = await platform.open(token, answer)
     } catch {
       opened = null
     }
@@ -449,6 +496,7 @@ export function createLanLink({ role, platform, room, send, onLost, onCarrying }
       addrs: opened?.addrs ?? [],
       port: opened?.port ?? 0,
       token: toHex(token),
+      answer: toHex(answer),
     })
     if (!opened) return adopt(null)
     try {
@@ -461,11 +509,11 @@ export function createLanLink({ role, platform, room, send, onLost, onCarrying }
     }
   }
 
-  /** @param {{ addrs: string[], port: number, token: Bytes }} offer */
+  /** @param {{ addrs: string[], port: number, token: Bytes, answer?: Bytes }} offer */
   async function dial(offer) {
     const attempts = offer.addrs.map(addr =>
       platform.dial(`ws://${addr}:${offer.port}/`, DIAL_TIMEOUT_MS)
-        .then(socket => clientHandshake(socket, offer.token, DIAL_TIMEOUT_MS)))
+        .then(socket => clientHandshake(socket, offer.token, DIAL_TIMEOUT_MS, offer.answer)))
     try {
       const winner = await Promise.any(attempts)
       // A second address can reach the same listener. The listener takes one

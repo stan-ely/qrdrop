@@ -92,6 +92,12 @@ pub enum Control {
         addrs: Vec<String>,
         port: u64,
         token: String,
+        /// What the listener answers a dialler that presents the token: 32
+        /// hex, as random as the token and independent of it, so a dialler
+        /// knows it reached its peer and not whoever took the connection.
+        /// Absent from an older listener, which answers with one ACK byte.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer: Option<String>,
     },
     /// The QUIC path's first word, the sender's after its SAS confirm and the
     /// receiver's only in reply, ahead of its Accept -- `lan-hello`'s timing,

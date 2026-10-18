@@ -28,7 +28,7 @@ import { safeFilename } from '../src/web/sink.js'
  *   sent: number,
  *   tail: Promise<unknown>,
  *   twin: FakeChannel,
- *   onFrame: (bytes: Bytes) => Promise<void>,
+ *   onFrame: (bytes: Bytes) => Promise<unknown>,
  * }} FakeChannel
  *
  * @param {{ serialize?: boolean }} [options]

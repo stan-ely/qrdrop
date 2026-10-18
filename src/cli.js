@@ -340,7 +340,7 @@ function attachReceiver({ room, onOffer, onProgress, onFileDone, onPeerPath, onP
 
   // handleFrame serialises internally (see receiver.js), so a burst of
   // frames arriving together cannot race each other here.
-  room.onFrame(frame => { receiver.handleFrame(frame).catch(err => console.error(err)) })
+  room.onFrame(frame => receiver.handleFrame(frame).catch(err => { console.error(err); return false }))
 
   return { control, nextControlIndex, receiver }
 }

@@ -31,6 +31,15 @@ transfer failed.
 Cancelling a receive now removes the unfinished file on Android, too. Before, it left an
 empty file behind.
 
+**The direct local-network connection checks the device it reached.** Someone else on the
+network who could intercept the connection could pose as the other device and stall a
+transfer. They could not read the file or change it, since it is encrypted either way.
+The device that accepts the connection now proves it holds a secret that only the paired
+device was sent. Also, one bad message from someone else on that connection could make the
+receiving device fail a transfer that was still arriving whole by another route. It no
+longer can. A version older than this one on the other end still connects, the way it did
+before.
+
 ## 1.2.1 -- 2026-09-28
 
 **No changes to the app.** This is 1.2.0 under a new number. Google Play never lets a

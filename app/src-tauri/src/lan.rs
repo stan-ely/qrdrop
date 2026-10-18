@@ -20,6 +20,12 @@
 //! both ends"): forwarding through this shape cost nothing measurable against a
 //! direct connection.
 //!
+//! THE ANSWER. The peer is owed proof that it reached this relay and not
+//! whoever took its connection, so a peer that presents the token followed by
+//! `KEYED` gets the offer's answer back instead of ACK (src/transport/lan.js,
+//! "THE ANSWER"). The page generates the answer with the token and hands both
+//! here. A peer that sends the bare token is an older build, and gets ACK.
+//!
 //! WHY THE PAGE PRESENTS THE TOKEN TOO. The local port is reachable by every
 //! process on this machine. A local process that got there first would sit
 //! between the page and its peer: it could not read or forge a frame, but it
@@ -40,11 +46,16 @@ use tokio_tungstenite::WebSocketStream;
 
 /// The listener's answer to a good token. Mirrors `ACK` in src/transport/lan.js.
 const ACK: u8 = 0x06;
+/// After the token, from a peer that holds the answer. Mirrors `KEYED`.
+const KEYED: u8 = 0x01;
 const TOKEN_BYTES: usize = 16;
 
-/// How long one connection gets to present its token before the next is
-/// taken. A stranger who connects and says nothing costs this much, once.
+/// How long one connection gets to present its token.
 const HANDSHAKE: Duration = Duration::from_secs(5);
+/// Handshakes run at once. They used to run one at a time, and a stranger
+/// who connected and said nothing held the port for HANDSHAKE, longer than
+/// the peer waits to be answered, so the peer never got in.
+const MAX_HANDSHAKES: usize = 32;
 
 /// Whether listening is quiet here. Mirrors node/lan.js for the CLI: Android
 /// and Linux have no per-application prompt for an inbound connection. Windows
@@ -75,8 +86,13 @@ pub fn lan_mode() -> &'static str {
 }
 
 #[tauri::command]
-pub async fn lan_listen(state: tauri::State<'_, LanState>, token: String) -> Result<Listening, String> {
+pub async fn lan_listen(
+    state: tauri::State<'_, LanState>,
+    token: String,
+    answer: Option<String>,
+) -> Result<Listening, String> {
     let token = parse_token(&token)?;
+    let answer = answer.as_deref().map(parse_token).transpose()?;
     let lan = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await.map_err(|e| e.to_string())?;
     let local = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.map_err(|e| e.to_string())?;
     let listening = Listening {
@@ -84,7 +100,7 @@ pub async fn lan_listen(state: tauri::State<'_, LanState>, token: String) -> Res
         local_port: local.local_addr().map_err(|e| e.to_string())?.port(),
         addrs: offered_addresses(),
     };
-    let task = tauri::async_runtime::spawn(relay(lan, local, token));
+    let task = tauri::async_runtime::spawn(relay(lan, local, token, answer));
     if let Some(previous) = state.0.lock().unwrap().replace(task) {
         previous.abort();
     }
@@ -202,39 +218,78 @@ fn same_token(candidate: &[u8], token: &[u8; TOKEN_BYTES]) -> bool {
     candidate.len() == TOKEN_BYTES && candidate.iter().zip(token).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
 }
 
-/// Takes connections one at a time until one presents the token, and returns
-/// it. `ack` is for the LAN side, which is owed an answer at once; the page's
-/// answer waits until its peer has arrived too.
+/// How `authenticated` answers a connection that presents the token.
+#[derive(Clone, Copy)]
+enum Reply {
+    /// The page, whose answer waits until its peer has arrived too.
+    Later,
+    /// The peer, owed one at once: the answer if it asked with KEYED and
+    /// this side has one, ACK otherwise.
+    Now(Option<[u8; TOKEN_BYTES]>),
+}
+
+/// Takes connections, up to MAX_HANDSHAKES at once, until one presents the
+/// token, and returns it.
 async fn authenticated(
     listener: &TcpListener,
-    token: &[u8; TOKEN_BYTES],
-    ack: bool,
+    token: [u8; TOKEN_BYTES],
+    reply: Reply,
 ) -> Option<WebSocketStream<TcpStream>> {
+    use futures_util::stream::FuturesUnordered;
+
+    let mut pending = FuturesUnordered::new();
     loop {
-        let (tcp, _) = listener.accept().await.ok()?;
-        let _ = tcp.set_nodelay(true);
-        let attempt = async {
-            let mut ws = tokio_tungstenite::accept_async(tcp).await.ok()?;
-            match ws.next().await? {
-                Ok(Message::Binary(bytes)) if same_token(&bytes, token) => {
-                    if ack {
-                        ws.send(Message::Binary(vec![ACK].into())).await.ok()?;
-                    }
-                    Some(ws)
+        tokio::select! {
+            r = listener.accept() => {
+                let (tcp, _) = r.ok()?;
+                if pending.len() < MAX_HANDSHAKES {
+                    pending.push(tokio::time::timeout(HANDSHAKE, handshake(tcp, token, reply)));
                 }
-                _ => None,
             }
-        };
-        if let Ok(Some(ws)) = tokio::time::timeout(HANDSHAKE, attempt).await {
-            return Some(ws);
+            Some(r) = pending.next(), if !pending.is_empty() => {
+                if let Ok(Some(ws)) = r {
+                    return Some(ws);
+                }
+            }
         }
     }
 }
 
-async fn relay(lan: TcpListener, local: TcpListener, token: [u8; TOKEN_BYTES]) {
+async fn handshake(
+    tcp: TcpStream,
+    token: [u8; TOKEN_BYTES],
+    reply: Reply,
+) -> Option<WebSocketStream<TcpStream>> {
+    let _ = tcp.set_nodelay(true);
+    let mut ws = tokio_tungstenite::accept_async(tcp).await.ok()?;
+    let Ok(Message::Binary(bytes)) = ws.next().await? else { return None };
+    let answer = match reply {
+        Reply::Now(a) => a,
+        Reply::Later => None,
+    };
+    let keyed = answer.is_some() && bytes.len() == TOKEN_BYTES + 1 && bytes[TOKEN_BYTES] == KEYED;
+    if !same_token(if keyed { &bytes[..TOKEN_BYTES] } else { &bytes[..] }, &token) {
+        return None;
+    }
+    if let Reply::Now(_) = reply {
+        let out = match answer {
+            Some(a) if keyed => a.to_vec(),
+            _ => vec![ACK],
+        };
+        ws.send(Message::Binary(out.into())).await.ok()?;
+    }
+    Some(ws)
+}
+
+async fn relay(
+    lan: TcpListener,
+    local: TcpListener,
+    token: [u8; TOKEN_BYTES],
+    answer: Option<[u8; TOKEN_BYTES]>,
+) {
     let (page, peer) = tokio::join!(
-        authenticated(&local, &token, false),
-        authenticated(&lan, &token, true),
+        authenticated(&local, token, Reply::Later),
+        authenticated(&lan, token, Reply::Now(answer)),
     );
     // Both listeners close here: one connection each, and no more.
     drop(lan);
@@ -316,27 +371,33 @@ mod tests {
     }
 
     /// The whole relay, over loopback: the page and the peer each present the
-    /// token, a stranger who does not is skipped, and messages cross both
-    /// ways in order.
+    /// token, a stranger who does not is skipped, one who says nothing does
+    /// not hold the port, the peer that asks for the answer gets it, and
+    /// messages cross both ways in order.
     #[tokio::test]
     async fn relays_between_the_page_and_its_peer() {
         use tokio_tungstenite::connect_async;
         let token = [7u8; TOKEN_BYTES];
+        let answer = [9u8; TOKEN_BYTES];
         let lan = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let local = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let lan_url = format!("ws://{}/", lan.local_addr().unwrap());
         let local_url = format!("ws://{}/", local.local_addr().unwrap());
-        let task = tokio::spawn(relay(lan, local, token));
+        let task = tokio::spawn(relay(lan, local, token, Some(answer)));
 
+        let (_silent, _) = connect_async(&lan_url).await.unwrap();
         let (mut stranger, _) = connect_async(&lan_url).await.unwrap();
         stranger.send(Message::Binary(vec![0u8; TOKEN_BYTES].into())).await.unwrap();
 
         let (mut peer, _) = connect_async(&lan_url).await.unwrap();
-        peer.send(Message::Binary(token.to_vec().into())).await.unwrap();
+        let mut keyed = token.to_vec();
+        keyed.push(KEYED);
+        peer.send(Message::Binary(keyed.into())).await.unwrap();
         let (mut page, _) = connect_async(&local_url).await.unwrap();
         page.send(Message::Binary(token.to_vec().into())).await.unwrap();
 
-        assert_eq!(peer.next().await.unwrap().unwrap(), Message::Binary(vec![ACK].into()));
+        let heard = tokio::time::timeout(Duration::from_secs(2), peer.next()).await.unwrap();
+        assert_eq!(heard.unwrap().unwrap(), Message::Binary(answer.to_vec().into()));
         assert_eq!(page.next().await.unwrap().unwrap(), Message::Binary(vec![ACK].into()));
 
         for n in [14usize, 16414, 70000] {
@@ -348,6 +409,26 @@ mod tests {
             assert_eq!(page.next().await.unwrap().unwrap(), Message::Binary(vec![2u8; n].into()));
         }
 
+        page.close(None).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+    }
+
+    /// An older peer sends the bare token and is answered ACK, as before.
+    #[tokio::test]
+    async fn an_older_peer_still_gets_ack() {
+        use tokio_tungstenite::connect_async;
+        let token = [7u8; TOKEN_BYTES];
+        let lan = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let local = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let lan_url = format!("ws://{}/", lan.local_addr().unwrap());
+        let local_url = format!("ws://{}/", local.local_addr().unwrap());
+        let task = tokio::spawn(relay(lan, local, token, Some([9u8; TOKEN_BYTES])));
+        let (mut peer, _) = connect_async(&lan_url).await.unwrap();
+        peer.send(Message::Binary(token.to_vec().into())).await.unwrap();
+        assert_eq!(peer.next().await.unwrap().unwrap(), Message::Binary(vec![ACK].into()));
+        let (mut page, _) = connect_async(&local_url).await.unwrap();
+        page.send(Message::Binary(token.to_vec().into())).await.unwrap();
+        assert_eq!(page.next().await.unwrap().unwrap(), Message::Binary(vec![ACK].into()));
         page.close(None).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
     }

@@ -14,7 +14,7 @@ use tokio::time::timeout;
 
 use crate::io::{Sink, Source};
 use crate::session::{
-    Ctl, Inbox, Link, LinkIn, MEMORY_WINDOW, OUT_HIGH, READ_AHEAD, Route, SessionEvent,
+    Ctl, Inbox, LanConfig, Link, LinkIn, MEMORY_WINDOW, OUT_HIGH, READ_AHEAD, Route, SessionEvent,
     SessionEvents, SessionHandle, SessionOptions, inbox, start,
 };
 
@@ -25,6 +25,10 @@ type Side = (SessionHandle, SessionEvents);
 /// Two sessions on one secret, joined in memory. Each side's inbound sender
 /// is returned too, so a test can put a frame or a leave in the other's way.
 fn pair() -> (Side, Side, Inbox, Inbox) {
+    pair_with(SessionOptions::default(), SessionOptions::default())
+}
+
+fn pair_with(host_opts: SessionOptions, guest_opts: SessionOptions) -> (Side, Side, Inbox, Inbox) {
     let secret = Secret::generate();
     let (a, b) = (Keypair::generate(), Keypair::generate());
     let (ap, bp) = (a.public_key().to_vec(), b.public_key().to_vec());
@@ -39,17 +43,16 @@ fn pair() -> (Side, Side, Inbox, Inbox) {
         link_tx: own,
         link_rx: rx,
     };
-    let opts = SessionOptions::default();
     let h = start(
         host.confirm(),
         Role::Host,
-        opts.clone(),
+        host_opts,
         link(&b_tx, a_tx.clone(), a_rx),
     );
     let g = start(
         guest.confirm(),
         Role::Guest,
-        opts,
+        guest_opts,
         link(&a_tx, b_tx.clone(), b_rx),
     );
     (h, g, a_tx, b_tx)
@@ -316,6 +319,40 @@ async fn a_frame_that_fails_its_tag_is_dropped_not_fatal() {
     g.accept(s);
     until(&mut he, |e| matches!(e, SessionEvent::Sent { .. })).await;
     until(&mut ge, |e| matches!(e, SessionEvent::Received { .. })).await;
+}
+
+/// A LAN link that brings only frames failing their tag is not the file's,
+/// so its closing mid-receive fails nothing. It used to count as carrying
+/// from its first message, and anyone who got onto it could end a transfer
+/// arriving whole by another way with one junk frame and a close.
+#[tokio::test]
+async fn a_lan_link_that_brought_only_junk_closing_fails_nothing() {
+    let lan = SessionOptions {
+        lan: Some(LanConfig {
+            listen: qrdrop_protocol::LanListen::None,
+        }),
+        ..SessionOptions::default()
+    };
+    let ((h, mut he), (g, mut ge), _, b_in) = pair_with(SessionOptions::default(), lan);
+    h.send_file(source(4 * 1024 * 1024));
+    until(&mut ge, |e| matches!(e, SessionEvent::Offer(_))).await;
+    let (s, _, _) = sink(Duration::from_micros(200));
+    g.accept(s);
+    until(&mut ge, |e| {
+        matches!(e, SessionEvent::ReceiveProgress { .. })
+    })
+    .await;
+    b_in.send(LinkIn::Lan(vec![1u8; 100])).unwrap();
+    b_in.send(LinkIn::LanClosed).unwrap();
+    let e = until(&mut ge, |e| {
+        matches!(
+            e,
+            SessionEvent::Received { .. } | SessionEvent::Failed(_) | SessionEvent::Lan
+        )
+    })
+    .await;
+    assert!(matches!(e, SessionEvent::Received { .. }), "{e:?}");
+    until(&mut he, |e| matches!(e, SessionEvent::Sent { .. })).await;
 }
 
 /// The slow sink: 32 MiB into a sink that takes half a millisecond per

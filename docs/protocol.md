@@ -225,6 +225,21 @@ connection, and only the app registers the platform hook.
   `lan-offer` names its addresses and a 16-byte token, sealed like every other
   control message. The side that dials in presents the token first, and the
   listener takes exactly one connection that does, then stops listening.
+- **The listener proves itself back.** The offer also carries a 16-byte
+  `answer`, random and independent of the token. A dialler that has one sends
+  the token followed by the byte `0x01`, and takes the link only if the reply
+  is the answer. Without it, anyone on the path who took the connection could
+  reply with the one-byte ACK the protocol used to end on, become the link,
+  and stall the transfer, since LAN wins over every other path. An answer
+  derived from the token would not stop them, because the dialler has already
+  sent them the token. An offer without an `answer` comes from an older
+  listener, and there the dialler accepts ACK. An older dialler sends the bare
+  token and is answered ACK. Since the offer is sealed, nobody else can strip
+  the answer to force the older exchange.
+- **A link carries the file only once a frame over it passes its tag.** A
+  receiver that loses a link it believes the file is on fails the transfer,
+  so counting from the first message would let one junk frame and a close end
+  a transfer that was arriving whole by another way.
 - **Only a quiet side listens.** Listening on Windows, and for an unsigned
   macOS app, raises an OS firewall prompt. Each hello says whether it would,
   and when neither side can listen quietly, the transfer stays on WebRTC.

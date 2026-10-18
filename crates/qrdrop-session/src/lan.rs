@@ -7,7 +7,10 @@
 //! anything on the old (lan.js, "WHY ACCEPT IS THE ONE MOMENT TO MOVE"). The
 //! frames that move are the same sealed frames into the same session, so the
 //! socket adds speed, not trust: the token keeps the socket for our peer, and
-//! the AEAD keeps the frames ours.
+//! the AEAD keeps the frames ours. The listener proves itself back with the
+//! offer's answer, for the reasons lan.js gives under "THE ANSWER": a link
+//! anyone on the path could answer with ACK is one they could take, and
+//! LAN wins over every other path.
 //!
 //! The negotiation itself -- who says hello when, who listens -- is the
 //! session driver's (`session.rs`), because it is ordered against the control
@@ -27,8 +30,18 @@ pub const DIAL_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the listener gives a connection to present the token.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// The listener's one-byte answer to a good token. Frames are never one byte.
+/// What an older listener sends, and what a dialler without the answer gets.
 pub const ACK: u8 = 0x06;
+/// After the token, from a dialler that holds the offer's answer and wants
+/// it back in place of ACK, as `KEYED` in lan.js.
+pub const KEYED: u8 = 0x01;
 pub const TOKEN_BYTES: usize = 16;
+/// Handshakes the listener runs at once. Past it a connection is closed
+/// unread. Concurrent at all, because one at a time let a stranger who found
+/// the port hold it for HANDSHAKE_TIMEOUT, longer than the peer's
+/// DIAL_TIMEOUT, and keep the peer off the link.
+#[cfg(feature = "lan-listen")]
+const MAX_HANDSHAKES: usize = 32;
 /// The most addresses an offer is dialled at; more are dropped, as by
 /// `parseOffer`.
 pub const MAX_ADDRS: usize = 8;
@@ -73,16 +86,29 @@ pub struct Offer {
     pub addrs: Vec<Ipv4Addr>,
     pub port: u16,
     pub token: [u8; TOKEN_BYTES],
+    /// What the listener must answer, when it is new enough to offer one;
+    /// `None` takes ACK.
+    pub answer: Option<[u8; TOKEN_BYTES]>,
 }
 
 /// `parseOffer`. The peer is authenticated, but it is also a different
 /// build, possibly a buggy or hostile one, and this is where its words turn
 /// into outbound connections: dotted IPv4 on a private range, not loopback,
 /// so an offer can aim this side neither at a host on the internet nor at a
-/// service on this machine.
-pub fn parse_offer(addrs: &[String], port: u64, token: &str) -> Option<Offer> {
+/// service on this machine. An answer present and malformed refuses the
+/// offer rather than reading as absent, which would take ACK.
+pub fn parse_offer(
+    addrs: &[String],
+    port: u64,
+    token: &str,
+    answer: Option<&str>,
+) -> Option<Offer> {
     let port = u16::try_from(port).ok().filter(|p| *p != 0)?;
     let token = parse_token(token)?;
+    let answer = match answer {
+        Some(a) => Some(parse_token(a)?),
+        None => None,
+    };
     let addrs: Vec<Ipv4Addr> = addrs
         .iter()
         .take(MAX_ADDRS)
@@ -90,7 +116,12 @@ pub fn parse_offer(addrs: &[String], port: u64, token: &str) -> Option<Offer> {
         .filter_map(|a| a.parse::<Ipv4Addr>().ok())
         .filter(|ip| !ip.is_loopback() && crate::path::is_private((*ip).into()))
         .collect();
-    (!addrs.is_empty()).then_some(Offer { addrs, port, token })
+    (!addrs.is_empty()).then_some(Offer {
+        addrs,
+        port,
+        token,
+        answer,
+    })
 }
 
 /// `^\d{1,3}(\.\d{1,3}){3}$`, which `Ipv4Addr`'s parser is stricter than in
@@ -195,7 +226,13 @@ mod socket {
         let mut attempts: FuturesUnordered<_> = offer
             .addrs
             .iter()
-            .map(|a| dial_one(format!("ws://{a}:{}/", offer.port), offer.token))
+            .map(|a| {
+                dial_one(
+                    format!("ws://{a}:{}/", offer.port),
+                    offer.token,
+                    offer.answer,
+                )
+            })
             .collect();
         while let Some(r) = attempts.next().await {
             if r.is_some() {
@@ -208,7 +245,11 @@ mod socket {
     }
 
     #[cfg(feature = "lan-dial")]
-    async fn dial_one(url: String, token: [u8; TOKEN_BYTES]) -> Option<LanSocket> {
+    pub(super) async fn dial_one(
+        url: String,
+        token: [u8; TOKEN_BYTES],
+        answer: Option<[u8; TOKEN_BYTES]>,
+    ) -> Option<LanSocket> {
         let (ws, _) = tokio::time::timeout(
             DIAL_TIMEOUT,
             tokio_tungstenite::connect_async_with_config(url, Some(ws_config()), true),
@@ -217,13 +258,19 @@ mod socket {
         .ok()?
         .ok()?;
         let mut s = split(ws);
-        s.tx.send(Message::Binary(token.to_vec().into()))
-            .await
-            .ok()?;
-        let ack = tokio::time::timeout(DIAL_TIMEOUT, first_binary(&mut s.rx))
+        let mut hello = token.to_vec();
+        if answer.is_some() {
+            hello.push(KEYED);
+        }
+        s.tx.send(Message::Binary(hello.into())).await.ok()?;
+        let reply = tokio::time::timeout(DIAL_TIMEOUT, first_binary(&mut s.rx))
             .await
             .ok()??;
-        (ack == [ACK]).then_some(s)
+        match answer {
+            Some(a) => same_token(&reply, &a),
+            None => reply == [ACK],
+        }
+        .then_some(s)
     }
 
     /// A listener waiting for its one connection.
@@ -247,32 +294,66 @@ mod socket {
         })
     }
 
-    /// Connections one at a time until one presents the token within
-    /// [`HANDSHAKE_TIMEOUT`]; that one is answered [`ACK`] and returned, and
-    /// the listener is dropped with it. A stranger who reaches the port is
-    /// closed. Even one who somehow presented the token could only inject
-    /// frames, and those fail their tag.
+    /// Connections until one presents the token within
+    /// [`HANDSHAKE_TIMEOUT`], up to [`MAX_HANDSHAKES`] of them at once. That
+    /// one is answered, `answer` if it asked with [`KEYED`] and [`ACK`] if it
+    /// is an older build that did not, and returned, and the listener and
+    /// every other handshake are dropped with it. A stranger who reaches the
+    /// port is closed. Even one who somehow presented the token could only
+    /// inject frames, and those fail their tag.
     #[cfg(feature = "lan-listen")]
-    pub(crate) async fn accept(l: Listening, token: [u8; TOKEN_BYTES]) -> Option<LanSocket> {
+    pub(crate) async fn accept(
+        l: Listening,
+        token: [u8; TOKEN_BYTES],
+        answer: [u8; TOKEN_BYTES],
+    ) -> Option<LanSocket> {
+        use futures_util::stream::FuturesUnordered;
+
+        let mut pending = FuturesUnordered::new();
         loop {
-            let (tcp, _) = l.listener.accept().await.ok()?;
-            let _ = tcp.set_nodelay(true);
-            let attempt = async {
-                let ws = tokio_tungstenite::accept_async_with_config(tcp, Some(ws_config()))
-                    .await
-                    .ok()?;
-                let mut s = split(ws);
-                let first = first_binary(&mut s.rx).await?;
-                if !same_token(&first, &token) {
-                    return None;
+            tokio::select! {
+                r = l.listener.accept() => {
+                    let (tcp, _) = r.ok()?;
+                    if pending.len() < MAX_HANDSHAKES {
+                        pending.push(tokio::time::timeout(
+                            HANDSHAKE_TIMEOUT,
+                            handshake(tcp, token, answer),
+                        ));
+                    }
                 }
-                s.tx.send(Message::Binary(vec![ACK].into())).await.ok()?;
-                Some(s)
-            };
-            if let Ok(Some(s)) = tokio::time::timeout(HANDSHAKE_TIMEOUT, attempt).await {
-                return Some(s);
+                Some(r) = pending.next(), if !pending.is_empty() => {
+                    if let Ok(Some(s)) = r {
+                        return Some(s);
+                    }
+                }
             }
         }
+    }
+
+    #[cfg(feature = "lan-listen")]
+    async fn handshake(
+        tcp: tokio::net::TcpStream,
+        token: [u8; TOKEN_BYTES],
+        answer: [u8; TOKEN_BYTES],
+    ) -> Option<LanSocket> {
+        let _ = tcp.set_nodelay(true);
+        let ws = tokio_tungstenite::accept_async_with_config(tcp, Some(ws_config()))
+            .await
+            .ok()?;
+        let mut s = split(ws);
+        let first = first_binary(&mut s.rx).await?;
+        let keyed = first.len() == TOKEN_BYTES + 1 && first[TOKEN_BYTES] == KEYED;
+        let presented = if keyed {
+            &first[..TOKEN_BYTES]
+        } else {
+            &first[..]
+        };
+        if !same_token(presented, &token) {
+            return None;
+        }
+        let reply = if keyed { answer.to_vec() } else { vec![ACK] };
+        s.tx.send(Message::Binary(reply.into())).await.ok()?;
+        Some(s)
     }
 
     /// The default route's address first -- the likeliest to work -- then
@@ -341,6 +422,7 @@ mod tests {
             &a(&["192.168.1.5", "8.8.8.8", "127.0.0.1", "10.0.0.2"]),
             5000,
             t,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -350,28 +432,99 @@ mod tests {
                 "10.0.0.2".parse().unwrap()
             ]
         );
-        assert_eq!((o.port, o.token[15]), (5000, 0xff));
-        assert_eq!(parse_offer(&a(&["8.8.8.8"]), 5000, t), None);
-        assert_eq!(parse_offer(&a(&[]), 5000, t), None);
-        assert_eq!(parse_offer(&a(&["192.168.1.5"]), 0, t), None);
-        assert_eq!(parse_offer(&a(&["192.168.1.5"]), 65536, t), None);
+        assert_eq!((o.port, o.token[15], o.answer), (5000, 0xff, None));
+        assert_eq!(parse_offer(&a(&["8.8.8.8"]), 5000, t, None), None);
+        assert_eq!(parse_offer(&a(&[]), 5000, t, None), None);
+        assert_eq!(parse_offer(&a(&["192.168.1.5"]), 0, t, None), None);
+        assert_eq!(parse_offer(&a(&["192.168.1.5"]), 65536, t, None), None);
         assert_eq!(
-            parse_offer(&a(&["192.168.1.5"]), 5000, &t.to_uppercase()),
+            parse_offer(&a(&["192.168.1.5"]), 5000, &t.to_uppercase(), None),
             None
         );
-        assert_eq!(parse_offer(&a(&["192.168.1.5"]), 5000, &t[1..]), None);
+        assert_eq!(parse_offer(&a(&["192.168.1.5"]), 5000, &t[1..], None), None);
         assert_eq!(
             parse_offer(
                 &a(&["192.168.001.5", "::ffff:192.168.1.5", "fe80::1"]),
                 5000,
-                t
+                t,
+                None
             ),
             None
         );
         // Only the first eight are looked at, so a ninth good one is never dialled.
         let mut many = vec!["8.8.8.8"; 8];
         many.push("192.168.1.9");
-        assert_eq!(parse_offer(&a(&many), 5000, t), None);
+        assert_eq!(parse_offer(&a(&many), 5000, t, None), None);
+        // An answer is read when it is there, and a malformed one refuses the
+        // offer: reading it as absent would take ACK from anyone.
+        let lan = a(&["192.168.1.5"]);
+        let answered =
+            parse_offer(&lan, 5000, t, Some("ffeeddccbbaa99887766554433221100")).unwrap();
+        assert_eq!(answered.answer.map(|x| x[0]), Some(0xff));
+        assert_eq!(parse_offer(&lan, 5000, t, Some("short")), None);
+        assert_eq!(parse_offer(&lan, 5000, t, Some(&t.to_uppercase())), None);
+    }
+
+    /// The handshake both ways over loopback: a dialler holding the answer
+    /// gets it, an older dialler gets ACK from the same listener, a host
+    /// answering ACK to a dialler that holds an answer is refused, and a
+    /// stranger holding a connection open does not keep the peer out.
+    #[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
+    #[tokio::test]
+    async fn the_listener_proves_itself_to_a_dialler_that_holds_the_answer() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let token = [7u8; TOKEN_BYTES];
+        let answer = [9u8; TOKEN_BYTES];
+        let listening = || async {
+            let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .unwrap();
+            let port = listener.local_addr().unwrap().port();
+            (
+                socket::Listening {
+                    addrs: vec![],
+                    port,
+                    listener,
+                },
+                format!("ws://127.0.0.1:{port}/"),
+            )
+        };
+
+        // A stranger connects first and says nothing; the peer still gets in
+        // well inside its DIAL_TIMEOUT.
+        let (l, url) = listening().await;
+        let accept = tokio::spawn(socket::accept(l, token, answer));
+        let (_stranger, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+        assert!(
+            socket::dial_one(url.clone(), token, Some(answer))
+                .await
+                .is_some()
+        );
+        assert!(accept.await.unwrap().is_some());
+
+        // An older dialler: the bare token, answered ACK.
+        let (l, url) = listening().await;
+        let accept = tokio::spawn(socket::accept(l, token, answer));
+        assert!(socket::dial_one(url, token, None).await.is_some());
+        assert!(accept.await.unwrap().is_some());
+
+        // An impostor that takes the connection and says ACK, as the old
+        // protocol let anyone: refused.
+        let impostor = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let url = format!("ws://{}/", impostor.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (tcp, _) = impostor.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let heard = ws.next().await.unwrap().unwrap();
+            assert_eq!(heard.into_data().len(), TOKEN_BYTES + 1);
+            ws.send(Message::Binary(vec![ACK].into())).await.unwrap();
+            let _ = ws.next().await;
+        });
+        assert!(socket::dial_one(url, token, Some(answer)).await.is_none());
     }
 
     #[test]

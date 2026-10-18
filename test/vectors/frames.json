@@ -272,6 +272,21 @@
       },
       "plaintext": "{\"t\":\"error\",\"seq\":1,\"message\":\"Saving failed: disk full\"}",
       "frame": "00ffffffff0000000000000008007ef5a4f2c733167ef4040d6248017e4ade5542809a8e664a715b80a0ecec6511c58d977ff95b756da87ca3d736ca818dbad6b248deeb83ff918b997d0d09d2a7ad52f01c0bb48f69ac15"
+    },
+    {
+      "key": "guest_to_host",
+      "index": 9,
+      "message": {
+        "t": "lan-offer",
+        "addrs": [
+          "192.168.1.20"
+        ],
+        "port": 49153,
+        "token": "ffeeddccbbaa99887766554433221100",
+        "answer": "0123456789abcdef0123456789abcdef"
+      },
+      "plaintext": "{\"t\":\"lan-offer\",\"addrs\":[\"192.168.1.20\"],\"port\":49153,\"token\":\"ffeeddccbbaa99887766554433221100\",\"answer\":\"0123456789abcdef0123456789abcdef\"}",
+      "frame": "00ffffffff000000000000000900e43f69a240f61302c56288f006d0d420b315149e5833440dd245e5e9d5d388b6b7c43a415775bf2c245a648ca349e610f0658198511ed2290c75744628c2eac13d70d3b37bc4a41bef817da5462f96625990f9ba6815a570360f1f02e2c20c5e125cbf4fa1f73a8bac2a0fe78a616bd43409bb10c1654527ff91e624cfe0226e92f534cffa8bf25a45e6a4998c4eb2e42b4a57f4f5f1771625db3241db20"
     }
   ],
   "reject": [

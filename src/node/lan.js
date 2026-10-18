@@ -40,7 +40,7 @@ export function nodeLanPlatform({ os = process.platform, override = process.env.
   const quietHere = os === 'linux' || os === 'android' ? 'quiet' : 'prompt'
   return {
     listen: override === 'quiet' || override === 'prompt' || override === 'none' ? override : quietHere,
-    open: token => listenLan({ token }),
+    open: (token, answer) => listenLan({ token, answer }),
     dial: (url, timeoutMs) => dialWebSocket(WebSocketImpl, url, timeoutMs),
   }
 }

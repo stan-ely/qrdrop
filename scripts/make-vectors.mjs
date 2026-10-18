@@ -345,6 +345,9 @@ async function frameVectors(session, keys) {
     [guestKey, 'guest_to_host', { t: 'done', seq: 0 }],
     [guestKey, 'guest_to_host', { t: 'decline', seq: 1 }],
     [guestKey, 'guest_to_host', { t: 'error', seq: 1, message: 'Saving failed: disk full' }],
+    // Last, so adding it moved no other vector: a listener's offer as it is
+    // sent now, with the answer that proves it to the dialler.
+    [guestKey, 'guest_to_host', { t: 'lan-offer', addrs: ['192.168.1.20'], port: 49153, token: 'ffeeddccbbaa99887766554433221100', answer: '0123456789abcdef0123456789abcdef' }],
   ]
   const counters = { host_to_guest: 0, guest_to_host: 0 }
   const controls = []

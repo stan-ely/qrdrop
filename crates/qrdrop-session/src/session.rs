@@ -605,6 +605,7 @@ enum LanEvent {
         addrs: Vec<String>,
         port: u16,
         token: String,
+        answer: Option<String>,
     },
     #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
     Linked(lan::LanSocket),
@@ -954,13 +955,19 @@ impl Driver {
         match li {
             LinkIn::Frame(f) => self.session.handle_frame(&f, now),
             LinkIn::Lan(f) => {
-                if let Some(l) = &mut self.lan
+                // Carrying only once a frame has passed its tag. A link that
+                // counted from its first message could be made to look like
+                // the file's by anyone who got onto it with one junk frame,
+                // and then fail a receiver's transfer by closing it.
+                let dropped = self.session.dropped();
+                self.session.handle_frame(&f, now);
+                if self.session.dropped() == dropped
+                    && let Some(l) = &mut self.lan
                     && !l.carrying
                 {
                     l.carrying = true;
                     self.emit(SessionEvent::Lan);
                 }
-                self.session.handle_frame(&f, now);
             }
             LinkIn::Quic(f) => {
                 if let Some(q) = &mut self.quic
@@ -1164,7 +1171,12 @@ impl Driver {
                 self.emit_path();
             }
             Event::PeerLanHello(theirs) => self.on_lan_hello(theirs),
-            Event::PeerLanOffer { addrs, port, token } => self.on_lan_offer(&addrs, port, &token),
+            Event::PeerLanOffer {
+                addrs,
+                port,
+                token,
+                answer,
+            } => self.on_lan_offer(&addrs, port, &token, answer.as_deref()),
             Event::PeerQuicHello => self.on_quic_hello(),
             Event::PeerQuicOffer { addrs, fp } => self.on_quic_offer(&addrs, &fp),
             Event::Failed(e) => {
@@ -1301,7 +1313,9 @@ impl Driver {
         let events = l.events.clone();
         l.tasks.push(tokio::spawn(async move {
             let mut token = [0u8; lan::TOKEN_BYTES];
+            let mut answer = [0u8; lan::TOKEN_BYTES];
             rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut token);
+            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut answer);
             let token_hex = lan::token_hex(&token);
             match lan::listen().await {
                 Ok(listening) => {
@@ -1309,12 +1323,13 @@ impl Driver {
                         addrs: listening.addrs.clone(),
                         port: listening.port,
                         token: token_hex,
+                        answer: Some(lan::token_hex(&answer)),
                     });
                     if listening.addrs.is_empty() {
                         let _ = events.send(LanEvent::NoLink);
                         return;
                     }
-                    match lan::accept(listening, token).await {
+                    match lan::accept(listening, token, answer).await {
                         Some(s) => {
                             let _ = events.send(LanEvent::Linked(s));
                         }
@@ -1330,6 +1345,7 @@ impl Driver {
                         addrs: vec![],
                         port: 0,
                         token: token_hex,
+                        answer: None,
                     });
                     let _ = events.send(LanEvent::NoLink);
                 }
@@ -1346,19 +1362,20 @@ impl Driver {
                 addrs: vec![],
                 port: 0,
                 token: "0".repeat(32),
+                answer: None,
             });
             let _ = l.events.send(LanEvent::NoLink);
         }
     }
 
-    fn on_lan_offer(&mut self, addrs: &[String], port: u64, token: &str) {
+    fn on_lan_offer(&mut self, addrs: &[String], port: u64, token: &str, answer: Option<&str>) {
         let role = self.role;
         let Some(l) = &mut self.lan else { return };
         if l.offer_seen || l.listener.is_none() || l.listener == Some(role) {
             return;
         }
         l.offer_seen = true;
-        let Some(offer) = lan::parse_offer(addrs, port, token) else {
+        let Some(offer) = lan::parse_offer(addrs, port, token, answer) else {
             l.state = LinkState::None;
             return self.link_settled();
         };
@@ -1385,8 +1402,13 @@ impl Driver {
         let link = self.link_tx.clone();
         let Some(l) = &mut self.lan else { return };
         match e {
-            LanEvent::Listening { addrs, port, token } => {
-                let _ = self.session.send_lan_offer(addrs, port, token);
+            LanEvent::Listening {
+                addrs,
+                port,
+                token,
+                answer,
+            } => {
+                let _ = self.session.send_lan_offer(addrs, port, token, answer);
             }
             #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
             LanEvent::Linked(socket) => {
