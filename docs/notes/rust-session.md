@@ -17,10 +17,12 @@ session that works on it starts by reading the **Status** section and ends by up
 | 7. The apps on the native session | desktop done, 2026-10-18; device runs pending | `a142b52`, `04504bc`, `7573183`, `5b959bd` | the desktop app runs a transfer on `qrdrop-session` both ways against the Node CLI; on by default on Linux only, until the RMX3868 gate is measured; see "Phase 7: what it found" |
 | 8. CLI distribution switch | done in the tree, 2026-10-18; first release pending | `ec79928` | `qrdrop` runs the Rust CLI from a per-platform npm package and falls back to the Node CLI; all five targets build on CI; the npm names need a first publish by hand; see "Phase 8: what it found" |
 | 9. QUIC path, Rust to Rust | done for the CLI, 2026-10-18; the phone pending | `1a4f465` | the session moves a file over quinn after the SAS, through two NATs, and falls back to WebRTC; three to ten times SCTP under netem; on in the Rust CLI, off in the app until the RMX3868 gate; see "Phase 9: what it found" |
-| 10. Extraction prep | not started | | |
+| 10. Extraction prep | done, 2026-10-18; the publish awaits the owner | `08990d5`, `5355471` | `tryst` 0.1.0 is documented, carries its own vectors and licence, and passes its tests built from its own tarball outside the workspace; the crates.io publish is the owner's call; see "Phase 10: what it found" |
 
-**Next step:** Phase 10, extraction prep, which can go ahead while three things wait on a person
-or a device. Its last step, the crates.io publish, is the owner's to approve.
+**Next step:** every phase is done as far as this machine can take it. What is left waits on a
+person or a device:
+- **Publishing `tryst` 0.1.0** to crates.io: `cargo publish -p tryst`, once the owner agrees
+  (see "Phase 10: what it found").
 - **Phase 7's device runs** need the RMX3868 attached (switch the phone with
   `localStorage.setItem('qrdrop:native-session', '1')` in the WebView's devtools).
 - **Phase 9's phone gate** needs the same phone, and an app built with `qrdrop-session/quic`;
@@ -59,8 +61,7 @@ or a device. Its last step, the crates.io publish, is the owner's to approve.
   although 0.14/0.11/0.13/0.11 are out. The app links str0m's DTLS stack too, and one generation
   means one copy of each crate in the Android `.so`. They move when str0m's do.
 
-**Still to decide, each in the phase that needs it:**
-- CLI distribution (phase 8).
+**Still to decide:**
 - **A TURN server that works.** The openrelay entries in `ICE_SERVERS` are dead for the JS and the
   Rust alike (see "Phase 5: what it found"). Replacing them is an operator choice (a hosted service
   with credentials, or one run for qrdrop), not a code change, and it is the owner's to make.
@@ -1309,6 +1310,47 @@ WSL, one pinned core per side:
 
 - The `tryst` crate gets a clean API, docs, examples and its own vectors.
 - Settle the licence and the name, then publish to crates.io.
+
+### Phase 10: what it found
+
+Done on 2026-10-18 (`08990d5`, `5355471`), short of the publish itself.
+
+**What was done:**
+- **Its own vectors.** `trystero.json` and both recordings moved to `crates/tryst/vectors/`. A crate
+  is packaged from its own directory alone, and the tests' `include_str!` paths climbed out of it,
+  so a downloaded `tryst` would have built and then failed to compile its tests.
+  `make-vectors.mjs` and `record-trystero.mjs` write there, through one `vectorUrl` that
+  `test/vectors.test.mjs` reads by too. Moved, not copied, so there is one source of truth and the
+  crate is whole if it moves to a repository of its own.
+- **Docs.** Every public item has a doc comment, `missing_docs` warns, the crate docs open with a
+  doctested example of joining a room beside a Trystero page, and docs.rs builds every feature.
+- **The README** says what the crate is, its features, how it is tested, and its limits.
+- **Licence: MIT**, as the repository. The text ships as `crates/tryst/LICENSE`, because the
+  `license` field only names it.
+- **Name: `tryst`**, unchanged, and 0.1.0, the first version with code in it.
+
+**The API stays as it was.** It is what qrdrop's session uses and nothing it does not: `join`, a
+`RoomHandle` with a cloneable `RoomSender`, `RoomEvent`, and the sans-IO modules beneath them. No
+`#[non_exhaustive]`: a 0.x crate may break in its next minor version anyway, and the attribute
+would only add wildcard arms to the session.
+
+**Measured.** The packaged crate, unpacked and built outside this workspace, passes every one of
+its tests from the tarball: 35 unit, 8 integration and the doctest. `cargo publish --dry-run`
+packages 29 files, 124.7 KiB compressed.
+
+**Found on the way:**
+- **The str0m patch cannot travel.** `[patch.crates-io]` is the root workspace's, so a build from
+  crates.io takes upstream `str0m-rust-crypto` 0.6.0 and compiles aws-lc-sys
+  (`cargo tree -i aws-lc-sys` on the unpacked crate) for a certificate generator `tryst` never
+  calls. Nothing at run time differs, the README says so, and it goes when str0m makes the
+  generator optional. Upstreaming that remains an open question above; the newest str0m is still
+  0.24.1 with backend 0.6.0.
+- **This machine's disk is nearly full** (5 GB free of 390). A second target directory for the
+  outside build is 2.1 GB and filled it once; it was deleted afterwards.
+
+**Left for the owner:**
+- **The publish.** `cargo publish -p tryst` from a clean tree. A published version can be yanked
+  but never replaced.
 
 ## Verification, every phase
 
