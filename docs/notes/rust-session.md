@@ -1327,10 +1327,22 @@ went from 5.2-6.8 to 4.1-5.5.
   WebRTC 4.1-5.5. All three are the same within the spread. On this network, nothing on the send
   side comes near the phase 7 gate's 15.5.
 - **Phone receives:** native over QUIC 9.5-10.6; native over LAN alone (the CLI on
-  `QRDROP_QUIC=0`) 12.9-13.6, with one run at 6.9; JS over LAN 12.6-12.9. **On one network, QUIC
-  costs the phone about a quarter against the LAN path**, so "QUIC wins over LAN when both are
-  up" is the wrong order wherever the peers share a LAN. Native over LAN equals JS over LAN,
-  which puts the limit in the link and not in the session.
+  `QRDROP_QUIC=0`) 12.9-13.6, with one run at 6.9; JS over LAN 12.6-12.9.
+- **QUIC is not slow; the phone's radio is the ceiling.** The first two QUIC runs looked about a
+  quarter behind LAN. A second set, alternated, put QUIC at 11.0-12.9 and LAN at 11.6-13.7, the
+  same within the spread. The phone was on 2.4 GHz (channel 6, 229 Mbps receiving, 137 Mbps
+  sending, RSSI -47), and the PC on 5 GHz 802.11ax at 1.4-2.1 Gbps. 229 Mbps of PHY rate is about
+  13 MB/s of goodput, which is where every receive path landed, and 137 Mbps caps every send
+  lower still. Measured with quinn's own counters, read from the CLI sender at close:
+  - RTT 24-160 ms, which is queueing on the radio, not distance.
+  - 2-9% of packets lost, and 22-63 congestion events per 64 MiB.
+  - The phone's UDP `RcvbufErrors` stayed flat across a run, so the loss is in the air and not in
+    the app's socket.
+  - Turning GSO off changed nothing. BBR, which does not back off on loss, sent twice the data,
+    lost half of it, and still delivered the same 12-13 MB/s. A full link was the clearest result.
+  So the route order stays as it is. No result here says QUIC loses to LAN, and nothing on this
+  network can say whether the native session clears the phase 7 gate: 15.5 MB/s of sending is
+  past what a 137 Mbps link carries. That needs the phone on 5 GHz.
 
 **Left for a device:**
 - **The phone gate.** Build the app with `qrdrop-session/quic`, run phase 7's native session, and
