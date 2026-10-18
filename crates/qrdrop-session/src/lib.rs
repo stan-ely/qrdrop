@@ -12,7 +12,8 @@
 //!    [`SessionHandle::close`] leaves the room.
 //!
 //! Features add paths and never change one: `lan-dial` and `lan-listen` for
-//! the local-network fast path, `fs` for std files as source and sink.
+//! the local-network fast path, `quic` for the direct QUIC path between two
+//! Rust peers, `fs` for std files as source and sink.
 
 #![forbid(unsafe_code)]
 
@@ -22,6 +23,7 @@ pub mod messages;
 pub mod networks;
 pub mod pair;
 pub mod path;
+pub mod quic;
 pub mod session;
 #[cfg(test)]
 mod tests;
@@ -29,6 +31,7 @@ mod tests;
 pub use io::{Sink, Source};
 pub use networks::Network;
 pub use pair::{OpenConfig, OpenError, Paired, open_room};
+pub use quic::QuicConfig;
 pub use session::{LanConfig, SessionEvent, SessionEvents, SessionHandle, SessionOptions};
 /// Which signalling network a [`Network`] is, from tryst.
 pub use tryst::signal::Strategy;

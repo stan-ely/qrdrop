@@ -30,6 +30,8 @@ node --test test/frame.test.mjs                          # one file
 node --test --test-name-pattern="round-trips" test/frame.test.mjs   # one test
 
 node scripts/bench-beam.mjs                # beam loss/overhead tables, ~3 min; the ONLY source for docs/beam.md's numbers
+unshare -rn bash crates/qrdrop-session/examples/netem.sh   # Linux/WSL, no root: two Rust sessions over netem; nat.sh puts each behind a NAT.
+                                           # Build first: cargo build --release -p qrdrop-session --examples --features quic. Source of CAPABILITIES' QUIC tables
 
 node scripts/make-vectors.mjs              # rewrite test/vectors/ from src/core/ and Trystero; --check exits 1 if stale
 node scripts/record-trystero.mjs           # re-record two real peers over Trystero; --live goes through the public relays
@@ -223,7 +225,7 @@ npm run test:e2e          # two real browsers over real relays
 npm run test:e2e:interop  # two Node processes driving the CLI, pinned to WebRTC
 npm run test:e2e:interop:lan  # the same, over the local-network fast path
 npm run test:e2e:tryst    # the Rust tryst peer against a Node Trystero peer; `-- --live` for the public relays
-mise run test:e2e:interop:matrix  # the Node CLI and the Rust CLI in all four pairings, WebRTC then LAN
+mise run test:e2e:interop:matrix  # the Node CLI and the Rust CLI in all four pairings: WebRTC, LAN, then with QUIC on
 mise run test:e2e:browser-cli     # Chromium against the Rust CLI both ways, served by its own `qrdrop web`
 mise run test:e2e:app-native      # the desktop app on its native session against the Node CLI, over CDP (Windows)
 ```
@@ -622,6 +624,20 @@ carries bytes from Rust back to a page. `ws:` is in the app channel's CSP only
 one. `test/lan.test.mjs` counts the frames that cross the socket, so a change that
 quietly falls back to WebRTC fails there rather than passing as "still delivers the
 file". `npm run test:e2e:interop:lan` is the live check.
+
+**The QUIC path between two Rust peers keeps every one of those rules, and its
+addresses never go in the signalling.** `crates/qrdrop-session/src/quic.rs`: `quic-hello`
+at `lan-hello`'s moments, then one `quic-offer` each (candidates, certificate SHA-256), all
+on the sealed control stream after the SAS. Putting the candidates in the Trystero signal
+instead is the tempting shortcut, since it would save a round trip. That signal is sealed
+only with the code's password, so anyone holding the code reads it and can race the real
+peer to a public address. Each end's TLS accepts only the certificate the other named, and
+still checks the handshake signature, because a certificate is public. Only the sender
+switches, at Accept, and QUIC wins over LAN when both are up. A JS peer ignores the hello,
+so a Rust sender's wait at Accept costs it nothing. `--no-lan` turns QUIC off as well,
+keeping the file on WebRTC as its help says, and the interop suite pins `QRDROP_QUIC=0`
+except in its `--quic` leg. The app is built without the `quic` feature until the phone
+has been measured.
 
 **A control stream's `fail()` is sticky, and the first error wins.** It used to reject the
 waiter parked in `next()` if there was one and forget the error otherwise — and in the

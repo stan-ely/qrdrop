@@ -167,6 +167,7 @@ async fn frames_sent_while_the_other_side_reads_its_sas_are_held() {
         lan: Some(LanConfig {
             listen: LanListen::Prompt,
         }),
+        quic: None,
     };
     let hs = h.confirm(Role::Host, lan).await;
     hs.0.path().await;
@@ -271,6 +272,7 @@ async fn over_lan(sender: LanListen, receiver: LanListen, name: &str) {
             Role::Host,
             SessionOptions {
                 lan: Some(LanConfig { listen: sender }),
+                quic: None,
             },
         )
         .await;
@@ -279,6 +281,7 @@ async fn over_lan(sender: LanListen, receiver: LanListen, name: &str) {
             Role::Guest,
             SessionOptions {
                 lan: Some(LanConfig { listen: receiver }),
+                quic: None,
             },
         )
         .await;
@@ -316,8 +319,9 @@ async fn with_nobody_quiet_the_file_stays_on_webrtc() {
         lan: Some(LanConfig {
             listen: LanListen::Prompt,
         }),
+        quic: None,
     };
-    let hs = h.confirm(Role::Host, prompt).await;
+    let hs = h.confirm(Role::Host, prompt.clone()).await;
     let gs = g.confirm(Role::Guest, prompt).await;
     let (host_seen, guest_seen) = transfer("lan-none", 100_000, hs, gs).await;
     assert!(!host_seen.contains(&SessionEvent::Lan) && !guest_seen.contains(&SessionEvent::Lan));
@@ -349,4 +353,57 @@ async fn live_two_sessions_pair_over_the_public_networks() {
     let started = std::time::Instant::now();
     transfer("live", 8 * 1024 * 1024, hs, gs).await;
     eprintln!("8 MiB in {:?}", started.elapsed());
+}
+
+#[cfg(feature = "quic")]
+fn quic_options() -> SessionOptions {
+    SessionOptions {
+        lan: None,
+        quic: Some(qrdrop_session::QuicConfig {
+            bind: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            stun: vec![],
+        }),
+    }
+}
+
+/// Two Rust peers with the QUIC path: the sender's frames move to it at
+/// Accept, both ends say so, and the file arrives whole over it -- 8 MiB, so
+/// it is the stream and not WebRTC that carries nearly all of it.
+#[cfg(feature = "quic")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_rust_peers_move_the_file_over_quic() {
+    let url = format!("ws://{}", standin::start().await);
+    let (h, g, _) = pair_up(&url).await;
+    let hs = h.confirm(Role::Host, quic_options()).await;
+    let gs = g.confirm(Role::Guest, quic_options()).await;
+    let (host_seen, guest_seen) = transfer("quic", 8 * 1024 * 1024, hs, gs).await;
+    assert!(
+        host_seen.contains(&SessionEvent::Quic),
+        "the sender never switched: {host_seen:?}"
+    );
+    assert!(
+        guest_seen.contains(&SessionEvent::Quic),
+        "nothing arrived over QUIC: {guest_seen:?}"
+    );
+}
+
+/// A sender with the path and a receiver without it -- a JS peer, or a
+/// build without the feature -- never hears a `quic-hello` back, and goes on
+/// at Accept over WebRTC without waiting out quic::LINK_WAIT.
+#[cfg(feature = "quic")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_receiver_without_quic_costs_the_sender_no_wait() {
+    let url = format!("ws://{}", standin::start().await);
+    let (h, g, _) = pair_up(&url).await;
+    let hs = h.confirm(Role::Host, quic_options()).await;
+    let gs = g.confirm(Role::Guest, SessionOptions::default()).await;
+    let started = std::time::Instant::now();
+    let (host_seen, guest_seen) = transfer("quic-none", 50_000, hs, gs).await;
+    assert!(
+        started.elapsed() < qrdrop_session::quic::LINK_WAIT,
+        "took {:?}",
+        started.elapsed()
+    );
+    assert!(!host_seen.contains(&SessionEvent::Quic), "{host_seen:?}");
+    assert!(!guest_seen.contains(&SessionEvent::Quic), "{guest_seen:?}");
 }

@@ -93,6 +93,19 @@ pub enum Control {
         port: u64,
         token: String,
     },
+    /// The QUIC path's first word, the sender's after its SAS confirm and the
+    /// receiver's only in reply, ahead of its Accept -- `lan-hello`'s timing,
+    /// for its reason: it lets the sender know at Accept whether the peer has
+    /// the path at all, without a timeout. Rust peers only. A JS peer never
+    /// sends one, and ignores one as a type it does not know.
+    QuicHello,
+    /// Where this side's QUIC endpoint can be reached, and the SHA-256 of the
+    /// certificate it will present, as lowercase hex. Carried as sent; the
+    /// QUIC layer checks it (qrdrop-session's `quic::parse_offer`).
+    QuicOffer {
+        addrs: Vec<String>,
+        fp: String,
+    },
     /// A type this build does not know, or an advisory one it could not read.
     /// Ignored, and it still consumes its index: a newer peer's message must
     /// never be fatal, or no message could ever be added to the protocol.
@@ -123,7 +136,7 @@ impl Control {
     /// is a stranger's probe -- but it can still be a peer one version ahead,
     /// or a buggy one. So: a type this build does not know is
     /// [`Control::Unknown`]; an advisory message (`path`, `pause`, `resume`,
-    /// `lan-*`) it cannot read is `Unknown` too, because nothing waits on one;
+    /// `lan-*`, `quic-*`) it cannot read is `Unknown` too, because nothing waits on one;
     /// and a transfer message it cannot read is [`Malformed`], which is fatal,
     /// because the transfer cannot go on from a manifest it did not understand.
     pub fn parse(json: &[u8]) -> Result<Control, Malformed> {
@@ -134,7 +147,7 @@ impl Control {
         };
         let advisory = matches!(
             t.as_str(),
-            "path" | "pause" | "resume" | "lan-hello" | "lan-offer"
+            "path" | "pause" | "resume" | "lan-hello" | "lan-offer" | "quic-hello" | "quic-offer"
         );
         let known = advisory
             || matches!(
@@ -272,11 +285,35 @@ mod tests {
     #[test]
     fn an_unknown_type_is_ignored_not_fatal() {
         assert_eq!(
-            Control::parse(br#"{"t":"quic-offer","x":1}"#),
+            Control::parse(br#"{"t":"some-future-thing","x":1}"#),
             Ok(Control::Unknown)
         );
         assert_eq!(Control::parse(br#"{"no":"t"}"#), Ok(Control::Unknown));
         assert_eq!(Control::parse(b"5"), Ok(Control::Unknown));
+    }
+
+    #[test]
+    fn the_quic_messages_have_the_shape_peers_expect() {
+        assert_eq!(
+            String::from_utf8(Control::QuicHello.to_json()).unwrap(),
+            r#"{"t":"quic-hello"}"#
+        );
+        let offer = Control::QuicOffer {
+            addrs: vec!["192.0.2.1:4433".into()],
+            fp: "ab".into(),
+        };
+        assert_eq!(
+            String::from_utf8(offer.to_json()).unwrap(),
+            r#"{"t":"quic-offer","addrs":["192.0.2.1:4433"],"fp":"ab"}"#
+        );
+        assert_eq!(
+            Control::parse(br#"{"t":"quic-offer","addrs":["192.0.2.1:4433"],"fp":"ab"}"#),
+            Ok(offer)
+        );
+        assert_eq!(
+            Control::parse(br#"{"t":"quic-offer","addrs":"x"}"#),
+            Ok(Control::Unknown)
+        );
     }
 
     #[test]

@@ -21,10 +21,11 @@ use std::time::{Duration, Instant};
 
 use qrdrop_protocol::{CodeError, LanListen, NetworkPath, PEER_DISCONNECTED, Role, Secret};
 use qrdrop_session::io::{FileSink, FileSource};
+use qrdrop_session::networks::STUN_SERVERS;
 use qrdrop_session::path::{RELAYED_MAX_BYTES, combine};
 use qrdrop_session::{
-    LanConfig, Network, OpenConfig, OpenError, Paired, SessionEvent, SessionEvents, SessionHandle,
-    SessionOptions, Source, Strategy, lan, open_room,
+    LanConfig, Network, OpenConfig, OpenError, Paired, QuicConfig, SessionEvent, SessionEvents,
+    SessionHandle, SessionOptions, Source, Strategy, lan, open_room,
 };
 use tokio::sync::mpsc;
 
@@ -174,9 +175,12 @@ fn networks(
     Ok(Some(picked))
 }
 
-/// The session's LAN options: `--no-lan` is none at all, and
-/// `QRDROP_LAN_LISTEN` overrides what this machine says about listening, for
-/// testing two CLIs on one machine -- as `nodeLanPlatform` reads it.
+/// The session's direct paths: `--no-lan` is none at all -- the file stays
+/// on WebRTC, which is what its help says -- and `QRDROP_LAN_LISTEN`
+/// overrides what this machine says about listening, for testing two CLIs on
+/// one machine, as `nodeLanPlatform` reads it. `QRDROP_QUIC=0` leaves the
+/// QUIC path out, so the interop suite can pin a route between two Rust
+/// CLIs; the Node CLI has no QUIC and reads neither.
 fn session_options(use_lan: bool) -> SessionOptions {
     if !use_lan {
         return SessionOptions::default();
@@ -187,8 +191,13 @@ fn session_options(use_lan: bool) -> SessionOptions {
         Ok("none") => LanListen::None,
         _ => lan::default_listen(),
     };
+    let quic = (std::env::var("QRDROP_QUIC").as_deref() != Ok("0")).then(|| QuicConfig {
+        bind: None,
+        stun: STUN_SERVERS.iter().map(|s| s.to_string()).collect(),
+    });
     SessionOptions {
         lan: Some(LanConfig { listen }),
+        quic,
     }
 }
 
@@ -386,6 +395,7 @@ async fn send_on(
                 announced = true;
             }
             Some(SessionEvent::Lan) => println!("Using a direct connection on the local network."),
+            Some(SessionEvent::Quic) => println!("Using a direct QUIC connection."),
             Some(SessionEvent::SendProgress { sent, total }) => progress.report(sent, total),
             Some(SessionEvent::Sent { digest }) => {
                 println!("{} digest={digest}", style.ok("Sent."));

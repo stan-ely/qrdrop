@@ -39,6 +39,26 @@ the receiver accepts and before the first chunk; `createReceiver` takes an optio
 negotiation is `createLanLink` in `src/transport/lan.js`, and its `onCarrying` tells a
 receiver when the first frame arrives over the direct connection.
 
+**Three to ten times faster across the internet between two command lines.** When both
+ends run the native command line, the file now moves over a direct QUIC connection
+instead of WebRTC, wherever the two can reach each other directly (one network, or two
+home routers a connection can be punched through, as WebRTC does), and the sender prints
+`Using a direct QUIC connection.` Measured on an emulated link, 64 MB went at 51 MB/s
+against 13 at 50 ms, and at 32 against 8.5 at 100 ms; with 0.1% loss behind a
+100 Mbit/s bottleneck it was 9 against 0.9 at 50 ms. As with the local-network path, the
+connection is offered only after the four symbols are confirmed, each end accepts only
+the certificate the other named over the encrypted session, and the file is encrypted
+inside it exactly as before. When the connection cannot be made the sender waits three
+seconds at most and carries on over WebRTC; a browser, the JavaScript command line or the
+app on the other end never answers the offer, and costs no wait at all. `QRDROP_QUIC=0`
+turns it off, and so does `--no-lan`.
+
+**WebRTC between two native ends is faster too.** The native command line now asks for
+4 MB socket buffers, without which its bursts overran the operating system's default and
+the connection spent its time recovering from loss: 25 MB/s against 8.4 on a fast link,
+and 8.5 against 1.2 at 100 ms. A browser on the other end was already the limit, and
+still is.
+
 **Dependencies.** `node-datachannel` moves from 0.33.0 to 0.33.4. It was pinned because
 0.33.0 was the last version to ship every platform's prebuilt binary, and 0.33.4 ships
 them all again, adding Windows on ARM. The Trystero packages go to 0.25.4, a patch with

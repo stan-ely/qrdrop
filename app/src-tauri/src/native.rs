@@ -217,9 +217,12 @@ impl Drop for NativeSink {
     }
 }
 
+/// No QUIC yet: the app is built without the feature until phase 9's gate
+/// is measured on the phone (docs/notes/rust-session.md).
 fn options() -> SessionOptions {
     SessionOptions {
         lan: Some(LanConfig::default()),
+        quic: None,
     }
 }
 
@@ -419,6 +422,8 @@ async fn drive(
                 Some(SessionEvent::SendProgress { sent, total }) => progress(sent, total),
                 Some(SessionEvent::SendAccepted) => {}
                 Some(SessionEvent::Lan) => emit(NativeEvent::Lan),
+                // Never, while options() leaves QUIC out.
+                Some(SessionEvent::Quic) => {}
                 Some(SessionEvent::Sent { digest }) => {
                     emit(NativeEvent::Sent { digest });
                     break;

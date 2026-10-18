@@ -40,6 +40,7 @@ use crate::io::{Sink, Source};
 use crate::lan;
 use crate::pair::{FRAME_ACTION, Paired};
 use crate::path;
+use crate::quic;
 
 /// How long an exit waits for the leave message to go out before giving up
 /// on it: bounded, so a room that hangs cannot stop Ctrl-C from exiting.
@@ -81,11 +82,14 @@ impl Default for LanConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionOptions {
     /// `None` is `--no-lan`: no hello is sent and none is answered, so the
     /// peer reads this side as one without the path.
     pub lan: Option<LanConfig>,
+    /// The QUIC path, between two Rust peers. `None`, or a build without the
+    /// `quic` feature, never says `quic-hello` and never answers one.
+    pub quic: Option<quic::QuicConfig>,
 }
 
 /// What the caller shows or acts on, in the order it happened.
@@ -125,6 +129,8 @@ pub enum SessionEvent {
     /// The sender's frames now cross the local network: on the sender when
     /// it switched, on the receiver at the first frame to arrive that way.
     Lan,
+    /// The same, for the direct QUIC connection.
+    Quic,
     /// The session is over. Reported once, and nothing follows it.
     Failed(String),
 }
@@ -290,7 +296,7 @@ async fn read_room(
 
 /// Everything that arrives for the loop from the network, in arrival order.
 #[cfg_attr(
-    not(any(feature = "lan-dial", feature = "lan-listen")),
+    not(all(any(feature = "lan-dial", feature = "lan-listen"), feature = "quic")),
     allow(dead_code)
 )]
 pub(crate) enum LinkIn {
@@ -300,13 +306,17 @@ pub(crate) enum LinkIn {
     Lan(Vec<u8>),
     /// The LAN socket closed, or a write to it failed.
     LanClosed,
+    /// A frame over the QUIC stream.
+    Quic(Vec<u8>),
+    /// The QUIC stream ended, or a write to it failed.
+    QuicClosed,
 }
 
 impl LinkIn {
     fn frame_len(&self) -> u64 {
         match self {
-            LinkIn::Frame(f) | LinkIn::Lan(f) => f.len() as u64,
-            LinkIn::Left | LinkIn::LanClosed => 0,
+            LinkIn::Frame(f) | LinkIn::Lan(f) | LinkIn::Quic(f) => f.len() as u64,
+            LinkIn::Left | LinkIn::LanClosed | LinkIn::QuicClosed => 0,
         }
     }
 }
@@ -412,7 +422,11 @@ enum Out {
     Frame(Vec<u8>),
     #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
     UseLan(lan::WsTx),
-    /// Answered once every frame queued ahead of it has been handed over.
+    #[cfg(feature = "quic")]
+    UseQuic(quinn::SendStream),
+    /// Answered once every frame queued ahead of it has been handed over --
+    /// and, on the QUIC stream, acknowledged, since a connection closed with
+    /// frames still in quinn's buffer drops them.
     Flushed(oneshot::Sender<()>),
 }
 
@@ -427,12 +441,14 @@ async fn write(
 ) {
     #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
     let mut over_lan: Option<lan::WsTx> = None;
-    // Set when the LAN link fails under the sender. Nothing after it goes
+    #[cfg(feature = "quic")]
+    let mut over_quic: Option<quinn::SendStream> = None;
+    // Set when the LAN or QUIC link fails under the sender. Nothing after it goes
     // anywhere: sent over WebRTC instead, it would arrive behind a gap of
     // frames lost with the socket, and the receiver would rightly call that
     // out of order.
     #[cfg_attr(
-        not(any(feature = "lan-dial", feature = "lan-listen")),
+        not(any(feature = "lan-dial", feature = "lan-listen", feature = "quic")),
         allow(unused_mut)
     )]
     let mut lost = false;
@@ -440,6 +456,17 @@ async fn write(
         match o {
             Out::Frame(f) => {
                 let n = f.len();
+                #[cfg(feature = "quic")]
+                if let Some(tx) = over_quic.as_mut() {
+                    if quic::write_frame(tx, &f).await.is_err() {
+                        over_quic = None;
+                        lost = true;
+                        let _ = link.send(LinkIn::QuicClosed);
+                    }
+                    queued.fetch_sub(n, Ordering::Relaxed);
+                    drained.notify_one();
+                    continue;
+                }
                 #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
                 if let Some(tx) = over_lan.as_mut() {
                     use futures_util::SinkExt;
@@ -472,7 +499,16 @@ async fn write(
             }
             #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
             Out::UseLan(tx) => over_lan = Some(tx),
+            #[cfg(feature = "quic")]
+            Out::UseQuic(tx) => over_quic = Some(tx),
             Out::Flushed(ack) => {
+                #[cfg(feature = "quic")]
+                if let Some(mut tx) = over_quic.take() {
+                    // The caller bounds the wait; a peer gone mid-stream
+                    // never acknowledges.
+                    let _ = tx.finish();
+                    let _ = tx.stopped().await;
+                }
                 let _ = ack.send(());
             }
         }
@@ -565,6 +601,37 @@ enum LanEvent {
     NoLink,
 }
 
+#[cfg_attr(not(feature = "quic"), allow(dead_code))]
+enum QuicEvent {
+    #[cfg(feature = "quic")]
+    Prepared(quic::Prepared),
+    #[cfg(feature = "quic")]
+    Out(quic::Outbound),
+    #[cfg(feature = "quic")]
+    In(quic::Inbound),
+    NoLink,
+}
+
+#[cfg_attr(not(feature = "quic"), allow(dead_code))]
+struct QuicState {
+    config: quic::QuicConfig,
+    /// The peer's `quic-hello`: it has the path.
+    theirs: bool,
+    offer_seen: bool,
+    state: LinkState,
+    #[cfg(feature = "quic")]
+    prepared: Option<quic::Prepared>,
+    peer: Option<quic::Offer>,
+    #[cfg(feature = "quic")]
+    send: Option<quinn::SendStream>,
+    /// Kept to close at the end, and so the endpoint outlives the stream.
+    #[cfg(feature = "quic")]
+    conns: Vec<(quinn::Endpoint, quinn::Connection)>,
+    carrying: bool,
+    events: mpsc::UnboundedSender<QuicEvent>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
 #[derive(PartialEq, Eq)]
 enum LinkState {
     Undecided,
@@ -595,6 +662,7 @@ struct Driver {
     drained: Arc<Notify>,
     ctl: Ctl,
     lan: Option<LanState>,
+    quic: Option<QuicState>,
     /// The file offered and not yet accepted.
     offered: Option<Box<dyn Source>>,
     source: Option<mpsc::Receiver<io::Result<Vec<u8>>>>,
@@ -609,8 +677,8 @@ struct Driver {
         allow(dead_code)
     )]
     link_tx: Inbox,
-    /// The sender waits here at Accept, for the link, until this.
-    lan_wait: Option<Instant>,
+    /// The sender waits here at Accept, for a link, until this.
+    link_wait: Option<Instant>,
     mine: Option<NetworkPath>,
     theirs: NetworkPath,
     path_tx: watch::Sender<Option<NetworkPath>>,
@@ -629,6 +697,7 @@ pub(crate) fn start(
     let (out_tx, out_rx) = mpsc::unbounded_channel();
     let (sink_tx, sink_rx) = mpsc::unbounded_channel();
     let (lan_tx, lan_rx) = mpsc::unbounded_channel();
+    let (quic_tx, quic_rx) = mpsc::unbounded_channel();
     let queued = Arc::new(AtomicUsize::new(0));
     let drained = Arc::new(Notify::new());
     tokio::spawn(write(
@@ -654,6 +723,25 @@ pub(crate) fn start(
         events: lan_tx,
         tasks: vec![],
     });
+    let quic = opts
+        .quic
+        .filter(|_| cfg!(feature = "quic"))
+        .map(|config| QuicState {
+            config,
+            theirs: false,
+            offer_seen: false,
+            state: LinkState::Undecided,
+            #[cfg(feature = "quic")]
+            prepared: None,
+            peer: None,
+            #[cfg(feature = "quic")]
+            send: None,
+            #[cfg(feature = "quic")]
+            conns: vec![],
+            carrying: false,
+            events: quic_tx,
+            tasks: vec![],
+        });
     let mut d = Driver {
         session,
         role,
@@ -663,6 +751,7 @@ pub(crate) fn start(
         drained,
         ctl: link.ctl,
         lan,
+        quic,
         offered: None,
         source: None,
         sink: None,
@@ -670,7 +759,7 @@ pub(crate) fn start(
         receiving: None,
         pending_location: None,
         link_tx: link.link_tx.clone(),
-        lan_wait: None,
+        link_wait: None,
         mine: None,
         theirs: NetworkPath::Unknown,
         path_tx,
@@ -679,7 +768,7 @@ pub(crate) fn start(
     let path_rx_loop = d.classify();
     tokio::spawn(async move {
         d.begin();
-        d.run(cmd_rx, link.link_rx, sink_rx, lan_rx, path_rx_loop)
+        d.run(cmd_rx, link.link_rx, sink_rx, lan_rx, quic_rx, path_rx_loop)
             .await;
     });
     (
@@ -727,6 +816,11 @@ impl Driver {
         {
             let _ = self.session.send_lan_hello(l.mine);
         }
+        // The same moment and the same reason, for the QUIC path (quic.rs).
+        if self.role == Role::Host && self.quic.is_some() {
+            let _ = self.session.send_quic_hello();
+            self.quic_prepare();
+        }
         self.pump();
     }
 
@@ -736,13 +830,14 @@ impl Driver {
         mut link: mpsc::UnboundedReceiver<LinkIn>,
         mut sink: mpsc::UnboundedReceiver<SinkReply>,
         mut lan_events: mpsc::UnboundedReceiver<LanEvent>,
+        mut quic_events: mpsc::UnboundedReceiver<QuicEvent>,
         mut path: oneshot::Receiver<NetworkPath>,
     ) {
         let mut path_done = false;
         loop {
             let wanting = self.source.is_some() && self.session.chunk_wanted().is_some();
             let room = self.queued.load(Ordering::Relaxed) < OUT_HIGH;
-            let timer = [self.session.poll_timeout(), self.lan_wait]
+            let timer = [self.session.poll_timeout(), self.link_wait]
                 .into_iter()
                 .flatten()
                 .min();
@@ -768,6 +863,7 @@ impl Driver {
                 Some(li) = link.recv() => self.on_link(li),
                 Some(r) = sink.recv() => self.on_sink(r),
                 Some(e) = lan_events.recv() => self.on_lan(e),
+                Some(e) = quic_events.recv() => self.on_quic(e),
                 p = &mut path, if !path_done => {
                     path_done = true;
                     self.on_path(p.unwrap_or(NetworkPath::Unknown));
@@ -779,9 +875,8 @@ impl Driver {
                 _ = sleep => {
                     let now = Instant::now();
                     self.session.handle_timeout(now);
-                    if self.lan_wait.is_some_and(|t| now >= t) {
-                        self.lan_wait = None;
-                        self.start_chunks();
+                    if self.link_wait.is_some_and(|t| now >= t) {
+                        self.proceed(true);
                     }
                 }
             }
@@ -840,6 +935,26 @@ impl Driver {
                     self.emit(SessionEvent::Lan);
                 }
                 self.session.handle_frame(&f, now);
+            }
+            LinkIn::Quic(f) => {
+                if let Some(q) = &mut self.quic
+                    && !q.carrying
+                {
+                    q.carrying = true;
+                    self.emit(SessionEvent::Quic);
+                }
+                self.session.handle_frame(&f, now);
+            }
+            LinkIn::QuicClosed => {
+                let carried = self.quic.as_ref().is_some_and(|q| q.carrying);
+                if let Some(q) = &mut self.quic {
+                    q.state = LinkState::None;
+                }
+                // Only a stream that was carrying the file loses anything by
+                // ending: frames went down it and WebRTC has not got them.
+                if carried && (self.session.busy() || self.source.is_some()) {
+                    self.session.abort(quic::QUIC_CLOSED);
+                }
             }
             LinkIn::Left => self.session.peer_left(),
             LinkIn::LanClosed => {
@@ -998,6 +1113,8 @@ impl Driver {
             }
             Event::PeerLanHello(theirs) => self.on_lan_hello(theirs),
             Event::PeerLanOffer { addrs, port, token } => self.on_lan_offer(&addrs, port, &token),
+            Event::PeerQuicHello => self.on_quic_hello(),
+            Event::PeerQuicOffer { addrs, fp } => self.on_quic_offer(&addrs, &fp),
             Event::Failed(e) => {
                 self.source = None;
                 self.offered = None;
@@ -1010,19 +1127,65 @@ impl Driver {
     /// THE ONE MOMENT TO MOVE"). No hello from the peer by now is a peer
     /// without the path, recognised without a timeout: a receiver queues its
     /// reply inside its handling of our hello, ahead of its Accept.
+    ///
+    /// With both paths on offer, QUIC wins: it crosses a LAN as well as
+    /// anything else does, and a NAT besides.
     fn at_accept(&mut self) {
-        let Some(l) = &self.lan else {
-            return self.start_chunks();
-        };
-        match (&l.theirs, &l.listener, &l.state) {
-            (Some(_), Some(_), LinkState::Up) => {
-                self.switch_to_lan();
-                self.start_chunks();
-            }
-            (Some(_), Some(_), LinkState::Pending | LinkState::Undecided) => {
-                self.lan_wait = Some(Instant::now() + lan::LINK_WAIT);
-            }
-            _ => self.start_chunks(),
+        let wait = [
+            self.lan_pending().then_some(lan::LINK_WAIT),
+            self.quic_pending().then_some(quic::LINK_WAIT),
+        ]
+        .into_iter()
+        .flatten()
+        .max();
+        match wait {
+            Some(w) if !self.quic_up() => self.link_wait = Some(Instant::now() + w),
+            _ => self.proceed(true),
+        }
+    }
+
+    /// The peer said hello on the LAN path, a listener was chosen, and the
+    /// link has not settled either way.
+    fn lan_pending(&self) -> bool {
+        self.lan.as_ref().is_some_and(|l| {
+            l.theirs.is_some()
+                && l.listener.is_some()
+                && matches!(l.state, LinkState::Pending | LinkState::Undecided)
+        })
+    }
+
+    fn quic_pending(&self) -> bool {
+        self.quic.as_ref().is_some_and(|q| {
+            q.theirs && matches!(q.state, LinkState::Pending | LinkState::Undecided)
+        })
+    }
+
+    fn quic_up(&self) -> bool {
+        self.quic.as_ref().is_some_and(|q| q.state == LinkState::Up)
+    }
+
+    /// A sender parked at Accept goes on, over the best link that is up --
+    /// unless one is still settling and `last` is false, when it waits on.
+    fn proceed(&mut self, last: bool) {
+        if self.quic_up() {
+            self.switch_to_quic();
+        } else if !last && (self.quic_pending() || self.lan_pending()) {
+            return;
+        } else if self.lan.as_ref().is_some_and(|l| l.state == LinkState::Up) {
+            self.switch_to_lan();
+        }
+        self.link_wait = None;
+        self.start_chunks();
+    }
+
+    fn switch_to_quic(&mut self) {
+        #[cfg(feature = "quic")]
+        if let Some(q) = &mut self.quic
+            && let Some(tx) = q.send.take()
+        {
+            q.carrying = true;
+            let _ = self.out.send(Out::UseQuic(tx));
+            self.emit(SessionEvent::Quic);
         }
     }
 
@@ -1189,13 +1352,134 @@ impl Driver {
         }
     }
 
-    /// A sender parked at Accept for the link goes on now, over it or not.
+    /// A link settled: a sender parked at Accept may go on now.
     fn link_settled(&mut self) {
-        if self.lan_wait.take().is_some() {
-            if self.lan.as_ref().is_some_and(|l| l.state == LinkState::Up) {
-                self.switch_to_lan();
+        if self.link_wait.is_some() {
+            self.proceed(false);
+        }
+    }
+
+    /// The peer has the QUIC path. A receiver answers at once, inside its
+    /// handling of the sender's hello and so ahead of its Accept (quic.rs).
+    fn on_quic_hello(&mut self) {
+        let role = self.role;
+        let Some(q) = &mut self.quic else { return };
+        // One per session; a second would bind a second endpoint.
+        if q.theirs {
+            return;
+        }
+        q.theirs = true;
+        if role == Role::Guest {
+            let _ = self.session.send_quic_hello();
+            self.quic_prepare();
+        }
+    }
+
+    #[cfg(feature = "quic")]
+    fn quic_prepare(&mut self) {
+        let Some(q) = &mut self.quic else { return };
+        q.state = LinkState::Pending;
+        let events = q.events.clone();
+        let config = q.config.clone();
+        q.tasks.push(tokio::spawn(async move {
+            let _ = events.send(match quic::prepare(&config).await {
+                Ok(p) => QuicEvent::Prepared(p),
+                Err(_) => QuicEvent::NoLink,
+            });
+        }));
+    }
+
+    #[cfg(not(feature = "quic"))]
+    fn quic_prepare(&mut self) {
+        // Unreachable: without the feature there is no QUIC state at all.
+    }
+
+    fn on_quic_offer(&mut self, addrs: &[String], fp: &str) {
+        let Some(q) = &mut self.quic else { return };
+        if q.offer_seen || !q.theirs {
+            return;
+        }
+        q.offer_seen = true;
+        let loopback = q.config.bind.is_some_and(|ip| ip.is_loopback());
+        match quic::parse_offer(addrs, fp, loopback) {
+            Some(o) => {
+                q.peer = Some(o);
+                self.quic_connect();
             }
-            self.start_chunks();
+            None => {
+                q.state = LinkState::None;
+                self.link_settled();
+            }
+        }
+    }
+
+    /// Both offers are in: the sender dials, the receiver serves.
+    fn quic_connect(&mut self) {
+        #[cfg(feature = "quic")]
+        {
+            let role = self.role;
+            let Some(q) = &mut self.quic else { return };
+            // Both or neither: the first to arrive waits for the second.
+            if q.prepared.is_none() || q.peer.is_none() {
+                return;
+            }
+            let (Some(p), Some(peer)) = (q.prepared.take(), q.peer.take()) else {
+                unreachable!("both checked above");
+            };
+            let events = q.events.clone();
+            q.tasks.push(tokio::spawn(async move {
+                let e = if role == Role::Host {
+                    quic::dial(p, peer).await.map(QuicEvent::Out)
+                } else {
+                    quic::serve(p, peer).await.map(QuicEvent::In)
+                };
+                let _ = events.send(e.unwrap_or(QuicEvent::NoLink));
+            }));
+        }
+    }
+
+    fn on_quic(&mut self, e: QuicEvent) {
+        #[cfg(feature = "quic")]
+        let link = self.link_tx.clone();
+        let Some(q) = &mut self.quic else { return };
+        match e {
+            #[cfg(feature = "quic")]
+            QuicEvent::Prepared(p) => {
+                let addrs = p.addrs.iter().map(|a| a.to_string()).collect();
+                let _ = self
+                    .session
+                    .send_quic_offer(addrs, quic::fingerprint_hex(&p.fp));
+                q.prepared = Some(p);
+                self.quic_connect();
+            }
+            #[cfg(feature = "quic")]
+            QuicEvent::Out(o) => {
+                q.send = Some(o.send);
+                q.conns.push((o.endpoint, o.conn));
+                q.state = LinkState::Up;
+                self.link_settled();
+            }
+            #[cfg(feature = "quic")]
+            QuicEvent::In(i) => {
+                let conn = i.conn.clone();
+                q.conns.push((i.endpoint, i.conn));
+                q.state = LinkState::Up;
+                q.tasks.push(tokio::spawn(async move {
+                    if let Ok(mut rx) = conn.accept_uni().await {
+                        while let Some(f) = quic::read_frame(&mut rx).await {
+                            link.wait_for_room(quic::READ_AHEAD).await;
+                            if link.send(LinkIn::Quic(f)).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    let _ = link.send(LinkIn::QuicClosed);
+                }));
+            }
+            QuicEvent::NoLink => {
+                q.state = LinkState::None;
+                self.link_settled();
+            }
         }
     }
 
@@ -1218,6 +1502,16 @@ impl Driver {
         if let Some(l) = self.lan.take() {
             for t in l.tasks {
                 t.abort();
+            }
+        }
+        if let Some(q) = self.quic.take() {
+            for t in q.tasks {
+                t.abort();
+            }
+            #[cfg(feature = "quic")]
+            for (endpoint, conn) in q.conns {
+                conn.close(quinn::VarInt::from_u32(0), b"");
+                drop(endpoint);
             }
         }
         match &mut self.ctl {

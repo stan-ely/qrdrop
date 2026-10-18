@@ -43,7 +43,7 @@ fn pair() -> (Side, Side, Inbox, Inbox) {
     let h = start(
         host.confirm(),
         Role::Host,
-        opts,
+        opts.clone(),
         link(&b_tx, a_tx.clone(), a_rx),
     );
     let g = start(

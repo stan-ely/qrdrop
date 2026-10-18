@@ -26,6 +26,14 @@ before relying on it. The mechanisms referred to here are described in
   presents a one-time token. Someone else on the Wi-Fi who finds the port
   learns that a transfer is happening between two addresses, which they could
   see from the traffic anyway, and cannot put a frame into it.
+- The QUIC path between two Rust peers (see [protocol.md](protocol.md), "The
+  QUIC path") carries the same sealed frames too, and its addresses and
+  certificate fingerprints are sealed in the same way, after the SAS. Its
+  public addresses travel only to the paired peer, never in the signalling,
+  which anyone holding the code can read. Each end completes a TLS handshake
+  only with the certificate the other one named. A stranger who finds the
+  receiver's UDP port in the seconds it waits can send it packets, and can
+  get no connection out of them.
 
 **Not protected**
 

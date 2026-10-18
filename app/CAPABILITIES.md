@@ -1907,3 +1907,75 @@ in either, because Cargo hashes a path dependency outside the workspace root
 by its absolute path into every symbol name. `app/src-tauri` is its own
 workspace and is planned to depend on `crates/*` by path, which is exactly
 that shape.
+
+### The QUIC path, against SCTP (2026-10-18)
+
+Phase 9 of `docs/notes/rust-session.md`: two Rust sessions, each running
+`crates/qrdrop-session/examples/bench.rs`, with the file from memory into
+nothing, timed by the receiver from its Accept to the verified digest. The
+WebRTC column is the same session with the QUIC path left off, so both
+columns carry the same pairing, AEAD and frames, and differ only in what is
+under them: str0m's SCTP, or one quinn 0.11 stream (Cubic, 16 MiB windows).
+Receiver-side MB/s (1e6 bytes), two or three runs each, digests equal. WSL,
+i5-10210U, one pinned core per side, for the reason "The Rust WebRTC stacks"
+gives about netem reordering across cores. `examples/netem.sh` is the harness.
+
+**Clean delay, 256 MiB (64 MiB at 50 and 100 ms).** The WebRTC figures are
+after `84cecc6` gave the room's socket 4 MB buffers; before it they were 8.4,
+5.4-7.5, 5.9-15.5 and 1.2.
+
+| RTT | WebRTC | QUIC |
+| --- | --- | --- |
+| ~0 | 25.2-26.5 | 101-108 |
+| 20 ms | 16.9-18.0 | 93 |
+| 50 ms | 12.2-13.2 | 51 |
+| 100 ms | 8.5 | 32 |
+
+**Loss, 16 MiB.** At 0.5% loss each way SCTP collapses and QUIC degrades;
+with a 100 Mbit/s bottleneck and 0.1% loss, closer to a home uplink, QUIC is
+four to ten times faster at every delay.
+
+| RTT | 0.5% loss, WebRTC | 0.5% loss, QUIC | 100mbit + 0.1%, WebRTC | 100mbit + 0.1%, QUIC |
+| --- | --- | --- | --- | --- |
+| 20 ms | 0.85-0.89 | 3.8-9.3 | 2.4-2.5 | 10.7 |
+| 50 ms | 0.32-0.37 | 6.4-11.3 | 0.9 | 9.1-9.2 |
+| 100 ms | 0.17-0.18 | 0.87-1.22 | 0.62-0.82 | 6.2-7.2 |
+
+**Behind two NATs, 64 MiB.** `examples/nat.sh`: each peer behind its own
+iptables MASQUERADE, the relay and a STUN responder in the namespace between
+them, half the RTT on each internet link. The punch succeeds from the
+reflexive candidates alone (neither side can reach the other's private
+address, which the script checks).
+
+| RTT | WebRTC | QUIC |
+| --- | --- | --- |
+| ~0 | 26.3-33.4 | 104.9-105.2 |
+| 50 ms | 14.0 | 49.4-50.1 |
+
+**Fallback.** With every QUIC long-header packet dropped on the internet
+(`BLOCKQUIC=1`), the handshake cannot finish; the sender waits out
+`quic::LINK_WAIT` at Accept and goes on over WebRTC, 16 MiB at 50 ms in
+4.5 s against 1.2 s with nothing to wait for. That 3 s is the designed cost
+of an offer nobody answers, paid once. A receiver without the path costs the
+sender nothing, because its silence is read at Accept rather than timed
+(`a_receiver_without_quic_costs_the_sender_no_wait`).
+
+**The first NAT run failed, and the harness was why.** WebRTC paired and
+then never connected: each NAT forwarded nine checks out to the other's
+mapped address and none in. Both sides punch at once, so a check reaches
+the far NAT before that NAT has a mapping, is delivered to the NAT
+namespace itself, and has its conntrack entry confirmed -- on exactly the
+tuple the peer behind it is about to send on, so MASQUERADE gives that peer
+a different source port and every later check misses. A real router drops
+unsolicited WAN input, which leaves the entry unconfirmed; with that one
+rule both paths connect on the first try. Recorded because the symptom
+reads exactly like a traversal bug in `tryst`.
+
+**Not measured: the phone.** The app is built without `quic`, and the gate
+for turning it on there is the RMX3868, as for phase 7's native session. A
+raw quinn spike on the same harness, one stream and no session, measured
+Cubic at 531, 92, 49 and 115 MB/s at 0, 20, 50 and 100 ms, and BBR at 416,
+252, 144 and 79. Neither wins throughout, and Cubic's 50 ms figure below
+its own 100 ms one says the spike is noisy at that size. Cubic stays, as
+quinn's default, until a real path says otherwise; at 20 ms the session's 93
+is the spike's Cubic figure, so there the controller is the bound.

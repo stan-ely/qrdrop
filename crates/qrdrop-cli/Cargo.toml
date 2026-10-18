@@ -20,11 +20,16 @@ path = "src/main.rs"
 # then `qrdrop web` says the UI is not in this build, as the Node CLI does
 # from a checkout that was never built, and `send` prints the code alone.
 [features]
-default = ["qr"]
+default = ["qr", "quic"]
 # site/dist, embedded by build.rs, for `qrdrop web`.
 web = []
 # The terminal QR code.
 qr = ["dep:qrcodegen"]
+# The direct QUIC path to another Rust peer (crates/qrdrop-session/src/quic.rs).
+# On by default since phase 9 measured it four to five times faster than
+# WebRTC at every round trip (app/CAPABILITIES.md, "The QUIC path, against
+# SCTP"). A JS peer never takes it and costs nothing for its being offered.
+quic = ["qrdrop-session/quic"]
 
 [dependencies]
 qrdrop-protocol = { path = "../qrdrop-protocol" }

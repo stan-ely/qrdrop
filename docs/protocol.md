@@ -246,6 +246,38 @@ the fast path off for the CLI.
 
 </details>
 
+<details>
+<summary><b>The QUIC path, when both ends run the Rust session</b></summary>
+
+When both ends run the Rust session (the Rust CLI today), the sender's frames
+can move onto a direct QUIC connection instead. Over a clean round trip it
+measured four to five times the WebRTC data channel, whose SCTP receive
+window caps it at about 1 MiB per round trip, and five to thirty-five times
+under packet loss. The numbers are in `app/CAPABILITIES.md`.
+It is the local-network path's design on another transport, and every rule
+above holds for it:
+
+- **Nothing is said before the SAS.** The addresses and the certificate
+  fingerprint travel in sealed control messages (`quic-hello`, then
+  `quic-offer`) after the confirm, never in the signalling. The signalling is
+  sealed only with the code's password, so anyone holding the code could read
+  it and race the real peer to the address.
+- **The connection is pinned.** Each end accepts exactly the certificate the
+  other one named, and checks the TLS signature against it. The frames on it
+  are the same sealed frames, as untrusted as on WebRTC.
+- **It crosses NATs without a relay**, through the common kind that maps a
+  socket to one public port whoever it sends to (measured behind two).
+  Both sides send first, which opens each NAT towards the other. A pair that
+  cannot connect stays on WebRTC, TURN included, after waiting at most three
+  seconds at Accept.
+- **The switch happens at Accept, and only there.** A browser or the Node CLI
+  ignores the sender's `quic-hello` as an unknown type and never answers, so
+  the sender knows at Accept that the path is not there and does not wait.
+
+`--no-lan` keeps the Rust CLI's file on WebRTC, which turns this path off too.
+
+</details>
+
 **The confidentiality path uses WebCrypto only** — P-256, HKDF, AES-GCM, no
 third-party code. Trystero sits below that boundary: it protects signalling, but
 a compromise there could not read a file byte.

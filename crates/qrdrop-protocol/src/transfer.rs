@@ -138,6 +138,11 @@ pub enum Event {
         port: u64,
         token: String,
     },
+    PeerQuicHello,
+    PeerQuicOffer {
+        addrs: Vec<String>,
+        fp: String,
+    },
 
     /// The session is over. Reported once; nothing after it is.
     Failed(Error),
@@ -495,6 +500,15 @@ impl Session {
         })
     }
 
+    /// The QUIC path's hello, at `lan-hello`'s moments.
+    pub fn send_quic_hello(&mut self) -> Result<(), UsageError> {
+        self.send_advisory(Control::QuicHello)
+    }
+
+    pub fn send_quic_offer(&mut self, addrs: Vec<String>, fp: String) -> Result<(), UsageError> {
+        self.send_advisory(Control::QuicOffer { addrs, fp })
+    }
+
     fn send_advisory(&mut self, msg: Control) -> Result<(), UsageError> {
         if self.halted {
             return Err(UsageError::Ended);
@@ -760,6 +774,10 @@ impl Session {
             Control::LanOffer { addrs, port, token } => {
                 self.events
                     .push_back(Event::PeerLanOffer { addrs, port, token });
+            }
+            Control::QuicHello => self.events.push_back(Event::PeerQuicHello),
+            Control::QuicOffer { addrs, fp } => {
+                self.events.push_back(Event::PeerQuicOffer { addrs, fp });
             }
             reply @ (Control::Accept { .. }
             | Control::Decline { .. }

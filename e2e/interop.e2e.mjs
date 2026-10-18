@@ -32,6 +32,13 @@
  * the direct connection. On Windows the first listen may raise a firewall
  * prompt for node.exe.
  *
+ * The Rust CLI also has a QUIC path to another Rust CLI, which neither of
+ * those modes takes: every CLI is started with QRDROP_QUIC=0. With --quic
+ * (the third run of test:e2e:interop:matrix; it implies --matrix) it is left on, and
+ * a pairing of two Rust CLIs must report the QUIC connection while every
+ * pairing with the Node CLI must still complete over WebRTC. That second
+ * half is the check that a JS peer ignores the Rust sender's quic-hello.
+ *
  * EITHER SIDE CAN BE THE RUST CLI. QRDROP_SEND_CLI and QRDROP_RECV_CLI pick
  * each side's launcher: `js` (the default, `node src/cli.js`), `rust` (the
  * crates/qrdrop-cli binary, from QRDROP_RUST_CLI or target/debug), or a path
@@ -57,7 +64,9 @@ const TIMEOUT = 120_000
 const PAYLOAD_BYTES = 300 * 1024
 
 const LAN = process.argv.includes('--lan')
-const MATRIX = process.argv.includes('--matrix')
+const QUIC = process.argv.includes('--quic')
+const MATRIX = process.argv.includes('--matrix') || QUIC
+if (LAN && QUIC) throw new Error('--lan and --quic each pin one route; pass one')
 
 const RUST_CLI = process.env.QRDROP_RUST_CLI
   ?? path.join(ROOT, 'target', 'debug', process.platform === 'win32' ? 'qrdrop.exe' : 'qrdrop')
@@ -98,7 +107,7 @@ function launch(cli, args, label, listen) {
     stdio: ['pipe', 'pipe', 'pipe'],
     // Force the non-TTY path: progress becomes plain lines instead of \r
     // redraws, which is what makes the output parseable here.
-    env: { ...process.env, NO_COLOR: '1', QRDROP_LAN_LISTEN: listen },
+    env: { ...process.env, NO_COLOR: '1', QRDROP_LAN_LISTEN: listen, QRDROP_QUIC: QUIC ? '1' : '0' },
   })
 
   let output = ''
@@ -213,8 +222,16 @@ async function run(send, recv) {
         ? 'the transfer stayed on WebRTC: the sender never reported the direct connection'
         : 'the transfer took the local-network path with both sides pinned to none')
     }
+    const wantQuic = QUIC && send.name !== 'js' && recv.name !== 'js'
+    const quic = /direct QUIC connection/.test(sender.output)
+    if (quic !== wantQuic) {
+      throw new Error(wantQuic
+        ? 'the transfer stayed on WebRTC: the sender never reported the QUIC connection'
+        : 'the transfer took the QUIC path where it should not exist')
+    }
 
-    console.log(`\nPASS  ${send.name} -> ${recv.name} (${LAN ? 'local network' : 'WebRTC'}) ${written[0]} (${landed.length} bytes) matched, digest ${senderDigest}`)
+    const route = LAN ? 'local network' : quic ? 'QUIC' : 'WebRTC'
+    console.log(`\nPASS  ${send.name} -> ${recv.name} (${route}) ${written[0]} (${landed.length} bytes) matched, digest ${senderDigest}`)
   } finally {
     sender.child.kill()
     receiver?.child.kill()

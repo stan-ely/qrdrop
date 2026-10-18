@@ -174,9 +174,9 @@ depends = ["build"]
 run = "cargo build -p qrdrop-cli --features web"
 
 [tasks."test:e2e:interop:matrix"]
-description = "Run the CLI interop e2e JS<->Rust in all four pairings, over WebRTC and then the local network"
+description = "Run the CLI interop e2e JS<->Rust in all four pairings, over WebRTC, the local network, then with QUIC on"
 depends = ["rust:cli"]
-run = ["node e2e/interop.e2e.mjs --matrix", "node e2e/interop.e2e.mjs --matrix --lan"]
+run = ["node e2e/interop.e2e.mjs --matrix", "node e2e/interop.e2e.mjs --matrix --lan", "node e2e/interop.e2e.mjs --quic"]
 
 [tasks."test:e2e:browser-cli"]
 description = "Run a Chromium tab against the Rust CLI, both ways, served by its qrdrop web"
