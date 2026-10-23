@@ -153,24 +153,6 @@ pub fn fingerprint_hex(fp: &[u8; FINGERPRINT_BYTES]) -> String {
     fp.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The host candidates: the default route's address first, as the LAN
-/// offer orders them, then every other interface's that is neither loopback
-/// nor link-local. Private and public alike -- a host with a public address
-/// needs no punch at all.
-#[cfg_attr(not(feature = "quic"), allow(dead_code))]
-pub(crate) fn host_candidates(
-    primary: Option<Ipv4Addr>,
-    all: impl Iterator<Item = Ipv4Addr>,
-) -> Vec<Ipv4Addr> {
-    let mut out: Vec<Ipv4Addr> = vec![];
-    for ip in primary.into_iter().chain(all) {
-        if !ip.is_loopback() && !ip.is_link_local() && !ip.is_unspecified() && !out.contains(&ip) {
-            out.push(ip);
-        }
-    }
-    out
-}
-
 #[cfg(feature = "quic")]
 pub(crate) use endpoint::*;
 
@@ -215,7 +197,7 @@ mod endpoint {
         let port = socket.local_addr()?.port();
         let mut addrs: Vec<SocketAddr> = match cfg.bind {
             Some(ip) if !ip.is_unspecified() => vec![SocketAddr::new(ip, port)],
-            _ => host_candidates(primary_v4(), interfaces_v4())
+            _ => tryst::join::local_ipv4s()
                 .into_iter()
                 .map(|ip| SocketAddr::new(IpAddr::V4(ip), port))
                 .collect(),
@@ -235,29 +217,6 @@ mod endpoint {
             key: cert.private_key,
             fp,
         })
-    }
-
-    fn primary_v4() -> Option<Ipv4Addr> {
-        std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .and_then(|s| {
-                s.connect((Ipv4Addr::new(192, 0, 2, 1), 9))
-                    .and_then(|_| s.local_addr())
-            })
-            .ok()
-            .and_then(|a| match a.ip() {
-                IpAddr::V4(ip) => Some(ip),
-                IpAddr::V6(_) => None,
-            })
-    }
-
-    fn interfaces_v4() -> impl Iterator<Item = Ipv4Addr> {
-        if_addrs::get_if_addrs()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|i| match i.ip() {
-                IpAddr::V4(ip) => Some(ip),
-                IpAddr::V6(_) => None,
-            })
     }
 
     /// The sender's end: its connection, and the one stream the frames go
@@ -618,25 +577,6 @@ mod tests {
         assert_eq!(
             parse_offer(&addrs, FP, false).unwrap().addrs.len(),
             MAX_ADDRS
-        );
-    }
-
-    #[test]
-    fn host_candidates_put_the_default_route_first_and_skip_what_is_not_a_host() {
-        let all = [
-            Ipv4Addr::new(127, 0, 0, 1),
-            Ipv4Addr::new(169, 254, 3, 4),
-            Ipv4Addr::new(10, 0, 0, 5),
-            Ipv4Addr::new(198, 51, 100, 9),
-            Ipv4Addr::new(192, 168, 1, 20),
-        ];
-        assert_eq!(
-            host_candidates(Some(Ipv4Addr::new(192, 168, 1, 20)), all.into_iter()),
-            vec![
-                Ipv4Addr::new(192, 168, 1, 20),
-                Ipv4Addr::new(10, 0, 0, 5),
-                Ipv4Addr::new(198, 51, 100, 9)
-            ]
         );
     }
 }

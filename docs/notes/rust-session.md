@@ -33,8 +33,9 @@ person or a device:
 - **Phase 7's remainder:** decide whether the native session becomes Android's default, which the
   same-network numbers above support. Then a Linux run of the app, and an Android pick with a
   display name.
-- **Known, not fixed:** `tryst` offers one host candidate, on the default route's interface, so it
-  cannot pair across a second interface such as a Windows hotspot (see the third device session).
+- **A hotspot pairing to try on the phone:** `tryst` now binds a socket and offers a host candidate
+  on every interface. That was the fix for the Windows Mobile Hotspot failure in the third device
+  session, but this machine has one interface and the fix has not yet paired across two.
 
 **Decisions made so far:**
 - **Scope.** Rust runs the whole session for the Tauri apps and the CLI. The website keeps the JS
@@ -1369,8 +1370,12 @@ receiving and 576 sending; two runs of each, so a first look and not a result).*
   192.168.137.x) neither session paired. tryst binds one socket to the default route's address
   (192.168.1.x) and offers only that, and Windows will not route between the two from a socket
   bound to the other interface. Binding the room to the hotspot address (a local patch, not kept)
-  paired at once. A host candidate per interface, as quic.rs gathers them, is the fix if this
-  matters; it has not been made.
+  paired at once. The fix came later (2026-10-23): a room binds one more socket on each other
+  interface and offers each as a host candidate. Each check leaves from the socket str0m names as
+  its source. STUN and TURN stay on the default route's socket. One socket on the wildcard address
+  was the alternative, but str0m must be told which local address a datagram arrived at, and that
+  needs `IP_PKTINFO`, which tokio does not expose. quic.rs's interface list moved into tryst
+  (`join::local_ipv4s`), so both paths offer the same addresses. Not yet run over a hotspot.
 
 **The fourth device session (2026-10-18, same 5 GHz link; quinn's counters and the writer's
 waits logged once a second from the phone by a temporary patch, not kept).**

@@ -75,8 +75,10 @@ pub struct JoinConfig {
     /// peer never learns this side's own addresses, and nothing connects
     /// without a TURN allocation.
     pub relay_only: bool,
-    /// The address to bind the UDP socket to. `None` picks the interface
-    /// the default route leaves through.
+    /// The address to bind the UDP socket to, and the only host candidate
+    /// offered. `None` binds the interface the default route leaves through
+    /// and one more socket on each other interface, so a peer on any network
+    /// this machine is on can reach it directly.
     pub bind: Option<IpAddr>,
     /// Ours, 20 characters from `0-9A-Za-z`; generated when `None`.
     pub self_id: Option<String>,
@@ -328,6 +330,66 @@ fn default_ip() -> IpAddr {
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
 }
 
+/// The most sockets a room binds beside the default route's, one per other
+/// interface. A machine with more is a host of virtual adapters, and every
+/// candidate is checked against every one of the peer's.
+const MAX_EXTRA_SOCKETS: usize = 7;
+
+/// The IPv4 addresses worth a host candidate: `primary` first, then every
+/// other one in `all` that is neither loopback, link-local nor unspecified.
+/// Private and public alike -- a host with a public address needs no punch.
+pub fn host_ips(primary: Option<Ipv4Addr>, all: impl Iterator<Item = Ipv4Addr>) -> Vec<Ipv4Addr> {
+    let mut out: Vec<Ipv4Addr> = vec![];
+    for ip in primary.into_iter().chain(all) {
+        if !ip.is_loopback() && !ip.is_link_local() && !ip.is_unspecified() && !out.contains(&ip) {
+            out.push(ip);
+        }
+    }
+    out
+}
+
+/// [`host_ips`] for this machine: the default route's address, then every
+/// other interface's.
+pub fn local_ipv4s() -> Vec<Ipv4Addr> {
+    let primary = match default_ip() {
+        IpAddr::V4(ip) => Some(ip),
+        IpAddr::V6(_) => None,
+    };
+    let all = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|i| match i.ip() {
+            IpAddr::V4(ip) => Some(ip),
+            IpAddr::V6(_) => None,
+        });
+    host_ips(primary, all)
+}
+
+/// A socket on each interface but `primary`'s. A socket bound to one
+/// interface's address offers only that address, and Windows will not send
+/// from it to a network on another: measured over a Windows Mobile Hotspot,
+/// where a phone on 192.168.137.x never paired with a room bound to the
+/// default route's 192.168.1.x and paired at once with one bound to the
+/// hotspot's. Binding the wildcard instead would take one socket, but
+/// str0m must be told which local address each datagram arrived at, and a
+/// wildcard socket cannot say without `IP_PKTINFO`, which tokio does not
+/// expose. One that will not bind is left out.
+async fn bind_extra(primary: IpAddr) -> Vec<(Arc<UdpSocket>, SocketAddr)> {
+    let mut out = vec![];
+    for ip in local_ipv4s() {
+        if IpAddr::V4(ip) == primary || out.len() == MAX_EXTRA_SOCKETS {
+            continue;
+        }
+        if let Ok(s) = UdpSocket::bind(SocketAddr::new(IpAddr::V4(ip), 0)).await
+            && let Ok(local) = s.local_addr()
+        {
+            size_buffers(&s);
+            out.push((Arc::new(s), local));
+        }
+    }
+    out
+}
+
 /// One address for `host:port`, of the socket's own family.
 async fn resolve(socket: &UdpSocket, host: &str) -> Option<SocketAddr> {
     let v4 = socket.local_addr().is_ok_and(|l| l.is_ipv4());
@@ -504,10 +566,20 @@ pub async fn join(cfg: JoinConfig) -> Result<RoomHandle, JoinError> {
         .map_err(JoinError::Socket)?;
     size_buffers(&socket);
     let local = socket.local_addr().map_err(JoinError::Socket)?;
+    // A bound address is a choice of interface, and a relay-only room offers
+    // no host address at all.
+    let extra = if cfg.bind.is_some() || cfg.relay_only {
+        vec![]
+    } else {
+        bind_extra(ip).await
+    };
     let mut rtc_cfg = if cfg.relay_only {
         RtcConfig { candidates: vec![] }
     } else {
-        RtcConfig::host(&[local])
+        let hosts: Vec<SocketAddr> = std::iter::once(local)
+            .chain(extra.iter().map(|(_, a)| *a))
+            .collect();
+        RtcConfig::host(&hosts)
     };
     let (mapped, mut turns) = gather(&socket, &cfg.stun, &cfg.turn, cfg.relay_only).await;
     for addr in mapped {
@@ -559,6 +631,7 @@ pub async fn join(cfg: JoinConfig) -> Result<RoomHandle, JoinError> {
         rtc: WebRtc::new(rtc_cfg, now),
         socket: Arc::new(socket),
         local,
+        extra,
         turns,
         strategy: cfg.strategy,
         #[cfg(feature = "nostr")]
@@ -642,6 +715,9 @@ struct State {
     rtc: WebRtc,
     socket: Arc<UdpSocket>,
     local: SocketAddr,
+    /// One socket per other interface, offered as host candidates only.
+    /// STUN and TURN stay on `socket`.
+    extra: Vec<(Arc<UdpSocket>, SocketAddr)>,
     /// One per TURN server, allocated or still allocating.
     turns: Vec<TurnClient>,
     strategy: Strategy,
@@ -675,6 +751,26 @@ async fn run(
 ) {
     let socket = st.socket.clone();
     let mut buf = vec![0u8; 2048];
+    // The other interfaces' sockets, each read by a task of its own, since
+    // `select!` takes a fixed set of branches. Dropping the set at the end
+    // of this function aborts them.
+    let (extra_tx, mut extra_rx) = mpsc::unbounded_channel::<(usize, SocketAddr, Vec<u8>)>();
+    let mut readers = tokio::task::JoinSet::new();
+    for (i, (s, _)) in st.extra.iter().enumerate() {
+        let (s, tx) = (s.clone(), extra_tx.clone());
+        readers.spawn(async move {
+            let mut buf = vec![0u8; 2048];
+            loop {
+                // As below: an error is a dead candidate pair, not a dead socket.
+                if let Ok((n, from)) = s.recv_from(&mut buf).await
+                    && tx.send((i, from, buf[..n].to_vec())).is_err()
+                {
+                    return;
+                }
+            }
+        });
+    }
+    drop(extra_tx);
     loop {
         let now = Instant::now();
         st.pump(now);
@@ -691,6 +787,10 @@ async fn run(
                 if let Ok((n, from)) = r {
                     st.on_datagram(from, &buf[..n], Instant::now());
                 }
+            }
+            Some((i, from, data)) = extra_rx.recv() => {
+                let local = st.extra[i].1;
+                st.rtc.handle_datagram(Instant::now(), from, local, &data);
             }
             Some(ev) = relays.recv() => st.on_relay(ev, Instant::now()),
             c = cmds.recv() => match c {
@@ -1209,9 +1309,16 @@ impl State {
                     }
                     continue;
                 }
-                // UDP: a datagram the socket cannot take now is a lost one,
-                // which SCTP and ICE already expect.
-                let _ = self.socket.try_send_to(&d.contents, d.destination);
+                // From the socket the source names, so a check towards a
+                // hotspot's client leaves by the hotspot. UDP: a datagram the
+                // socket cannot take now is a lost one, which SCTP and ICE
+                // already expect.
+                let socket = self
+                    .extra
+                    .iter()
+                    .find(|(_, a)| *a == d.source)
+                    .map_or(&self.socket, |(s, _)| s);
+                let _ = socket.try_send_to(&d.contents, d.destination);
             }
             busy |= self.flush_turn();
             // Joined, for the caller, once one relay has carried an announce.
@@ -1270,5 +1377,29 @@ impl State {
                 w.fail(SendError::Gone);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_ips_put_the_default_route_first_and_skip_what_is_not_a_host() {
+        let all = [
+            Ipv4Addr::new(127, 0, 0, 1),
+            Ipv4Addr::new(169, 254, 3, 4),
+            Ipv4Addr::new(10, 0, 0, 5),
+            Ipv4Addr::new(198, 51, 100, 9),
+            Ipv4Addr::new(192, 168, 1, 20),
+        ];
+        assert_eq!(
+            host_ips(Some(Ipv4Addr::new(192, 168, 1, 20)), all.into_iter()),
+            vec![
+                Ipv4Addr::new(192, 168, 1, 20),
+                Ipv4Addr::new(10, 0, 0, 5),
+                Ipv4Addr::new(198, 51, 100, 9)
+            ]
+        );
     }
 }

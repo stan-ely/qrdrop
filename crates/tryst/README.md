@@ -91,8 +91,12 @@ transfers to and from browsers.
   vectors describe 0.25.4.
 - **Nostr and WebTorrent only.** Trystero's MQTT, IPFS, Firebase and Supabase
   strategies are not implemented.
-- **One UDP socket, of one family.** IPv4 unless `bind` names an IPv6
-  address, which is untested. No TURN over TCP or TLS.
+- **IPv4 sockets, one per interface.** A room binds the default route's
+  interface and one more socket on each other one, so a peer on a second
+  network (a hotspot's clients, say) gets a host candidate it can reach.
+  STUN and TURN use the first socket only. IPv6 only when `bind` names an
+  IPv6 address, which then is the one socket, and that is untested. No TURN
+  over TCP or TLS.
 - **Data channels only.** No media.
 - **aws-lc comes along.** str0m's `rust-crypto` backend, which this crate
   uses, enables aws-lc-rs only to generate a DTLS certificate that `tryst`

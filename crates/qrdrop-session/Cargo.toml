@@ -20,9 +20,9 @@ lan-dial = ["dep:tokio-tungstenite", "tokio-tungstenite/connect"]
 # Listening for one: a WebSocket server and the interface list for the offer.
 lan-listen = ["dep:tokio-tungstenite", "tokio-tungstenite/handshake", "dep:if-addrs"]
 # The direct QUIC path between two Rust peers (src/quic.rs): quinn on rustls
-# with ring, the provider the relays already use, and the interface list for
-# the host candidates.
-quic = ["dep:quinn", "dep:rustls", "dep:sha2", "dep:if-addrs"]
+# with ring, the provider the relays already use. The host candidates come
+# from tryst (`join::local_ipv4s`), which the room shares.
+quic = ["dep:quinn", "dep:rustls", "dep:sha2"]
 # std files as the Source and Sink; Android brings its own sink.
 fs = []
 

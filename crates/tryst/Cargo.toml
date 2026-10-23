@@ -40,7 +40,7 @@ nostr = ["relay", "dep:k256"]
 torrent = ["relay"]
 # The relay connection both signalling clients share: WebSocket over rustls
 # on ring, which phase 1 measured byte-reproducible for aarch64 Android.
-relay = ["dep:socket2", "dep:tokio", "dep:tokio-tungstenite", "dep:rustls", "dep:webpki-roots", "dep:futures-util"]
+relay = ["dep:socket2", "dep:if-addrs", "dep:tokio", "dep:tokio-tungstenite", "dep:rustls", "dep:webpki-roots", "dep:futures-util"]
 # sha2/oid: the certificate builder names its signature algorithm by OID.
 # With `turn`: a peer that can reach no one directly has nothing else to
 # fall back on, and the client costs two small RustCrypto crates.
@@ -72,6 +72,9 @@ x509-cert = { version = "0.2.5", features = ["builder"], optional = true }
 # The room socket's buffers, which tokio's UdpSocket cannot set. Already in
 # the tree under tokio, and pure Rust over libc and windows-sys.
 socket2 = { version = "0.6.5", optional = true }
+# The room binds a socket on each interface, for a host candidate per network
+# (join.rs, `bind_extra`). Already in the tree under qrdrop-session.
+if-addrs = { version = "0.15.0", optional = true }
 # nostr and torrent: the relay clients and the runtime that joins a room.
 tokio = { version = "1.53.3", features = ["rt", "net", "time", "sync", "macros"], optional = true }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
