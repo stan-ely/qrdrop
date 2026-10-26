@@ -17,9 +17,11 @@
  * `dispatch(intent, payload)` is the only way a rendered element talks back.
  * The intents are: 'send:pick', 'receive:scan', 'manual:submit' (payload:
  * the raw text typed or pasted), 'verify:confirm', 'offer:accept',
- * 'offer:decline', 'cancel', 'restart', 'copy' (payload: 'code' | 'digest'),
+ * 'offer:decline', 'cancel', 'restart', 'copy' (payload: 'code' | 'digest' | 'text'),
  * 'beam:pick', 'beam:scan', 'beam:fps' (payload: the chosen number),
- * 'save:change-folder' (the app's done screen, after a receive). The
+ * 'save:change-folder' (the app's done screen, after a receive),
+ * 'text:compose' (opens the compose sheet), 'text:send' (payload: what is in
+ * its box) and 'text:save' (the done screen, after receiving text). The
  * beam intents are the no-network path's equivalents of 'send:pick' /
  * 'receive:scan' -- a separate pair rather than overloading the originals,
  * because element.js needs to know at the moment of the click which of two
@@ -58,6 +60,7 @@ import { pathDescription, meteredWarning, LAN_PATH } from '../core/messages.js'
 // tokens -- duplicating the array here would drift the day someone tunes the
 // range in beam.js and forgets this copy.
 import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
+import { TEXT_NAME } from './text.js'
 
 /**
  * The shape element.js's `_state` always is -- mirrors its `_initialState()`
@@ -108,7 +111,7 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   must never select a different tree shape: see the dropzone in choose().
  *   Layout differences belong in styles.js's own `pointer: coarse` block,
  *   where CSS can make them without this file knowing.
- * @property {'code' | 'digest' | 'code-failed' | 'digest-failed' | null} copied
+ * @property {'code' | 'digest' | 'text' | 'code-failed' | 'digest-failed' | 'text-failed' | null} copied
  * @property {boolean} pairing
  * @property {boolean} busy true between the receiver's Accept click and the
  *   save destination coming back -- see element.js's onOfferAccept handlers
@@ -118,7 +121,7 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   by element.js. For things that HAPPENED rather than things that are true:
  *   a state a screen can go on describing belongs in `status`, which is always
  *   on screen, not in something that disappears.
- * @property {'beam-confirm' | 'beam-offer' | 'error' | 'info' | null} modal which sheet is open, if any.
+ * @property {'beam-confirm' | 'beam-offer' | 'text-compose' | 'error' | 'info' | null} modal which sheet is open, if any.
  *   The sheet is the only box on a non-scrolling page allowed to scroll
  *   inside itself, so it is where long copy and anything unplanned goes.
  * @property {Element | null} beamNode the adopted <canvas> the player owns
@@ -134,6 +137,17 @@ import { FPS_CHOICES, DEFAULT_FPS } from './beam.js'
  *   and repeating it back would be noise.
  * @property {boolean} canChangeFolder whether the done screen offers "Change
  *   folder": set after a receive on a platform with a folder to change.
+ * @property {boolean} canSendText whether the choose screen offers "Send text":
+ *   wherever this page has WebRTC of its own (see element.js).
+ * @property {boolean} isText whether this session's file is text (web/text.js),
+ *   set from the file on the sending end and from the manifest on the
+ *   receiving one. It changes copy only: the screens are the same screens.
+ * @property {string | null} text the received text, set on done and only after
+ *   the digest checked out. Peer-supplied, and rendered as a text node.
+ * @property {string} draft what the compose sheet's box starts with -- a
+ *   paste on the choose screen fills it. Not kept in step with typing.
+ * @property {string | null} draftError the compose sheet's complaint about
+ *   what is in the box, said against the box.
  */
 
 /** @typedef {(intent: string, payload?: any) => void} Dispatch */
@@ -221,7 +235,7 @@ function pathBadge(state) {
  * click, and pastes whatever was on the clipboard already.
  *
  * @param {State} state
- * @param {'code' | 'digest'} target
+ * @param {'code' | 'digest' | 'text'} target
  */
 function copyLabel(state, target) {
   if (state.copied === target) return 'Copied'
@@ -422,6 +436,54 @@ export function dialogContent(state, dispatch) {
           class: 'btn ghost', type: 'button', disabled: state.busy,
           onclick: () => dispatch('offer:decline'),
         }, 'Decline'),
+      ]),
+    ]
+  }
+
+  // Typing a message to send. Nothing pairs until Send, and Send is an
+  // ordinary send of a File from then on -- see web/text.js -- so the SAS
+  // still comes before anything about the text leaves.
+  //
+  // The heading takes autofocus like every sheet's, and not the box, although
+  // the box is where a person is about to type: a paste lands here with the
+  // text already in it, and focusing the box would put the caret where one
+  // more Ctrl-V doubles it. One tap to start typing is the cheaper mistake.
+  //
+  // The submit button sits outside the <form>, in the sheet's action row with
+  // every other sheet's buttons, and joins it by the `form` attribute. The box
+  // is read off the form at submit rather than kept in state per keystroke,
+  // as the manual-code field is: `draft` only seeds it.
+  if (state.modal === 'text-compose') {
+    return [
+      h('h2', { class: 'sheet-title', tabindex: '-1', autofocus: true }, 'Send text'),
+      h('div', { class: 'sheet-body' }, [
+        h('form', {
+          id: 'text-form', class: 'manual',
+          onsubmit: /** @param {SubmitEvent} ev */ ev => {
+            ev.preventDefault()
+            const input = /** @type {HTMLTextAreaElement} */ (
+              /** @type {HTMLFormElement} */ (ev.currentTarget).elements.namedItem('text-input')
+            )
+            dispatch('text:send', input.value)
+          },
+        }, [
+          h('label', { class: 'manual-label', for: 'text-input' }, 'Message'),
+          h('textarea', {
+            id: 'text-input', name: 'text-input', class: 'text-input', rows: '6',
+            value: state.draft,
+            'aria-invalid': state.draftError ? 'true' : undefined,
+            'aria-describedby': state.draftError ? 'text-error' : undefined,
+          }),
+        ]),
+        state.draftError ? h('p', { id: 'text-error', class: 'callout danger', role: 'alert' }, state.draftError) : null,
+        h('p', { class: 'note' },
+          'You will both check the same four symbols before it is sent, as with a file.'),
+      ]),
+      h('div', { class: 'sheet-actions' }, [
+        h('button', { id: 'btn-text-send', class: 'btn primary', type: 'submit', form: 'text-form' }, 'Send'),
+        h('button', {
+          class: 'btn ghost', type: 'button', onclick: () => dispatch('modal:close'),
+        }, 'Cancel'),
       ]),
     ]
   }
@@ -819,6 +881,21 @@ function choose(state, dispatch) {
           'Take a photo')
         : null,
       /*
+       * The third way to start a send, so it sits with the other two. A ghost
+       * like "Take a photo" because text is the lesser use of a file-transfer
+       * app, and the sheet it opens is where the decision is made -- this only
+       * opens a box to type in, it pairs with nothing.
+       *
+       * Absent rather than disabled where it cannot work (canSendText), which
+       * is a fact about the platform and never changes mid-session, so it
+       * cannot shift the tree under anything adopted -- and the choose screen
+       * holds nothing adopted in any case.
+       */
+      state.canSendText
+        ? h('button', { id: 'btn-text', class: 'btn ghost', onclick: () => dispatch('text:compose') },
+          'Send text')
+        : null,
+      /*
        * Gone exactly when the media slot became the scanner, which took this
        * button's id with it (dropzone()). The bar is then send and only send
        * -- "Send a file", "Take a photo" -- and the box above is receive,
@@ -1034,6 +1111,21 @@ function receive(state, dispatch) {
 }
 
 /**
+ * The line naming what is being sent, on verify and transfer. Typed text has
+ * a filename only because it travels as a file (web/text.js), and
+ * "message.txt" is a name nobody gave it -- so it is called what it is. A
+ * .txt file someone picked keeps the name they picked, though both ends treat
+ * it as text: the name is the one thing about it the person recognises.
+ *
+ * @param {State} state
+ * @param {{ name: string, size: number }} item
+ */
+function subject(state, item) {
+  const name = state.isText && item.name === TEXT_NAME ? 'A message' : item.name
+  return `${name} (${bytes(item.size)})`
+}
+
+/**
  * @param {State} state
  * @param {Dispatch} dispatch
  */
@@ -1079,7 +1171,7 @@ function verify(state, dispatch) {
       // it -- "holiday-video.mov is 900 MB" and "this connection crosses the
       // internet" are one thought, and at the column gap they were two.
       h('div', { class: 'stack' }, [
-        state.offer ? h('p', { class: 'filename' }, `${state.offer.name} (${bytes(state.offer.size)})`) : null,
+        state.offer ? h('p', { class: 'filename' }, subject(state, state.offer)) : null,
         pathBadge(state),
       ]),
     ],
@@ -1108,7 +1200,9 @@ function verifyStatus(state, dispatch) {
   if (state.role === 'sender') {
     return [
       h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('verify:confirm') },
-        `They match — send ${state.file?.name ?? 'the file'}`),
+        state.isText && state.file?.name === TEXT_NAME
+          ? 'They match — send the message'
+          : `They match — send ${state.file?.name ?? 'the file'}`),
 
       // The other half of the question this screen asks. Without it the
       // screen offers one answer and a neutral Cancel, so a user looking at
@@ -1132,7 +1226,7 @@ function verifyStatus(state, dispatch) {
     return [
       h('div', { class: 'bar indeterminate', role: 'progressbar', 'aria-label': 'Waiting for an offer' },
         [h('div', { class: 'bar-fill' })]),
-      h('p', { class: 'status' }, 'Waiting for the sender to offer a file…'),
+      h('p', { class: 'status' }, 'Waiting for the sender…'),
     ]
   }
 
@@ -1204,7 +1298,7 @@ function transfer(state, dispatch) {
     body: [
     h('h2', { tabindex: '-1' }, state.role === 'receiver' ? 'Receiving' : 'Sending'),
     h('div', { class: 'stack' }, [
-      state.file ? h('p', { class: 'filename' }, `${state.file.name} (${bytes(state.file.size)})`) : null,
+      state.file ? h('p', { class: 'filename' }, subject(state, state.file)) : null,
       pathBadge(state),
     ]),
     h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
@@ -1242,6 +1336,10 @@ function outcomeMessage(state) {
   // needs real numbers in it (the relay-cap decline, which names the file,
   // its size, and the limit -- see core/messages.js's relayCapDeclineMessage).
   if (state.message) return state.message
+  if (state.isText && state.outcome === 'sent') return 'Your message was delivered.'
+  // Said because it is the difference from a file: a person who has received
+  // files before expects it in Downloads, and it is not there.
+  if (state.isText && state.outcome === 'received') return 'Nothing was saved to this device.'
   switch (state.outcome) {
     case 'sent': return 'Your file was delivered.'
     case 'received': return 'The file was saved to your device.'
@@ -1270,7 +1368,7 @@ function restartLabel(state) {
   // re-offering the same code hands an attacker a second roll at it.
   if (state.outcome === 'mismatch') return 'Start over with a fresh code'
   if (state.role === 'receiver') return 'Receive another file'
-  if (state.role === 'sender') return 'Send another file'
+  if (state.role === 'sender') return state.isText ? 'Send something else' : 'Send another file'
   return 'Start over'
 }
 
@@ -1279,19 +1377,50 @@ function restartLabel(state) {
  * @param {Dispatch} dispatch
  */
 function done(state, dispatch) {
-  const info = (state.outcome && OUTCOME_INFO[state.outcome]) || OUTCOME_INFO.failed
+  const base = (state.outcome && OUTCOME_INFO[state.outcome]) || OUTCOME_INFO.failed
+  // Only the two successes change their heading. A declined or failed message
+  // is still said as the file it travelled as, which is no less true, and
+  // those headings are about what happened rather than to what.
+  const info = state.isText && (state.outcome === 'sent' || state.outcome === 'received')
+    ? { ...base, title: state.outcome === 'sent' ? 'Message sent' : 'Message received' }
+    : base
+  // The text itself, when this device received some. Peer-supplied and
+  // arbitrary, and rendered the one way this file renders anything: as a text
+  // node through h(), so it can contain any markup at all and do nothing.
+  const text = state.outcome === 'received' ? state.text : null
 
   return {
     // The outcome banner is this screen's visual block, so it takes the left
     // column on a wide, short window the way the QR and the camera do.
-    media: h('div', { class: `outcome ${info.variant}` }, [
-      h('span', { class: 'glyph', 'aria-hidden': 'true' }, info.glyph),
-      h('p', {}, outcomeMessage(state)),
-    ]),
+    //
+    // Received text takes the banner's place, because then the text IS the
+    // screen's subject. In the copy column it was the first thing that column
+    // gave up: on an 800x360 phone it came out as one clipped line beside a
+    // banner spending the whole left half on one sentence. The media slot is
+    // the box that takes the card's slack and yields first down to a floor
+    // (styles.js's .card-media), which is exactly what a message of unknown
+    // length wants. The banner's sentence moves into the copy as a note.
+    //
+    // Focusable so it can be scrolled from the keyboard -- a scrolling region
+    // a keyboard cannot reach is text a keyboard user cannot finish reading.
+    media: text !== null
+      ? h('pre', { id: 'done-text', class: 'message-text', tabindex: '0', 'aria-label': 'Message' }, text)
+      : h('div', { class: `outcome ${info.variant}` }, [
+        h('span', { class: 'glyph', 'aria-hidden': 'true' }, info.glyph),
+        h('p', {}, outcomeMessage(state)),
+      ]),
     body: [
     h('h2', { tabindex: '-1' }, info.title),
+    text !== null ? h('p', { class: 'note' }, outcomeMessage(state)) : null,
     h('div', { class: 'stack' }, [
-      state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '')
+      // Small and in the copy rather than a third button in the bar, which
+      // wrapped the bar onto a second row on a landscape phone. Saving is the
+      // occasional use; the bar keeps Copy, the reason someone sent text, and
+      // the way out.
+      text !== null
+        ? h('button', { class: 'btn small', type: 'button', onclick: () => dispatch('text:save') }, 'Save as file')
+        : null,
+      state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '') && !(state.isText && state.file.name === TEXT_NAME)
         ? h('p', { class: 'filename' }, state.file.name)
         : null,
       // The app saves without asking, so this is the only place the person
@@ -1319,7 +1448,13 @@ function done(state, dispatch) {
     ]) : null,
     ],
     actions: [
-      h('button', { class: 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
+      // Copying is why someone sent text, so it is the primary action and the
+      // restart steps down beside it. Save as file is above, with the text.
+      text !== null
+        ? h('button', { id: 'btn-copy-text', class: 'btn primary', type: 'button', onclick: () => dispatch('copy', 'text') },
+          copyLabel(state, 'text'))
+        : null,
+      h('button', { class: text !== null ? 'btn ghost' : 'btn primary', type: 'button', onclick: () => dispatch('restart') }, restartLabel(state)),
       // Here and nowhere else: after a receive, with the location just above
       // it, is when someone can tell whether that was the right place. Never on
       // the offer screen -- Accept and Decline are the decision there, and a

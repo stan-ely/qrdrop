@@ -330,3 +330,19 @@ still being decrypted loses the race to the leave behind it. A paired room's
 `close()` returns a promise that settles once the peer has been told and never
 rejects; a process about to exit should await it.
 
+### Text is a file
+
+Sending text adds nothing to the wire. The web UI wraps what was typed as a `File`
+called `message.txt`, of type `text/plain;charset=utf-8`, and sends it like any other
+file. The SAS is confirmed before its manifest goes out, and the receiver answers it
+with Accept. A receiving web UI treats any offer that is `text/plain` and 64 KiB or
+smaller as text (`src/web/text.js`). It hands `createReceiver` a sink that keeps the
+bytes in memory instead of opening a save dialog. Once the digest has checked out, it
+shows them as a text node with Copy and Save as file. A peer that has never heard of
+this (either CLI, the app's native session, an older page) sees a small text file and
+saves it, so neither side has to know what the other runs.
+
+The type and the size are the sender's claims, like everything in a manifest. Showing
+the text is safe whatever it says, because the view has no `innerHTML` path. The size
+bound is also enforced in the sink, not trusted from the manifest.
+

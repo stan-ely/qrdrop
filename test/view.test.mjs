@@ -43,6 +43,7 @@ import { render, dialogContent } from '../src/web/view.js'
  */
 const PAIRING_INTENTS = new Set([
   'send:pick', 'send:photo', 'receive:scan', 'manual:submit', 'beam:pick', 'beam:start', 'beam:scan',
+  'text:send',
 ])
 
 const SAS_WORDS = ['anchor', 'butter', 'cactus', 'dolphin']
@@ -57,6 +58,7 @@ function state(overrides) {
     dragging: false, copied: null, pairing: false, busy: false, manualError: null,
     mode: 'p2p', beamNode: null, beam: null, dialogNode: null, modal: null, toast: null,
     beamEnlarged: false, saveLocation: null, canChangeFolder: false,
+    canSendText: true, isText: false, text: null, draft: '', draftError: null,
     ...overrides,
   })
 }
@@ -259,4 +261,74 @@ test('the app says where a received file went, and only a receive offers to chan
   const failed = state({ ...received, outcome: 'failed', saveLocation: 'Download/qrdrop/x', canChangeFolder: true })
   assert.doesNotMatch(textOf(screenTree(failed, 'done')), /Saved to/)
   assert.ok(!intentsOn(failed, 'done').has('save:change-folder'))
+})
+
+/**
+ * Sending text is a file send by another name (src/web/text.js), so the same
+ * two gestures guard it -- and the text that arrives is the most
+ * peer-controlled string the view has ever drawn.
+ */
+
+test('the compose sheet starts nothing until Send, and Send is the only pairing on it', () => {
+  /** @type {string[]} */
+  const intents = []
+  const sheet = dialogContent(state({ modal: 'text-compose', draft: 'hello' }),
+    (/** @type {string} */ intent) => void intents.push(intent))
+  for (const node of walk(sheet)) node.props?.onclick?.()
+  assert.deepEqual(intents.filter(i => PAIRING_INTENTS.has(i)), [],
+    'no click on the compose sheet may pair: Send is a submit, read off the form')
+
+  const box = [...walk(sheet)].find(n => n.tag === 'textarea')
+  assert.equal(box?.props.value, 'hello', 'a paste seeds the box')
+  const send = [...walk(sheet)].find(n => n.props?.id === 'btn-text-send')
+  assert.equal(send?.props.type, 'submit')
+  assert.equal(send?.props.form, 'text-form', 'Send must submit the form that holds the box')
+  const heading = [...walk(sheet)].find(n => n.tag === 'h2')
+  assert.equal(heading?.props.autofocus, true, 'the heading takes focus, never a control')
+})
+
+test('the choose screen offers Send text only where the page can send it', () => {
+  assert.ok(intentsOn(state({}), 'choose').has('text:compose'))
+  assert.ok(!intentsOn(state({ canSendText: false }), 'choose').has('text:compose'))
+})
+
+test('verify names a message as a message, and keeps the file name for a picked .txt', () => {
+  const offer = { name: 'message.txt', size: 12 }
+  const receiver = state({ screen: 'verify', role: 'receiver', offer, isText: true })
+  assert.match(textOf(screenTree(receiver, 'verify')), /A message \(12 B\)/)
+
+  const picked = state({ screen: 'verify', role: 'receiver', offer: { name: 'notes.txt', size: 12 }, isText: true })
+  assert.match(textOf(screenTree(picked, 'verify')), /notes\.txt/)
+
+  const sender = state({ screen: 'verify', role: 'sender', file: offer, isText: true })
+  assert.match(textOf(screenTree(sender, 'verify')), /send the message/)
+})
+
+test('received text is shown as text, with Copy first and nothing that pairs', () => {
+  const hostile = '<img src=x onerror=alert(1)>\nsecond line'
+  const s = state({
+    screen: 'done', role: 'receiver', outcome: 'received', isText: true,
+    file: { name: 'message.txt', size: hostile.length }, digest: 'ab', text: hostile,
+  })
+  const tree = screenTree(s, 'done')
+  const pre = [...walk(tree)].find(n => n.props?.id === 'done-text')
+  assert.deepEqual(pre?.children, [hostile], 'the text must be one text child, never markup')
+  assert.match(textOf(tree), /Message received/)
+  assert.doesNotMatch(textOf(tree), /message\.txt/, 'nobody named it message.txt')
+
+  const intents = intentsOn(s, 'done')
+  assert.ok(intents.has('copy') && intents.has('text:save'))
+  for (const intent of intents) assert.ok(!PAIRING_INTENTS.has(intent), `'${intent}' on done would pair`)
+
+  const primaries = [...walk(tree)].filter(n => n.tag === 'button' && n.props?.class?.includes('primary'))
+  assert.deepEqual(primaries.map(n => n.props.id), ['btn-copy-text'], 'Copy is the one primary')
+})
+
+test('a failed text receive shows no text, and a sent one shows none either', () => {
+  const failed = state({ screen: 'done', role: 'receiver', outcome: 'failed', isText: true, text: 'leftover' })
+  assert.ok(![...walk(screenTree(failed, 'done'))].some(n => n.props?.id === 'done-text'))
+  const sent = state({ screen: 'done', role: 'sender', outcome: 'sent', isText: true, file: { name: 'message.txt', size: 5 } })
+  const text = textOf(screenTree(sent, 'done'))
+  assert.match(text, /Message sent/)
+  assert.ok(![...walk(screenTree(sent, 'done'))].some(n => n.props?.id === 'done-text'))
 })

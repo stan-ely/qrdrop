@@ -13,6 +13,11 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**Send text, not just files.** "Send text" on the first screen opens a box to type or
+paste into. The receiving device shows the text with **Copy** and **Save as file**
+rather than saving it. Not yet on Linux, where the app's transfers run on its native
+session, which sends files from disk.
+
 **Received files are saved straight away, with no save dialog.** Accept now saves the
 file, and the done screen says where it went. On a computer that is a `qrdrop` folder
 in Downloads. On Android 10 and later it is `Download/qrdrop`. Android 7 to 9 asks you

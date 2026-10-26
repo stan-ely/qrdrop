@@ -282,6 +282,54 @@ async function main() {
     }
     log('both sides agree on digest:', digestA.slice(0, 16) + '...')
 
+    // --- a second pairing, sending text --------------------------------------
+    // Text is an ordinary file send (src/web/text.js), so this mostly re-walks
+    // the path above. What it adds is the end: the receiver shows the text
+    // rather than downloading it, byte for byte, as text and never as markup.
+    // The emoji is built here rather than typed, so a multi-byte character
+    // crosses the wire whatever this file's encoding does to a literal.
+    const message = `Wi-Fi password: <b>not bold</b> ${String.fromCodePoint(0x1F44B)}\nsecond line`
+
+    await a.click('#screen-done button.primary')
+    await b.click('#screen-done button.primary')
+    await a.waitForSelector('#screen-choose:not([hidden])')
+    await b.waitForSelector('#screen-choose:not([hidden])')
+
+    await a.click('#btn-text')
+    await a.fill('#text-input', message)
+    await a.click('#btn-text-send')
+    await a.waitForSelector('#screen-send:not([hidden])', { timeout: TIMEOUT })
+    const textCode = await text(a, '#manual-code')
+    if (textCode === code) throw new Error('A second send reused the first code')
+
+    await b.click('#btn-receive')
+    await b.waitForSelector('#screen-receive:not([hidden])')
+    await b.fill('#manual-input', textCode)
+    await b.click('#manual-form button[type=submit]')
+    log('text: receiver joined, pairing again...')
+
+    await a.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
+    await b.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
+    if (await text(a, '#sas') !== await text(b, '#sas')) throw new Error('SAS mismatch on the text pairing')
+    await a.click('#verify-status button.primary')
+
+    await b.waitForSelector('#verify-status button.primary', { timeout: TIMEOUT })
+    let downloaded = false
+    b.on('download', () => { downloaded = true })
+    await b.click('#verify-status button.primary')
+    log('text: receiver accepted')
+
+    await b.waitForSelector('#done-text', { timeout: TIMEOUT })
+    await a.waitForSelector('#screen-done:not([hidden])', { timeout: TIMEOUT })
+    // textContent, not text(): the helper trims, and the message's exact
+    // bytes are the claim.
+    const shown = await b.textContent('#done-text')
+    if (shown !== message) throw new Error(`Text arrived as ${JSON.stringify(shown)}, sent ${JSON.stringify(message)}`)
+    if (await b.locator('#done-text b').count() !== 0) throw new Error('Received text was rendered as markup')
+    if (downloaded) throw new Error('Received text was downloaded rather than shown')
+    if (await text(a, '#done-digest') !== await text(b, '#done-digest')) throw new Error('Digest mismatch on the text send')
+    log('text arrived intact and was shown, not saved')
+
     if (errors.length) throw new Error('Console errors:\n' + errors.join('\n'))
 
     if (relayFailures.length) {

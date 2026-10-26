@@ -44,6 +44,23 @@ const NOTES = { name: 'quarterly-notes.md', size: 184_320 }
 
 const DIGEST = 'b1946ac92492d2347c6235b4d2611184'
 
+// Long on purpose: the received text's box caps its height and scrolls inside
+// itself, and a message shorter than that cap would never test it. The link
+// is one unbroken word, which is what tests the wrapping.
+const MESSAGE = [
+  'Wi-Fi for the flat: the network is upstairs-5g and the password is below.',
+  '',
+  'correct-horse-battery-staple-7731',
+  '',
+  'The router is in the hall cupboard if it needs a restart. Booking details:',
+  'https://example.com/bookings/2026/10/flat-14b?ref=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8',
+  '',
+  'Check-in is from three, check-out by eleven. Bins go out on Thursday night.',
+  'Spare key is with the neighbour at number 12, ask for Sam.',
+  'Heating is on a timer; the override button is on the left of the boiler.',
+  'Have a good stay!',
+].join('\n')
+
 /**
  * `cameraAvailable` is forced true on every scanner screen rather than left to
  * the browser. Headless Chromium reports no camera, so the real value renders
@@ -79,6 +96,13 @@ export const FIXTURES = [
     name: 'beam-confirm-sheet',
     screen: 'choose',
     state: { screen: 'choose', modal: 'beam-confirm', file: NOTES },
+  },
+  {
+    // The compose sheet, filled by a paste: the box, the note under it and
+    // Send have to fit together, and Send is the one that must stay reachable.
+    name: 'text-compose-sheet',
+    screen: 'choose',
+    state: { screen: 'choose', modal: 'text-compose', draft: MESSAGE },
   },
   {
     name: 'send',
@@ -192,6 +216,17 @@ export const FIXTURES = [
     state: {
       screen: 'done', role: 'receiver', outcome: 'received',
       file: PDF, path: 'local', digest: DIGEST,
+    },
+  },
+  {
+    // Received text: the message box, which scrolls inside itself, and three
+    // buttons -- Copy, Save as file and the restart -- in the action bar.
+    name: 'done-text',
+    screen: 'done',
+    state: {
+      screen: 'done', role: 'receiver', outcome: 'received', isText: true,
+      file: { name: 'message.txt', size: MESSAGE.length }, path: 'local', digest: DIGEST,
+      text: MESSAGE,
     },
   },
   {
@@ -433,5 +468,12 @@ export function installState({ state, link }) {
   if (state.screen === 'beam-send') {
     next.beamNode = canvasNode('qrb1:7f3a:' + 'Kx2i57Ws5miuBTLfG1rmjN7ysgGQueCZnVwaHOHqoOYK'.repeat(13))
   }
-  el._setState(next)
+  // Over a fresh initial state, not over whatever the last fixture left. The
+  // fixtures are deltas, and merged onto each other they inherit fields they
+  // never named: the received-text fixture's message went on showing on every
+  // done screen after it, and the failures read as layout bugs in those
+  // screens. _initialState re-reads the pointer and the platform, which is
+  // what the browser context says they are, so nothing a fixture relies on is
+  // lost.
+  el._setState({ ...el._initialState(), ...next })
 }

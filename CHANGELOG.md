@@ -5,6 +5,14 @@ is the finer-grained record.
 
 ## Unreleased
 
+**Send text, not just files.** "Send text" on the first screen opens a box to type or
+paste into, and pasting text anywhere on that screen opens the same box with it filled
+in. The pasted text isn't sent until you press Send. You both check the same four symbols as for a
+file, and the other device accepts it the same way. Instead of saving it, the
+receiving page then shows the text with **Copy** and **Save as file**. A message can be
+up to 64 KB. Nothing about the protocol changed: the text travels as a small
+`message.txt`, so the command line and older versions receive it as that file.
+
 **The command line is now a single native binary.** `npx qrdrop`, `npm i -g qrdrop`,
 `brew install stan-ely/tap/qrdrop` and `scoop install stan-ely/qrdrop` all install the
 same commands, flags and output as before, now built in Rust. It is one self-contained

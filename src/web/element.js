@@ -50,6 +50,7 @@ import { getPlatform } from './platform.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
 import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
+import { isText, textFile, textBytes, tooLongMessage, createTextSink, TEXT_MAX_BYTES } from './text.js'
 import { patch } from './vdom.js'
 import { render, dialogContent, NO_CAMERA_SCAN, NO_SAVE_FOLDER } from './view.js'
 import { copyText } from './copy.js'
@@ -570,6 +571,16 @@ export class QRDropElement extends HTMLElement {
       beamEnlarged: false,
       saveLocation: /** @type {string | null} */ (null),
       canChangeFolder: false,
+      // Sending text needs this page's own WebRTC, because the text is a File
+      // the page built and a native session sends only what has a path. So it
+      // is offered where RTCPeerConnection exists, and nowhere else -- which
+      // leaves out exactly Linux's webview, where the native session is the
+      // only road.
+      canSendText: typeof RTCPeerConnection !== 'undefined',
+      isText: false,
+      text: /** @type {string | null} */ (null),
+      draft: '',
+      draftError: /** @type {string | null} */ (null),
     }
   }
 
@@ -651,7 +662,17 @@ export class QRDropElement extends HTMLElement {
       if (target instanceof HTMLElement
         && (target.isContentEditable || target.closest('input, textarea'))) return
       const file = [...(ev.clipboardData?.files ?? [])][0]
-      if (file) this._startSend(file).catch(e => this._fail(e))
+      if (file) return void this._startSend(file).catch(e => this._fail(e))
+      // Pasted text opens the compose sheet with it filled in, and does not
+      // send. A file on the clipboard was put there on purpose; text is on
+      // everyone's clipboard all the time, and a stray Ctrl-V that started a
+      // pairing would be the app acting on something nobody asked it to. A
+      // modal already open is left alone -- the beam sheet, or this one,
+      // whose own textarea is excluded above anyway.
+      const text = ev.clipboardData?.getData('text/plain') ?? ''
+      if (text.trim() === '' || !this._state.canSendText || this._state.modal) return
+      ev.preventDefault()
+      this._setState({ modal: 'text-compose', draft: text, draftError: null })
     }
     document.addEventListener('paste', this._onPaste)
 
@@ -932,6 +953,11 @@ export class QRDropElement extends HTMLElement {
       // parameter rather than a second function.
       case 'send:photo': return this._pickFile(undefined, { accept: 'image/*', capture: 'environment' })
       case 'receive:scan': return void this._beginScan().catch(e => this._fail(e))
+      // Opens the compose sheet and nothing else; 'text:send' on that sheet is
+      // what starts a pairing, exactly as 'beam:start' is for beam.
+      case 'text:compose': return this._setState({ modal: 'text-compose', draftError: null })
+      case 'text:send': return this._sendText(payload)
+      case 'text:save': return void this._saveText().catch(e => this._fail(e))
       // Picking a file does not start the beam; it opens the confirm sheet
       // that carries BEAM_WARNING, and 'beam:start' on that sheet is what
       // starts it. See _confirmBeam.
@@ -1412,6 +1438,7 @@ export class QRDropElement extends HTMLElement {
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
       mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
       path: null, lan: false, pathDebug: null, saveLocation: null, canChangeFolder: false,
+      isText: false, text: null, draftError: null,
       // Last key wins over the `error: null` _setState injects for any
       // update carrying a screen change, which is what lets this one reset
       // set an error while every other one still clears the stale one. The
@@ -1424,10 +1451,12 @@ export class QRDropElement extends HTMLElement {
   }
 
   /**
-   * @param {'code' | 'digest'} target
+   * @param {'code' | 'digest' | 'text'} target
    */
   async _copy(target) {
-    const text = target === 'code' ? this._state.code : this._state.digest
+    const text = target === 'code' ? this._state.code
+      : target === 'text' ? this._state.text
+        : this._state.digest
     if (!text) return
     const ok = await copyText(text)
     clearTimeout(this._copyTimer)
@@ -1439,6 +1468,52 @@ export class QRDropElement extends HTMLElement {
     // Transient confirmation, not a permanent state -- it reverts on its own
     // rather than waiting for the next unrelated re-render to clear it.
     this._copyTimer = setTimeout(() => this._setState({ copied: null }), 1500)
+  }
+
+  /**
+   * The compose sheet's Send. Checked here and refused against the field,
+   * like a rejected code, because the text is still in the box to be fixed:
+   * an over-long message is a complaint about what was typed, not a failure.
+   *
+   * From here it is an ordinary send of an ordinary File -- see text.js for
+   * why there is no other road -- so the SAS comes before any manifest.
+   *
+   * @param {string} raw
+   */
+  _sendText(raw) {
+    if (this._state.screen !== 'choose') return
+    const text = String(raw ?? '')
+    if (text.trim() === '') return this._setState({ draft: text, draftError: 'There is nothing to send yet.' })
+    const size = textBytes(text)
+    if (size > TEXT_MAX_BYTES) return this._setState({ draft: text, draftError: tooLongMessage(size) })
+    this._setState({ modal: null, draft: '', draftError: null })
+    this._startSend(textFile(text)).catch(e => this._fail(e))
+  }
+
+  /**
+   * Save a received message as a file, through the same platform sink a file
+   * would have used: a picker on the web, the app's own folder on a phone.
+   * Nothing is awaited ahead of createSink, because this click is the user
+   * activation showSaveFilePicker spends -- the rule the Accept handler
+   * keeps, for the same reason.
+   */
+  async _saveText() {
+    const text = this._state.text
+    if (text === null) return
+    const data = new TextEncoder().encode(text)
+    const sink = await getPlatform().createSink({
+      t: 'manifest', seq: 0, name: this._state.file?.name ?? 'message.txt', size: data.length,
+      mime: 'text/plain;charset=utf-8', chunks: 1,
+    })
+    if (!sink) return
+    try {
+      await sink.write(data)
+      await sink.close()
+    } catch (error) {
+      await sink.abort()
+      throw error
+    }
+    this._toast(sink.location ? `Saved to ${sink.location}` : 'Saved.')
   }
 
   /** @param {string} raw */
@@ -1468,6 +1543,7 @@ export class QRDropElement extends HTMLElement {
    * @param {(p: ReceiveProgress) => void} [args.onProgress]
    * @param {(file: { name: string, size: number, digest: string }) => void} [args.onFileDone]
    * @param {Parameters<typeof createReceiver>[0]['onPeerLan']} [args.onPeerLan]
+   * @param {Parameters<typeof createReceiver>[0]['createSink']} [args.createSink]
    */
   _attachReceiver({
     room,
@@ -1481,6 +1557,7 @@ export class QRDropElement extends HTMLElement {
     // peer waiting on a reply that is never coming.
     onOffer = () => { throw new Error('Peer offered a file while we were sending one') },
     onPeerLan,
+    createSink = getPlatform().createSink,
   }) {
     const control = createControlStream()
     let controlOut = 0
@@ -1504,7 +1581,7 @@ export class QRDropElement extends HTMLElement {
       onError: e => this._failTransfer(e),
       onPeerPath: path => this._mergePeerPath(path),
       onPeerLan,
-      createSink: getPlatform().createSink,
+      createSink,
     })
 
     // handleFrame serialises internally, so a burst of frames cannot race.
@@ -1606,6 +1683,7 @@ export class QRDropElement extends HTMLElement {
     this._setState({
       screen: 'send', role: 'sender', code, qrNode: renderQR(qrText), qrIsLink: Boolean(this._baseURL),
       status: 'Starting…', pairing: true, file: { name: file.name, size: file.size },
+      isText: isText(file),
     })
 
     const room = await this._establish({ secret, role: 'host' })
@@ -1739,12 +1817,21 @@ export class QRDropElement extends HTMLElement {
     // the location is read from it then, not copied when the transfer starts.
     /** @type {Sink | null} */
     let accepted = null
+    // Set instead of a platform sink when the offer is text (text.js), and
+    // read back only in onFileDone, once the digest has checked out.
+    /** @type {ReturnType<typeof createTextSink> | null} */
+    let textSink = null
 
     // Handlers go on before anything is drawn, so a manifest arriving the
     // instant the sender is ready has somewhere to land.
     const { receiver, nextControlIndex } = this._attachReceiver({
       room,
       onPeerLan: msg => lan?.handle(msg),
+      createSink: manifest => {
+        if (!isText(manifest)) return getPlatform().createSink(manifest)
+        textSink = createTextSink(manifest)
+        return Promise.resolve(textSink)
+      },
 
       onOffer: ({ manifest, accept, decline }) => {
         // onOffer itself is synchronous (see receiver.js); the relay check is
@@ -1804,14 +1891,16 @@ export class QRDropElement extends HTMLElement {
               screen: 'transfer',
               busy: false,
               file: { name: manifest.name, size: manifest.size },
-              status: sink.streaming ? '' : 'This browser buffers the file in memory before saving it.',
+              // Text is held in memory by design and is never more than
+              // TEXT_MAX_BYTES, so the warning about buffering is not news.
+              status: sink.streaming || textSink ? '' : 'This browser buffers the file in memory before saving it.',
               progress: { moved: 0, total: manifest.size },
             })
           }
 
           await this._publishPath(room, manifest.size)
 
-          this._setState({ offer: { name: manifest.name, size: manifest.size } })
+          this._setState({ offer: { name: manifest.name, size: manifest.size }, isText: isText(manifest) })
         })().catch(e => this._fail(e))
       },
 
@@ -1823,7 +1912,11 @@ export class QRDropElement extends HTMLElement {
           screen: 'done', outcome: 'received',
           file: { name: file.name, size: file.size }, digest: file.digest,
           saveLocation: accepted?.location ?? null,
-          canChangeFolder: Boolean(getPlatform().changeSaveLocation),
+          // Nothing was saved for text, so there is no folder to change yet;
+          // Save as file on the done screen goes through the same platform
+          // sink and says where it put it.
+          canChangeFolder: !textSink && Boolean(getPlatform().changeSaveLocation),
+          text: textSink?.text() ?? null,
         })
         room.close()
       },

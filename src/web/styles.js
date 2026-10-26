@@ -453,6 +453,9 @@ ${tokensCSS(':host')}
  * and the action bar for the first second or two and then silently loses it.
  * The same argument as .card-actions:empty above. */
 .stack:empty { display: none; }
+/* A small button in a stack is sized to its label, not stretched to the
+ * column: it is a secondary action sitting among lines of text. */
+.stack > .btn.small { align-self: flex-start; }
 
 /*
  * flex: none, so it keeps its height while .card-body above gives up whatever
@@ -1549,7 +1552,7 @@ summary {
 
 #manual-form { display: flex; gap: var(--sp-2); }
 
-input[type="text"] {
+input[type="text"], .text-input {
   flex: 1;
   font: inherit;
   font-size: var(--fs--1);
@@ -1563,7 +1566,39 @@ input[type="text"] {
   color: var(--text);
   min-width: 0;
 }
-input[type="text"]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ---- text ----
+ * The compose box, and the received message on the done screen. Both keep the
+ * person's line breaks and wrap long lines rather than scrolling sideways: a
+ * pasted link is one very long word, and a horizontal scrollbar inside a
+ * fixed-height card is a second place to scroll on a page that has one. The
+ * received text is capped and scrolls inside itself, so a long message costs
+ * the done screen its own box and never pushes the action bar away. */
+.text-input {
+  resize: vertical;
+  min-block-size: 6lh;
+  line-height: 1.4;
+}
+.message-text {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--fs-0);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* It is the done screen's media block, which grows into the card's slack
+   * and yields first, down to .card-media's own floor. Filling the slot is
+   * this box's job; scrolling inside it is the last resort. */
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.message-text:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 @media (max-width: 30rem) {
   .card { padding: var(--sp-4); gap: var(--sp-3); }
