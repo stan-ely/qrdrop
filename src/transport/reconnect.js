@@ -29,6 +29,10 @@
  *
  * Between pairings no timer runs, so a Node process holding the lock can still
  * exit: the lock is a pending promise, which keeps nothing alive.
+ *
+ * Reported upstream as https://github.com/dmotz/trystero/issues/208. When a
+ * release stops retiring sockets, the first test in test/reconnect.test.mjs
+ * fails, and this module and the `manualReconnection` flag can go.
  */
 
 /** How often a waiting pairing releases the lock so queued sockets redial. */
