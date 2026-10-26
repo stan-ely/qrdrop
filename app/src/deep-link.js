@@ -1,4 +1,4 @@
-import { decodeSecret, encodeSecret } from '../../src/core/secret.js'
+import { decodePairing, encodeSecret } from '../../src/core/secret.js'
 
 /**
  * Turns a deep-link URL the OS handed the app into the canonical bare
@@ -46,17 +46,20 @@ export function secretFromDeepLink(url) {
   // `qrdrop://host/x?y` (which no part of this project ever emits) is left
   // alone so it reaches decodeSecret and is rejected there rather than being
   // mangled into a false positive.
-  const candidate = /^qrdrop:\/\/([A-Za-z0-9_-]+)$/.test(trimmed)
+  const candidate = /^qrdrop:\/\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?$/.test(trimmed)
     ? trimmed.replace('qrdrop://', 'qrdrop:')
     : trimmed
 
   // Throws on a query-string or path code, on the wrong length, on anything
   // that is not a qrdrop code at all. The caller (app/src/main.js) reports
   // that to the user the same way a mistyped manual code is reported.
-  const secret = decodeSecret(candidate)
+  const { secret, locator } = decodePairing(candidate)
 
   // Re-encode rather than returning `candidate`: this guarantees the caller
   // gets the bare form regardless of which shape came in, so the only place
-  // the code is ever written back is a fragment.
-  return encodeSecret(secret)
+  // the code is ever written back is a fragment. The locator goes back on with
+  // it: dropping it here would be the app's own deep link stripping the one
+  // part that lets a pairing work offline. A locator version this build cannot
+  // read comes back null and is dropped, which is all the page would do with it.
+  return encodeSecret(secret, locator)
 }

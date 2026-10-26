@@ -115,11 +115,81 @@ export function fromBase64url(str) {
  * What actually goes in the QR image when there is nowhere for the QR to send
  * a stranger's camera. ~43 chars, trivially small for a QR.
  * @param {Bytes} secret
+ * @param {Locator | null} [locator] Nothing passes one yet: every decoder in a
+ *   release has to accept it before anything emits it.
  * @returns {string}
  */
-export function encodeSecret(secret) {
-  return `qrdrop:${toBase64url(secret)}`
+export function encodeSecret(secret, locator = null) {
+  const code = `qrdrop:${toBase64url(secret)}`
+  return locator ? `${code}.${encodeLocator(locator)}` : code
 }
+
+// The one locator layout so far. A decoder ignores any other version rather
+// than refusing it, which is what lets the layout grow: a code from a newer
+// device still pairs over the relays with an older one.
+const LOCATOR_V1 = 1
+const MAX_LOCATOR_ADDRESSES = 4
+
+/**
+ * Where the code's own device is listening on the local network, for pairing
+ * with no route to the relays (docs/notes/offline-pairing.md). It is not
+ * secret and authenticates nothing: whoever answers at it still has to prove
+ * the code before anything latches.
+ *
+ * @typedef {{ port: number, addresses: string[] }} Locator
+ */
+
+/**
+ * A version byte, the port big-endian, then one to four IPv4 addresses: 10 to
+ * 26 base64url characters after the `.`.
+ * @param {Locator} locator
+ * @returns {string}
+ */
+function encodeLocator({ port, addresses }) {
+  if (!Number.isInteger(port) || port < 1 || port > 0xffff) throw new Error(`Locator port out of range: ${port}`)
+  if (addresses.length < 1 || addresses.length > MAX_LOCATOR_ADDRESSES) {
+    throw new Error(`A locator carries 1 to ${MAX_LOCATOR_ADDRESSES} addresses, not ${addresses.length}`)
+  }
+  const bytes = [LOCATOR_V1, port >> 8, port & 0xff]
+  for (const address of addresses) {
+    const octets = address.split('.').map(Number)
+    if (octets.length !== 4 || !octets.every(o => Number.isInteger(o) && o >= 0 && o <= 255) || !/^[0-9.]+$/.test(address)) {
+      throw new Error(`Not an IPv4 address: ${address}`)
+    }
+    bytes.push(...octets)
+  }
+  return toBase64url(Uint8Array.from(bytes))
+}
+
+/**
+ * The locator's bytes, or null for a version this build does not know.
+ *
+ * A known version that does not parse is an error rather than ignored. Our own
+ * encoder cannot produce one, so it means the code was damaged on the way here,
+ * and a code damaged in one place is not one to trust the rest of.
+ * @param {string} text
+ * @returns {Locator | null}
+ */
+function decodeLocator(text) {
+  let bytes
+  try {
+    bytes = fromBase64url(text)
+  } catch {
+    // atob refuses a length that is 1 mod 4: no whole byte in the last group.
+    throw new Error(MALFORMED_LOCATOR)
+  }
+  if (bytes[0] !== LOCATOR_V1) return null
+  const count = (bytes.length - 3) / 4
+  const port = (bytes[1] << 8) | bytes[2]
+  if (!Number.isInteger(count) || count < 1 || count > MAX_LOCATOR_ADDRESSES || port === 0) {
+    throw new Error(MALFORMED_LOCATOR)
+  }
+  const addresses = []
+  for (let i = 3; i < bytes.length; i += 4) addresses.push(Array.from(bytes.subarray(i, i + 4)).join('.'))
+  return { port, addresses }
+}
+
+const MALFORMED_LOCATOR = 'Malformed qrdrop code — the part after the key is damaged'
 
 /**
  * The URL form: what lets a phone's built-in camera app actually do something
@@ -170,13 +240,33 @@ function decodeCode(code) {
   return bytes
 }
 
-const CODE_RE = /^qrdrop:([A-Za-z0-9_-]{43})$/
+// The key, then optionally `.` and a locator. `.` is outside the base64url
+// alphabet, so the 43 characters of key stay unambiguous with one after them.
+/**
+ * @param {RegExpExecArray} match Of CODE_RE.
+ * @returns {{ secret: Bytes, locator: Locator | null }}
+ */
+const fromMatch = ([, code, locator]) => ({
+  secret: decodeCode(code),
+  locator: locator === undefined ? null : decodeLocator(locator),
+})
+
+const CODE_RE = /^qrdrop:([A-Za-z0-9_-]{43})(?:\.([A-Za-z0-9_-]+))?$/
 
 /**
  * @param {string} text Untrusted: this is whatever the camera decoded.
  * @returns {Bytes}
  */
 export function decodeSecret(text) {
+  return decodePairing(text).secret
+}
+
+/**
+ * `decodeSecret`, keeping the locator if the code has one this build reads.
+ * @param {string} text Untrusted: this is whatever the camera decoded.
+ * @returns {{ secret: Bytes, locator: Locator | null }}
+ */
+export function decodePairing(text) {
   const trimmed = text.trim()
 
   // The bare form, unchanged. This is what CLI<->browser interop depends on
@@ -184,7 +274,7 @@ export function decodeSecret(text) {
   // form at, so it always emits this, and this branch must keep accepting it
   // forever regardless of what the URL form below grows into.
   const bare = CODE_RE.exec(trimmed)
-  if (bare) return decodeCode(bare[1])
+  if (bare) return fromMatch(bare)
 
   // The URL form. Only http(s) URLs are considered -- anything else (a bare
   // string that happens to parse as some other URL scheme, garbage, etc.)
@@ -208,7 +298,7 @@ export function decodeSecret(text) {
   // URL, so that case gets its own error rather than falling through
   // silently to "Not a qrdrop code".
   const fragment = CODE_RE.exec(url.hash.slice(1))
-  if (fragment) return decodeCode(fragment[1])
+  if (fragment) return fromMatch(fragment)
 
   if (/qrdrop:[A-Za-z0-9_-]+/.test(url.search) || /qrdrop:[A-Za-z0-9_-]+/.test(url.pathname)) {
     throw new Error('qrdrop code must be in the URL fragment (after #), not the query string or path')

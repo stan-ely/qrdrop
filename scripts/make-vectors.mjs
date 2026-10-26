@@ -42,7 +42,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
 import {
-  decodeSecret, deriveTopic, derivePassword, encodeSecret, encodeSecretURL, toBase64url,
+  decodePairing, deriveTopic, derivePassword, encodeSecret, encodeSecretURL, toBase64url,
 } from '../src/core/secret.js'
 import { establishSession, SAS_EMOJI } from '../src/core/session.js'
 import {
@@ -136,6 +136,9 @@ async function secretVectors() {
   const lastIndex = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'.indexOf(body.at(-1) ?? '')
   const nonCanonical = `qrdrop:${body.slice(0, -1)}${'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'[lastIndex ^ 1]}`
 
+  const one = encodeSecret(secrets[2], { port: 52000, addresses: ['192.168.1.20'] })
+  const four = encodeSecret(secrets[2], { port: 52000, addresses: ['192.168.1.20', '10.0.0.7', '172.16.254.1', '100.64.0.2'] })
+
   const inputs = [
     ['the bare form', code],
     ['the bare form, with whitespace around it (it is trimmed)', `  ${code}\n`],
@@ -152,22 +155,41 @@ async function secretVectors() {
     ['a code one character long', `${code}A`],
     ['a character outside base64url', `qrdrop:${body.slice(0, -1)}+`],
     ['not a code at all', 'hello'],
+    // A locator after the key (docs/notes/offline-pairing.md). Every decoder
+    // in a release must read these before anything emits one.
+    ['a locator with one address', one],
+    ['a locator with four addresses, in the URL form', `${BASE_URL}#${four}`],
+    ['a locator with an address at each end of the range', encodeSecret(secrets[2], { port: 65535, addresses: ['0.0.0.0', '255.255.255.255'] })],
+    ['a locator version this build does not know, ignored so the format can grow', `${code}.${toBase64url(Uint8Array.of(2, 0xcb, 0x20, 10, 0, 0, 7, 9))}`],
+    ['an unknown locator version of one byte', `${code}.${toBase64url(Uint8Array.of(0xff))}`],
+    ['a locator with no address', `${code}.${toBase64url(Uint8Array.of(1, 0xcb, 0x20))}`],
+    ['a locator with five addresses', `${code}.${toBase64url(Uint8Array.of(1, 0xcb, 0x20, ...Array(20).fill(10)))}`],
+    ['a locator cut mid-address', `${code}.${toBase64url(Uint8Array.of(1, 0xcb, 0x20, 192, 168, 1))}`],
+    ['a locator with port 0', `${code}.${toBase64url(Uint8Array.of(1, 0, 0, 192, 168, 1, 20))}`],
+    ['a locator one character long, which is no whole byte', `${code}.A`],
+    ['a dot with no locator after it', `${code}.`],
+    ['two locators', `${one}.${one.split('.').at(-1)}`],
+    ['a locator character outside base64url', `${one}+`],
+    ['a code with a locator in the query string', `${BASE_URL}?code=${one}`],
   ]
 
   const decode = inputs.map(([why, input]) => {
     try {
-      return { why, input, secret: hex(decodeSecret(input)) }
+      const { secret, locator } = decodePairing(input)
+      return { why, input, secret: hex(secret), locator }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       // A category rather than the message: the wording is the JS UI's, and
       // the Rust side owes the same verdict, not the same sentence.
-      const kind = /fragment/.test(message) ? 'fragment-only' : /Malformed/.test(message) ? 'malformed' : 'not-a-code'
+      const kind = /fragment/.test(message) ? 'fragment-only'
+        : /after the key/.test(message) ? 'malformed-locator'
+          : /Malformed/.test(message) ? 'malformed' : 'not-a-code'
       return { why, input, error: kind }
     }
   })
 
   return {
-    about: 'Secret -> topic and password (HKDF-SHA-256, salt "qrdrop/v1", info "topic" / "signal", base64url without padding), the code forms, and what decodeSecret accepts. A decode case has either `secret` or `error` (fragment-only | not-a-code | malformed).',
+    about: 'Secret -> topic and password (HKDF-SHA-256, salt "qrdrop/v1", info "topic" / "signal", base64url without padding), the code forms, and what decodeSecret accepts. A decode case has either `secret` and `locator` or `error` (fragment-only | not-a-code | malformed | malformed-locator). A code may end in `.` and a locator: base64url of a version byte, then for version 1 the port (u16, big-endian, nonzero) and 1 to 4 IPv4 addresses. Any other version decodes to locator null; a version 1 locator that does not parse is malformed-locator.',
     salt: 'qrdrop/v1',
     base_url: BASE_URL,
     derive,

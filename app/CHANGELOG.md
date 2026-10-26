@@ -13,6 +13,12 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**Ready for codes that work without the internet.** A pairing code may now carry a
+short suffix after its key: where the other device can be reached on the local network.
+Nothing makes such a code yet. This release teaches every place that reads a code to
+accept one, so that when a later version starts printing them, the version you have
+still pairs with it, over the internet as before.
+
 **Send text, not just files.** "Send text" on the first screen opens a box to type or
 paste into. The receiving device shows the text with **Copy** and **Save as file**
 rather than saving it. Not yet on Linux, where the app's transfers run on its native

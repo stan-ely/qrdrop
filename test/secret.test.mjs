@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  generateSecret, encodeSecret, encodeSecretURL, decodeSecret, toBase64url,
+  generateSecret, encodeSecret, encodeSecretURL, decodeSecret, decodePairing, toBase64url,
 } from '../src/core/secret.js'
 
 /**
@@ -83,4 +83,31 @@ test('encodeSecretURL rejects a non-http(s) base', () => {
   const secret = generateSecret()
   assert.throws(() => encodeSecretURL(secret, 'ftp://example.com/'))
   assert.throws(() => encodeSecretURL(secret, 'mailto:someone@example.com'))
+})
+
+test('a locator after the key round-trips in both forms', () => {
+  const secret = generateSecret()
+  const locator = { port: 52000, addresses: ['192.168.1.20', '10.0.0.7'] }
+  const code = encodeSecret(secret, locator)
+  assert.match(code, /^qrdrop:[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]+$/)
+  for (const input of [code, `https://example.com/#${code}`]) {
+    const got = decodePairing(input)
+    assert.ok(bytesEqual(got.secret, secret))
+    assert.deepEqual(got.locator, locator)
+    // decodeSecret, which every caller still uses, takes the key and ignores the rest.
+    assert.ok(bytesEqual(decodeSecret(input), secret))
+  }
+})
+
+test('a code without a locator decodes to a null one', () => {
+  assert.equal(decodePairing(encodeSecret(generateSecret())).locator, null)
+})
+
+test('encodeSecret refuses a locator no decoder would take', () => {
+  const secret = generateSecret()
+  assert.throws(() => encodeSecret(secret, { port: 0, addresses: ['10.0.0.1'] }), /port/)
+  assert.throws(() => encodeSecret(secret, { port: 1, addresses: [] }), /1 to 4/)
+  assert.throws(() => encodeSecret(secret, { port: 1, addresses: Array(5).fill('10.0.0.1') }), /1 to 4/)
+  assert.throws(() => encodeSecret(secret, { port: 1, addresses: ['10.0.0.256'] }), /IPv4/)
+  assert.throws(() => encodeSecret(secret, { port: 1, addresses: ['::1'] }), /IPv4/)
 })

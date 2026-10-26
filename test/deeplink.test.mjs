@@ -88,3 +88,17 @@ test('the returned string is always the bare form -- safe to place after a #', (
     assert.ok(bytesEqual(decodeSecret(`https://share.stan-ely.com/#${out}`), secret))
   }
 })
+
+test('a locator survives the deep link, in every shape that carries one', () => {
+  const secret = generateSecret()
+  const code = encodeSecret(secret, { port: 52000, addresses: ['192.168.1.20'] })
+  for (const link of [code, `qrdrop://${code.slice('qrdrop:'.length)}`, `https://share.stan-ely.com/#${code}`]) {
+    assert.equal(secretFromDeepLink(link), code, link)
+  }
+})
+
+test('a locator version this build cannot read is dropped, and the key still opens', () => {
+  const secret = generateSecret()
+  const code = encodeSecret(secret)
+  assert.equal(secretFromDeepLink(`${code}.${toBase64url(Uint8Array.of(9, 1, 2))}`), code)
+})

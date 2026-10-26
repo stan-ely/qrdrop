@@ -9,7 +9,7 @@ it ships, the parts that describe behaviour move into `docs/protocol.md` and
 
 | Phase | State | Notes |
 |---|---|---|
-| A. Decoders tolerate a locator | not started | ships alone, a release before anything emits one |
+| A. Decoders tolerate a locator | built, awaiting release | `decodePairing` / `Secret::decode_pairing`; ships in the next npm and app releases, and B waits a cycle after them |
 | B. Rust: the session over a socket, and the rendezvous | not started | Rust CLI to Rust CLI, offline |
 | C. Node CLI and the app | not started | the JS `PairedRoom` over a socket |
 | D. Docs, threat model, CLAUDE.md | not started | at the end of C |
@@ -54,7 +54,7 @@ runs at camera speed.
 
 `qrdrop:<43 chars>` becomes `qrdrop:<43 chars>.<locator>`.
 - The locator is base64url of: a version byte, a port (u16), then up to four IPv4 addresses.
-  That is 15 to 30 characters.
+  That is 10 to 26 characters.
 - `.` is outside the base64url alphabet, so the code's own 43 characters stay unambiguous.
 - In the URL form the whole thing is still in the fragment. The address is not secret, but
   `decodeSecret`'s fragment-only rule is about the code, and splitting the two would mean reading
@@ -187,6 +187,12 @@ This is most of the work, and it is the part the plan before this note underesti
   - `npm test` and `mise run rust:test`.
   - A deep-link test that keeps the locator.
   - Release, then wait a cycle before B ships an emitter.
+  - **As built:** port 0, no address, more than four, a cut address or a length that is no
+    whole byte are `malformed-locator`, an error and not ignored. Only an unknown *version* is
+    ignored, because only that one can be a newer encoder rather than a damaged code. The
+    plain `decodeSecret` / `Secret::decode` that every caller uses is unchanged and drops the
+    locator. `encodeSecret(secret, locator)` and `Secret::code_with` exist for the tests and
+    the deep link alone.
 - **B.**
   - In `qrdrop-session`: the carrier, the listener and dialler, and the handshake, with unit tests
     for each MAC check and for the half-completed handshake above.

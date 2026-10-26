@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use crate::code::Secret;
+use crate::code::{Locator, Secret};
 use crate::control::{Control, seal_control};
 use crate::digest::Chain;
 use crate::frame::{
@@ -60,14 +60,33 @@ fn secret() {
     }
     for c in v["decode"].as_array().unwrap() {
         let why = c["why"].as_str().unwrap();
-        let got = Secret::decode(c["input"].as_str().unwrap());
+        let got = Secret::decode_pairing(c["input"].as_str().unwrap());
         match c.get("secret") {
-            Some(s) => assert_eq!(got.as_ref().map(|s| *s.as_bytes()), Ok(arr(s)), "{why}"),
+            Some(s) => {
+                let (secret, locator) = got.unwrap_or_else(|e| panic!("{why}: {e}"));
+                assert_eq!(*secret.as_bytes(), arr(s), "{why}");
+                let want = (!c["locator"].is_null()).then(|| Locator {
+                    port: c["locator"]["port"].as_u64().unwrap().try_into().unwrap(),
+                    addresses: c["locator"]["addresses"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|a| a.as_str().unwrap().parse().unwrap())
+                        .collect(),
+                });
+                assert_eq!(locator, want, "{why}");
+                // What the JS encoded, the Rust encodes byte for byte.
+                if let Some(want) = &want {
+                    let input = c["input"].as_str().unwrap();
+                    assert!(input.ends_with(&secret.code_with(want)), "{why}");
+                }
+            }
             None => {
                 let want = match c["error"].as_str().unwrap() {
                     "fragment-only" => CodeError::FragmentOnly,
                     "not-a-code" => CodeError::NotACode,
                     "malformed" => CodeError::Malformed,
+                    "malformed-locator" => CodeError::MalformedLocator,
                     e => panic!("unknown error kind {e}"),
                 };
                 assert_eq!(got.err(), Some(want), "{why}");

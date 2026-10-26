@@ -5,6 +5,12 @@ is the finer-grained record.
 
 ## Unreleased
 
+**Ready for codes that work without the internet.** A pairing code may now carry a
+short suffix after its key: where the other device can be reached on the local network.
+Nothing makes such a code yet. This release teaches every place that reads a code to
+accept one, so that when a later version starts printing them, the version you have
+still pairs with it, over the internet as before.
+
 **Send text, not just files.** "Send text" on the first screen opens a box to type or
 paste into, and pasting text anywhere on that screen opens the same box with it filled
 in. The pasted text isn't sent until you press Send. You both check the same four symbols as for a

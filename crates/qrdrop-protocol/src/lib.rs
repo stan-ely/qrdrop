@@ -31,7 +31,7 @@ mod transfer;
 #[cfg(test)]
 mod vectors;
 
-pub use code::{CodeError, SECRET_BYTES, Secret};
+pub use code::{CodeError, Locator, SECRET_BYTES, Secret};
 pub use control::{Control, DEFAULT_MIME, LanListen, Manifest, NetworkPath, truncate_utf16};
 pub use digest::{Chain, equal_hex, hex};
 pub use frame::{

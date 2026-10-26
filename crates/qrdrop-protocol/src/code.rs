@@ -6,6 +6,7 @@
 //! leaves the device: only values HKDF'd out of it under distinct labels.
 
 use std::fmt;
+use std::net::Ipv4Addr;
 
 use base64::Engine as _;
 use base64::alphabet::URL_SAFE;
@@ -58,6 +59,9 @@ pub enum CodeError {
     NotACode,
     /// The right shape, but not 32 bytes of key.
     Malformed,
+    /// A sound key, followed by a locator of a known version that does not
+    /// parse.
+    MalformedLocator,
     /// The base for [`Secret::url`] is not an absolute http(s) URL.
     BadBaseUrl,
 }
@@ -73,6 +77,9 @@ impl fmt::Display for CodeError {
             }
             CodeError::Malformed => {
                 "Malformed qrdrop code \u{2014} expected 32 bytes of key, base64url-encoded"
+            }
+            CodeError::MalformedLocator => {
+                "Malformed qrdrop code \u{2014} the part after the key is damaged"
             }
             CodeError::BadBaseUrl => "base-url must be an absolute http(s) URL",
         })
@@ -155,6 +162,13 @@ impl Secret {
         format!("qrdrop:{}", to_base64url(&self.0))
     }
 
+    /// The bare form with a locator after it. Nothing calls this outside the
+    /// tests yet: every decoder in a release has to accept a locator before
+    /// anything emits one (docs/notes/offline-pairing.md, phase A).
+    pub fn code_with(&self, locator: &Locator) -> String {
+        format!("{}.{}", self.code(), locator.encode())
+    }
+
     /// The URL form, with the code in the fragment.
     ///
     /// The fragment is the one part of a URL a browser never sends to the
@@ -169,6 +183,12 @@ impl Secret {
     /// paste. Accepts the bare form, and an http(s) URL carrying it in the
     /// fragment and nowhere else.
     pub fn decode(text: &str) -> Result<Self, CodeError> {
+        Self::decode_pairing(text).map(|(secret, _)| secret)
+    }
+
+    /// [`Secret::decode`], keeping the locator if the code has one this build
+    /// reads.
+    pub fn decode_pairing(text: &str) -> Result<(Self, Option<Locator>), CodeError> {
         let trimmed = js_trim(text);
 
         if let Some(code) = bare_code(trimmed) {
@@ -192,10 +212,77 @@ impl Secret {
     }
 }
 
-/// `^qrdrop:([A-Za-z0-9_-]{43})$`, returning the capture.
-fn bare_code(text: &str) -> Option<&str> {
-    let code = text.strip_prefix("qrdrop:")?;
-    (code.len() == 43 && code.bytes().all(is_b64url)).then_some(code)
+/// `^qrdrop:([A-Za-z0-9_-]{43})(?:\.([A-Za-z0-9_-]+))?$`, returning the
+/// capture: the key and any locator after it. `.` is outside the base64url
+/// alphabet, so the 43 characters of key stay unambiguous with one after them.
+fn bare_code(text: &str) -> Option<(&str, Option<&str>)> {
+    let rest = text.strip_prefix("qrdrop:")?;
+    let (key, locator) = match rest.split_once('.') {
+        Some((key, locator)) => (key, Some(locator)),
+        None => (rest, None),
+    };
+    let locator_ok = locator.is_none_or(|l| !l.is_empty() && l.bytes().all(is_b64url));
+    (key.len() == 43 && key.bytes().all(is_b64url) && locator_ok).then_some((key, locator))
+}
+
+/// The one locator layout so far. A decoder ignores any other version rather
+/// than refusing it, which is what lets the layout grow: a code from a newer
+/// device still pairs over the relays with an older one.
+const LOCATOR_V1: u8 = 1;
+const MAX_LOCATOR_ADDRESSES: usize = 4;
+
+/// Where the code's own device is listening on the local network, for
+/// pairing with no route to the relays (docs/notes/offline-pairing.md). It is
+/// not secret and authenticates nothing: whoever answers at it still has to
+/// prove the code before anything latches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Locator {
+    pub port: u16,
+    /// One to four.
+    pub addresses: Vec<Ipv4Addr>,
+}
+
+impl Locator {
+    /// A version byte, the port big-endian, then the addresses: 10 to 26
+    /// base64url characters.
+    ///
+    /// # Panics
+    ///
+    /// On port 0 or an address count outside 1 to 4, which no decoder takes.
+    pub fn encode(&self) -> String {
+        assert!(self.port != 0, "a locator needs a port");
+        assert!(
+            (1..=MAX_LOCATOR_ADDRESSES).contains(&self.addresses.len()),
+            "a locator carries 1 to {MAX_LOCATOR_ADDRESSES} addresses"
+        );
+        let mut bytes = vec![LOCATOR_V1];
+        bytes.extend_from_slice(&self.port.to_be_bytes());
+        for address in &self.addresses {
+            bytes.extend_from_slice(&address.octets());
+        }
+        to_base64url(&bytes)
+    }
+
+    /// `None` for a version this build does not know. A known version that
+    /// does not parse is an error rather than ignored: our own encoder cannot
+    /// produce one, so the code was damaged on the way here, and a code
+    /// damaged in one place is not one to trust the rest of.
+    fn decode(text: &str) -> Result<Option<Locator>, CodeError> {
+        let bytes = from_base64url(text).ok_or(CodeError::MalformedLocator)?;
+        let Some((&LOCATOR_V1, rest)) = bytes.split_first() else {
+            return Ok(None);
+        };
+        let Some((port, addresses)) = rest.split_first_chunk::<2>() else {
+            return Err(CodeError::MalformedLocator);
+        };
+        let port = u16::from_be_bytes(*port);
+        let (addresses, cut) = addresses.as_chunks::<4>();
+        if port == 0 || !cut.is_empty() || !(1..=MAX_LOCATOR_ADDRESSES).contains(&addresses.len()) {
+            return Err(CodeError::MalformedLocator);
+        }
+        let addresses = addresses.iter().map(|&o| Ipv4Addr::from(o)).collect();
+        Ok(Some(Locator { port, addresses }))
+    }
 }
 
 /// `/qrdrop:[A-Za-z0-9_-]+/`, unanchored.
@@ -210,10 +297,16 @@ fn is_b64url(b: u8) -> bool {
 
 /// A wrong length means truncation or corruption upstream, and accepting it
 /// would hand a short key straight to HKDF.
-fn decode_code(code: &str) -> Result<Secret, CodeError> {
-    let bytes = from_base64url(code).ok_or(CodeError::Malformed)?;
+fn decode_code(
+    (key, locator): (&str, Option<&str>),
+) -> Result<(Secret, Option<Locator>), CodeError> {
+    let bytes = from_base64url(key).ok_or(CodeError::Malformed)?;
     let bytes: [u8; SECRET_BYTES] = bytes.try_into().map_err(|_| CodeError::Malformed)?;
-    Ok(Secret(bytes))
+    let locator = match locator {
+        Some(text) => Locator::decode(text)?,
+        None => None,
+    };
+    Ok((Secret(bytes), locator))
 }
 
 /// `String.prototype.trim`: JS's WhiteSpace and LineTerminator sets, which are
@@ -471,6 +564,33 @@ mod tests {
         ] {
             assert_eq!(secret.url(base), Err(CodeError::BadBaseUrl), "{base}");
         }
+    }
+
+    #[test]
+    fn a_locator_round_trips_in_both_forms() {
+        let secret = Secret::generate();
+        let locator = Locator {
+            port: 52000,
+            addresses: vec![Ipv4Addr::new(192, 168, 1, 20), Ipv4Addr::new(10, 0, 0, 7)],
+        };
+        let code = secret.code_with(&locator);
+        let want = Ok((secret.clone(), Some(locator)));
+        assert_eq!(Secret::decode_pairing(&code), want);
+        let url = format!("https://example.com/#{code}");
+        assert_eq!(Secret::decode_pairing(&url), want);
+        // And the plain decode, which is what every caller still uses, takes
+        // the key and ignores the rest.
+        assert_eq!(Secret::decode(&code), Ok(secret));
+    }
+
+    #[test]
+    fn a_locator_is_between_10_and_26_characters() {
+        let at = |n| Locator {
+            port: 1,
+            addresses: vec![Ipv4Addr::LOCALHOST; n],
+        };
+        assert_eq!(at(1).encode().len(), 10);
+        assert_eq!(at(MAX_LOCATOR_ADDRESSES).encode().len(), 26);
     }
 
     #[test]
