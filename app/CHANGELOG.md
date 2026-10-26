@@ -11,7 +11,7 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
-## Unreleased
+## 1.3.0 -- 2026-10-26
 
 **Ready for codes that work without the internet.** A pairing code may now carry a
 short suffix after its key: where the other device can be reached on the local network.
