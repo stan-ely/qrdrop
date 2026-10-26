@@ -158,6 +158,26 @@ test('every pairing announces a public key it has never announced before', async
   assert.equal(new Set(announced).size, 6, 'a repeated key here means one was reused')
 })
 
+// reconnect.js keeps Trystero's reconnection lock held so a relay socket can
+// never retire. Trystero's own online/offline watcher would release it on the
+// first `online` event and leave it released, and test/reconnect.test.mjs cannot
+// see that, because it drives makeSocket directly. Dropping this flag looks like
+// tidying a default.
+test('every join turns off trystero\'s own reconnection, which reconnect.js owns', async () => {
+  const secret = generateSecret()
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  const { strategy, joins } = fakeNetwork()
+
+  const { host, guest } = await pair(strategy, { topic, password, secret })
+  host.close()
+  guest.close()
+
+  assert.equal(joins.length, 2)
+  for (const { config } of joins) {
+    assert.equal(/** @type {any} */ (config).relayConfig.manualReconnection, true)
+  }
+})
+
 test('frames from a third peer in the room never reach the receiver', async () => {
   // The send side has always been targeted at the paired peer, and
   // channel.js says why in as many words: a third party holding the code can

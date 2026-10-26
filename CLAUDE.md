@@ -673,6 +673,20 @@ second, and that order is load-bearing: a `done` that arrived before the leave h
 finished the transfer and must not lose to it. The first error rather than the last,
 because what follows a real failure is usually its echo. `test/control-stream.test.mjs`.
 
+**Trystero's reconnection lock is held at all times, and released only while a pairing
+waits.** Trystero retires a relay socket for good once its backoff reaches 60 s, and its
+relay manager hands that dead client to every later room: after about two minutes of
+refused connections, every pairing for the life of the process joins nothing and times out.
+Android's background firewall does exactly that to the app and to a backgrounded tab, with
+`navigator.onLine` still true. `src/transport/reconnect.js` holds the lock (a closing socket
+then queues its redial instead of spending a backoff step) and `openRoom` releases it on a
+5 s tick while it waits. Every join passes `manualReconnection: true`, because Trystero's
+own watcher would release the lock on an `online` event and leave it released.
+`test/reconnect.test.mjs` runs Trystero's real `makeSocket` against a refusing network, and
+its first test pins the bug, so a Trystero release that fixes it fails there and the gate
+can be reconsidered. Measured A/B over the real relays, with 150 s of refused connections:
+the next pairing timed out without the gate and paired in 3 s with it.
+
 **Every path that ends a paired session closes the room, and an exit awaits it.** A room's
 `close()` returns Trystero's `leave()` promise, which sends the leave message and never
 rejects. The CLI's SIGINT handler used to run its interrupt hooks and exit with the room

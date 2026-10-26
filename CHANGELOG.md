@@ -69,6 +69,15 @@ with a permanent redirect to `relay.ditto.pub`, and a WebSocket does not follow 
 so it had stopped carrying any pairing. The list names `wss://relay.ditto.pub` in its place,
 which paired two peers on every attempt, and the app's content security policy follows.
 
+**Pairing works again after the network has been away for a while.** If every signalling
+relay was unreachable for about two minutes, the signalling library stopped trying them for
+good, and every pairing after that timed out until the page was reloaded or the command
+restarted. It happened when the operating system cut off a page in the background, which
+Android does to a backgrounded browser or app within seconds, and a browser's "offline"
+signal never fired for it. Relays that drop now wait and reconnect as soon as a pairing
+needs them. Measured with every relay refused for two and a half minutes: the next pairing
+timed out after 60 seconds before this change, and now pairs in about three.
+
 **The progress bar redraws at most ten times a second.** It redrew the whole component after
 every 16 KB frame, which on a phone was a measurable share of the time spent per frame; see
 the app changelog for the numbers. The final 100% is always drawn.

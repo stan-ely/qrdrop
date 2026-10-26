@@ -48,14 +48,22 @@
  * `joinRoom` signature, so joinVia treats them uniformly.
  */
 
-import { joinRoom as joinNostr } from '@trystero-p2p/nostr'
+import { joinRoom as joinNostr, pauseRelayReconnection, resumeRelayReconnection } from '@trystero-p2p/nostr'
 import { joinRoom as joinTorrent } from '@trystero-p2p/torrent'
 import { createChannel, createLanChannel, createSwitchableChannel } from './channel.js'
+import { createReconnectGate } from './reconnect.js'
 import { createEphemeralKeypair, exportPublicKey, establishSession } from '../core/session.js'
 import { fromBase64url, toBase64url } from '../core/secret.js'
 
 const APP_ID = 'qrdrop'
 const DEFAULT_TIMEOUT_MS = 60_000
+
+// One for the module, because the lock it drives is one for the process:
+// nostr and torrent share @trystero-p2p/core. See reconnect.js.
+const reconnectGate = createReconnectGate({
+  pause: pauseRelayReconnection,
+  resume: resumeRelayReconnection,
+})
 
 // How many frames from the paired peer are held while this side has not yet
 // registered onFrame() -- see frameAction.onMessage in joinVia. A legitimate
@@ -689,7 +697,9 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
     {
       appId: APP_ID,
       password,
-      relayConfig: { urls: [...strategy.urls] },
+      // Trystero's online/offline watcher would release reconnectGate's lock
+      // on an `online` event and leave it released.
+      relayConfig: { urls: [...strategy.urls], manualReconnection: true },
       rtcConfig: { iceServers: [...iceServers] },
       ...(rtcPolyfill ? { rtcPolyfill } : {}),
     },
@@ -864,6 +874,10 @@ export async function openRoom({
 }) {
   const ac = new AbortController()
 
+  // Before the joins, so a relay socket created by the first one ever made is
+  // already under the lock when it first closes.
+  reconnectGate.hold()
+
   const attempts = strategies.map(strategy =>
     joinVia(strategy, { topic, password, secret, role, iceServers, rtcPolyfill, signal: ac.signal, onStatus }),
   )
@@ -887,7 +901,7 @@ export async function openRoom({
   /** @type {ResolvedAttempt} */
   let winner
   try {
-    winner = await Promise.race([Promise.any(attempts), timeout])
+    winner = await reconnectGate.whilePairing(Promise.race([Promise.any(attempts), timeout]))
   } catch (error) {
     ac.abort()
     clearTimeout(timer)

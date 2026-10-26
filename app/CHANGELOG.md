@@ -40,6 +40,12 @@ receiving device fail a transfer that was still arriving whole by another route.
 longer can. A version older than this one on the other end still connects, the way it did
 before.
 
+**Receiving works after the app has been in the background.** After about a minute out of
+sight, for example behind the folder picker, every later receive used to fail with "Timed
+out waiting for the other device" until the app was force-stopped. Android cuts a
+background app off the network, and the signalling library gave up on every relay for good
+once that had lasted long enough. Relays now reconnect as soon as a pairing needs them.
+
 ## 1.2.1 -- 2026-09-28
 
 **No changes to the app.** This is 1.2.0 under a new number. Google Play never lets a
