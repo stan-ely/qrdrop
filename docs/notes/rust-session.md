@@ -17,12 +17,10 @@ session that works on it starts by reading the **Status** section and ends by up
 | 7. The apps on the native session | desktop done, 2026-10-18; the RMX3868 measured, same day | `a142b52`, `04504bc`, `7573183`, `5b959bd` | the desktop app runs a transfer on `qrdrop-session` both ways against the Node CLI. On the phone's 5 GHz Wi-Fi the native receive clears the 5.8 MB/s gate on every route (about 33 over LAN, against about 9.5 for the JS session), and the native send clears 15.5 over LAN (about 20). On by default on Linux only; making it Android's default is the step left. See "Phase 7: what it found" and the device sessions under "Phase 9: what it found" |
 | 8. CLI distribution switch | done in the tree, 2026-10-18; first release pending | `ec79928` | `qrdrop` runs the Rust CLI from a per-platform npm package and falls back to the Node CLI; all five targets build on CI; the npm names need a first publish by hand; see "Phase 8: what it found" |
 | 9. QUIC path, Rust to Rust | done for the CLI, 2026-10-18; the phone measured on one network | `1a4f465`, `6657835`, `167daec`, `5eb87cf`, `8e89f49`, `bf03973` | the session moves a file over quinn after the SAS, through two NATs, and falls back to WebRTC; three to ten times SCTP under netem. On a phone's Wi-Fi QUIC ran 15-40% behind the LAN path, so LAN now wins when both are up and QUIC opens with a 1 MiB window. On in the Rust CLI, off in the app until the phone is measured across two networks; see "Phase 9: what it found" |
-| 10. Extraction prep | done, 2026-10-18; the publish awaits the owner | `08990d5`, `5355471` | `tryst` 0.1.0 is documented, carries its own vectors and licence, and passes its tests built from its own tarball outside the workspace; the crates.io publish is the owner's call; see "Phase 10: what it found" |
+| 10. Extraction prep | done, 2026-10-18; published 2026-10-23 | `08990d5`, `5355471` | `tryst` 0.1.0 is documented, carries its own vectors and licence, and passes its tests built from its own tarball outside the workspace; it went to crates.io on 2026-10-23; see "Phase 10: what it found" |
 
 **Next step:** every phase is done as far as this machine can take it. What is left waits on a
 person or a device:
-- **Publishing `tryst` 0.1.0** to crates.io: `cargo publish -p tryst`, once the owner agrees
-  (see "Phase 10: what it found"). crates.io still had only 0.0.1 on 2026-10-23.
 - **Phase 8's first release** needs the five platform names published once by hand, and a Trusted
   Publishing entry for each (see "Phase 8: what it found"). None was on the registry on
   2026-10-23, so the next `v*` tag cannot ship the Rust CLI until they are.
