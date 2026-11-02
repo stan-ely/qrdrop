@@ -66,21 +66,24 @@ import { createSink as webCreateSink, canStreamToDisk as webCanStreamToDisk } fr
  * @typedef {{ t: 'status', text: string }
  *   | { t: 'paired', sas: string, words: string[] }
  *   | { t: 'path', path: NetworkPath }
- *   | { t: 'offer', name: string, size: number }
+ *   | { t: 'offer', name: string, size: number, mime: string }
  *   | { t: 'tooLarge', message: string }
  *   | { t: 'accepted' }
  *   | { t: 'progress', moved: number, total: number }
  *   | { t: 'lan' }
+ *   | { t: 'quic' }
  *   | { t: 'sent', digest: string }
- *   | { t: 'received', name: string, size: number, digest: string, location: string }
+ *   | { t: 'received', name: string, size: number, digest: string, location: string, text: string | null }
  *   | { t: 'declined' }
  *   | { t: 'error', message: string }} NativeEvent
  */
 
 /**
- * The person's words to a running native transfer.
+ * The person's words to a running native transfer. 'acceptText' is Accept for
+ * an offer text.js's isText calls text: the bytes stay in memory and come back
+ * on 'received', after the digest, so nothing is written to disk.
  *
- * @typedef {'confirm' | 'reject' | 'accept' | 'decline' | 'cancel'} NativeWord
+ * @typedef {'confirm' | 'reject' | 'accept' | 'acceptText' | 'decline' | 'cancel'} NativeWord
  */
 
 /**
@@ -89,6 +92,10 @@ import { createSink as webCreateSink, canStreamToDisk as webCanStreamToDisk } fr
  *   Promise<{ code: string, control: (word: NativeWord) => void }>} send
  *   Starts a send: the secret is generated on the native side, fresh for
  *   every call, and the code comes back to be shown.
+ * @property {(message: { text: string, name: string, mime: string }, onEvent: (e: NativeEvent) => void) =>
+ *   Promise<{ code: string, control: (word: NativeWord) => void }>} sendText
+ *   `send`, for a typed message, which has no path. Everything after the
+ *   first step is the same send, so it waits for the same 'confirm'.
  * @property {(code: string, onEvent: (e: NativeEvent) => void) =>
  *   Promise<{ control: (word: NativeWord) => void }>} receive
  * @property {() => Promise<NativeFile | null>} [pick] A file picker that

@@ -11,6 +11,17 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
+## Unreleased
+
+**Send text and show received text on Linux.** "Send text" is now on the first screen on
+Linux too, and a message that arrives there is shown with **Copy** and **Save as file**
+instead of being saved as `message.txt`. As on other platforms, the text appears only
+after it has been checked, and it is not written to disk unless you choose **Save as
+file**. The same now applies wherever the app's native session is switched on.
+
+**The connection badge can show a direct QUIC connection.** The app does not use QUIC
+yet, so you will not see this until a later version turns it on.
+
 ## 1.3.0 -- 2026-10-26
 
 **Ready for codes that work without the internet.** A pairing code may now carry a

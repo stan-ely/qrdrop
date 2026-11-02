@@ -52,7 +52,7 @@ const SAS_WORDS = ['anchor', 'butter', 'cactus', 'dolphin']
 function state(overrides) {
   return /** @type {any} */ ({
     screen: 'choose', role: null, status: '', error: null, code: '', qrNode: null,
-    qrIsLink: false, path: null, lan: false, pathDebug: null, cameraAvailable: true, rtcAvailable: true,
+    qrIsLink: false, path: null, lan: false, quic: false, pathDebug: null, cameraAvailable: true, rtcAvailable: true,
     capabilityNote: null, coarse: false, sas: '🎧 🧈 🌵 🐬', sasWords: SAS_WORDS,
     offer: null, file: null, progress: null, outcome: null, message: null, digest: '',
     dragging: false, copied: null, pairing: false, busy: false, manualError: null,
@@ -237,6 +237,30 @@ test('the fast path takes over the badge, in the local colour and with no metere
   // come before the classification ever resolves.
   const early = screenTree(state({ screen: 'transfer', role: 'receiver', file, progress, lan: true }), 'transfer')
   assert.match(textOf(early), /Local network, direct/)
+})
+
+test('the QUIC badge claims no network, keeps the metered warning, and loses to the LAN', () => {
+  const file = { name: 'holiday.mov', size: 900_000_000 }
+  const progress = { moved: 1, total: file.size }
+  const badgeOf = (/** @type {any} */ tree) => [...walk(tree)].find(n => String(n.props?.class ?? '').startsWith('path-badge'))
+
+  const on = screenTree(state({ screen: 'transfer', role: 'sender', file, progress, path: 'direct', quic: true }), 'transfer')
+  assert.equal(badgeOf(on)?.props.class, 'path-badge direct')
+  assert.match(textOf(on), /Direct, over QUIC/)
+  // QUIC can cross the internet, so it must not make the LAN's promise, and
+  // the warning about a large file doing so has to survive the swap.
+  assert.doesNotMatch(textOf(on), /staying on this network/)
+  assert.match(textOf(on), /crosses the internet/)
+
+  // Before the classification resolves, as with the LAN.
+  const early = screenTree(state({ screen: 'transfer', role: 'receiver', file, progress, quic: true }), 'transfer')
+  assert.match(textOf(early), /Direct, over QUIC/)
+
+  // The session prefers the LAN when both are up, so the badge must too.
+  const both = screenTree(state({ screen: 'transfer', role: 'sender', file, progress, path: 'direct', quic: true, lan: true }), 'transfer')
+  assert.equal(badgeOf(both)?.props.class, 'path-badge local')
+  assert.match(textOf(both), /Local network, direct/)
+  assert.doesNotMatch(textOf(both), /QUIC/)
 })
 
 test('the app says where a received file went, and only a receive offers to change it', () => {

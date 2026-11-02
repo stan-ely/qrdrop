@@ -1537,7 +1537,12 @@ A native send needs a **path**, and a `File` from an `<input>` or an HTML drop h
 So the desktop pick is plugin-dialog's `open()`, a desktop drop is the window's
 `onDragDropEvent`, and the share handoff passes its cache path straight through. An
 Android pick is a `content://` URI with no display name short of new Kotlin, so `pick` is
-not offered there and a picked file keeps the JS session. The event names are a contract
+not offered there and a picked file keeps the JS session. A typed message has no path and
+needs none: `native_send_text` sends it from memory through the same `run_send`, because a
+temporary file would put a pasted password on disk. On the way in, `isText` stays the page's
+rule. The offer carries `mime`, Accept sends `acceptText` for text, and `TextSink::close` is
+the only thing that fills the slot `drive` reads, which is what keeps text behind the digest:
+the session closes a sink only after it matched. The event names are a contract
 with `platform.js`'s `NativeEvent`, which `native.rs`'s tests read. `npm run
 test:e2e:app-native` (Windows; it attaches to WebView2 over CDP) drives the real debug app
 both ways against the Node CLI, and a decline.

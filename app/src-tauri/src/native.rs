@@ -59,8 +59,9 @@ pub enum NativeEvent {
     Paired { sas: String, words: Vec<String> },
     /// The route, both sides' verdicts combined.
     Path { path: NetworkPath },
-    /// An offer, for the receiver's Accept.
-    Offer { name: String, size: u64 },
+    /// An offer, for the receiver's Accept. `mime` is what lets the page apply
+    /// text.js's isText, which is the one definition of what is shown as text.
+    Offer { name: String, size: u64, mime: String },
     /// An offer refused before it was shown: over the relay cap on a relayed
     /// connection. Already declined.
     TooLarge { message: String },
@@ -69,8 +70,12 @@ pub enum NativeEvent {
     Progress { moved: u64, total: u64 },
     /// The sender's frames now cross the local network.
     Lan,
+    /// The same, for the direct QUIC connection.
+    Quic,
     Sent { digest: String },
-    Received { name: String, size: u64, digest: String, location: String },
+    /// `text` is the message after `acceptText`, whose digest has checked out
+    /// by now, and `location` is then empty because nothing was saved.
+    Received { name: String, size: u64, digest: String, location: String, text: Option<String> },
     Declined,
     /// The transfer is over, for the reason given.
     Error { message: String },
@@ -83,6 +88,9 @@ pub enum Word {
     Confirm,
     Reject,
     Accept,
+    /// Accept, held in memory rather than saved. The page says this, for an
+    /// offer that isText calls text, so that rule is not repeated here.
+    AcceptText,
     Decline,
     Cancel,
 }
@@ -169,6 +177,72 @@ impl Source for FileSource {
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         self.file.read_exact(buf)
     }
+}
+
+/// A typed message: bytes in memory, under the name and type the page gave it
+/// (text.js, the one place they are spelled). It has no path, and writing it
+/// to a temporary file to get one would put a password someone pasted on
+/// disk for the sake of reusing `FileSource`.
+struct TextSource {
+    name: String,
+    mime: String,
+    size: u64,
+    bytes: io::Cursor<Vec<u8>>,
+}
+
+impl Source for TextSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn size(&self) -> u64 {
+        self.size
+    }
+    fn mime(&self) -> &str {
+        &self.mime
+    }
+    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.bytes.read_exact(buf)
+    }
+}
+
+/// The message once it is whole and verified, shared between its sink and
+/// `drive`.
+type Message = Arc<Mutex<Option<Vec<u8>>>>;
+
+/// text.js's createTextSink on this side: the bytes stay in memory and nothing
+/// is opened on disk. The session closes a sink only after the digest matched,
+/// and `close` is the only thing that fills the slot `drive` reads, so a
+/// message that fails its digest has no way of reaching the page.
+struct TextSink {
+    bytes: Vec<u8>,
+    size: u64,
+    whole: Message,
+}
+
+impl Sink for TextSink {
+    fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        // The session already refuses more than the manifest declared; the
+        // same bound said again where the memory is, as createTextSink does.
+        if (self.bytes.len() + data.len()) as u64 > self.size {
+            return Err(io::Error::other("Peer sent more data than the manifest declared"));
+        }
+        self.bytes.extend_from_slice(data);
+        Ok(())
+    }
+
+    fn close(mut self: Box<Self>) -> io::Result<String> {
+        *self.whole.lock().unwrap() = Some(std::mem::take(&mut self.bytes));
+        Ok(String::new())
+    }
+
+    fn abort(self: Box<Self>) {}
+}
+
+/// `new TextDecoder('utf-8').decode()`, which is what the JS session shows:
+/// invalid bytes become U+FFFD, and a leading byte order mark is dropped.
+fn decode_text(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned()
 }
 
 /// The destination sink.rs opened, written on the session's sink thread.
@@ -267,7 +341,33 @@ pub async fn native_send(
             .file_name()
             .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned())
     });
-    let source = FileSource { name, size, file };
+    Ok(start_send(app, &state, Box::new(FileSource { name, size, file }), events))
+}
+
+/// Start a send of a typed message. The same send as `native_send` from here
+/// on, so the secret is as fresh and nothing leaves before the page's Confirm.
+#[tauri::command]
+pub async fn native_send_text(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NativeState>,
+    text: String,
+    name: String,
+    mime: String,
+    events: Channel<NativeEvent>,
+) -> Result<Started, String> {
+    let bytes = text.into_bytes();
+    let size = bytes.len() as u64;
+    let bytes = io::Cursor::new(bytes);
+    let source = TextSource { name, mime, size, bytes };
+    Ok(start_send(app, &state, Box::new(source), events))
+}
+
+fn start_send(
+    app: tauri::AppHandle,
+    state: &NativeState,
+    source: Box<dyn Source>,
+    events: Channel<NativeEvent>,
+) -> Started {
     let secret = Secret::generate();
     let code = secret.code();
     let (id, words) = state.add();
@@ -275,7 +375,7 @@ pub async fn native_send(
         run_send(source, secret, &events, words).await;
         forget(&app, id);
     });
-    Ok(Started { id, code })
+    Started { id, code }
 }
 
 /// Start a receive: the code is the person's, checked here as `decodeSecret`
@@ -307,7 +407,7 @@ pub fn native_control(state: tauri::State<'_, NativeState>, id: u32, word: Word)
 }
 
 async fn run_send(
-    source: FileSource,
+    source: Box<dyn Source>,
     secret: Secret,
     events: &Channel<NativeEvent>,
     mut words: mpsc::UnboundedReceiver<Word>,
@@ -327,13 +427,13 @@ async fn run_send(
     let (handle, mut session) = paired.confirm(Role::Host, options()).await;
     // Free TURN is metered: refuse before the manifest goes out, as the CLI
     // and element.js do.
-    if source.size > RELAYED_MAX_BYTES && handle.path().await == NetworkPath::Relay {
+    if source.size() > RELAYED_MAX_BYTES && handle.path().await == NetworkPath::Relay {
         let _ = events.send(NativeEvent::Error {
-            message: messages::relay_cap(&source.name, source.size),
+            message: messages::relay_cap(source.name(), source.size()),
         });
         return handle.close().await;
     }
-    handle.send_file(Box::new(source));
+    handle.send_file(source);
     drive(None, &handle, &mut session, &mut words, events).await;
 }
 
@@ -397,6 +497,7 @@ async fn drive(
         let _ = events.send(e);
     };
     let mut offered: Option<Manifest> = None;
+    let mut message: Option<Message> = None;
     let mut reported: Option<Instant> = None;
     let mut progress = |moved: u64, total: u64| {
         let now = Instant::now();
@@ -420,15 +521,14 @@ async fn drive(
                         emit(NativeEvent::TooLarge { message: messages::relay_cap_decline(&m.name, m.size) });
                         break;
                     }
-                    emit(NativeEvent::Offer { name: m.name.clone(), size: m.size });
+                    emit(NativeEvent::Offer { name: m.name.clone(), size: m.size, mime: m.mime.clone() });
                     offered = Some(m);
                 }
                 Some(SessionEvent::ReceiveProgress { received, total }) => progress(received, total),
                 Some(SessionEvent::SendProgress { sent, total }) => progress(sent, total),
                 Some(SessionEvent::SendAccepted) => {}
                 Some(SessionEvent::Lan) => emit(NativeEvent::Lan),
-                // Never, while options() leaves QUIC out.
-                Some(SessionEvent::Quic) => {}
+                Some(SessionEvent::Quic) => emit(NativeEvent::Quic),
                 Some(SessionEvent::Sent { digest }) => {
                     emit(NativeEvent::Sent { digest });
                     break;
@@ -438,7 +538,9 @@ async fn drive(
                     // what the done screen shows, and the location ends in it.
                     let saved = location.rsplit(['/', '\\']).next().filter(|s| !s.is_empty());
                     let name = saved.map_or(name, str::to_owned);
-                    emit(NativeEvent::Received { name, size, digest, location });
+                    let text = message.take().and_then(|m| m.lock().unwrap().take());
+                    let text = text.as_deref().map(decode_text);
+                    emit(NativeEvent::Received { name, size, digest, location, text });
                     break;
                 }
                 Some(SessionEvent::Declined) => {
@@ -477,6 +579,13 @@ async fn drive(
                             break;
                         }
                     }
+                }
+                Some(Word::AcceptText) => {
+                    let (Some(_), Some(m)) = (app, offered.take()) else { continue };
+                    let whole = Message::default();
+                    message = Some(whole.clone());
+                    handle.accept(Box::new(TextSink { bytes: Vec::new(), size: m.size, whole }));
+                    emit(NativeEvent::Accepted);
                 }
                 // The page resets itself on a decline; nothing more to say.
                 Some(Word::Decline) => {
@@ -527,14 +636,81 @@ mod tests {
             serde_json::json!({ "t": "progress", "moved": 1, "total": 2 }),
         );
         assert_eq!(json(NativeEvent::Accepted), serde_json::json!({ "t": "accepted" }));
+        assert_eq!(json(NativeEvent::Quic), serde_json::json!({ "t": "quic" }));
+        assert_eq!(
+            json(NativeEvent::Offer { name: "n".into(), size: 1, mime: "text/plain".into() }),
+            serde_json::json!({ "t": "offer", "name": "n", "size": 1, "mime": "text/plain" }),
+        );
+        assert_eq!(
+            json(NativeEvent::Received {
+                name: "n".into(),
+                size: 1,
+                digest: "d".into(),
+                location: String::new(),
+                text: Some("hi".into()),
+            }),
+            serde_json::json!({
+                "t": "received", "name": "n", "size": 1, "digest": "d", "location": "", "text": "hi",
+            }),
+        );
 
         let platform = include_str!("../../../src/web/platform.js");
         for t in [
-            "status", "paired", "path", "offer", "tooLarge", "accepted", "progress", "lan", "sent",
-            "received", "declined", "error",
+            "status", "paired", "path", "offer", "tooLarge", "accepted", "progress", "lan", "quic",
+            "sent", "received", "declined", "error",
         ] {
             assert!(platform.contains(&format!("{{ t: '{t}'")), "platform.js has no `{t}` event");
         }
+    }
+
+    fn text_sink(size: u64) -> (Box<TextSink>, Message) {
+        let whole = Message::default();
+        (Box::new(TextSink { bytes: Vec::new(), size, whole: whole.clone() }), whole)
+    }
+
+    /// The page may only see a message after the digest, and the session
+    /// closes a sink only after it, so nothing but `close` may fill the slot.
+    #[test]
+    fn a_message_is_readable_only_once_its_sink_closes() {
+        let (mut sink, whole) = text_sink(5);
+        sink.write(b"he").unwrap();
+        sink.write(b"llo").unwrap();
+        assert_eq!(*whole.lock().unwrap(), None);
+        assert_eq!(sink.close().unwrap(), "");
+        assert_eq!(whole.lock().unwrap().as_deref(), Some(&b"hello"[..]));
+    }
+
+    #[test]
+    fn an_aborted_message_never_reaches_the_slot() {
+        let (mut sink, whole) = text_sink(5);
+        sink.write(b"he").unwrap();
+        sink.abort();
+        assert_eq!(*whole.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn a_message_cannot_outgrow_the_size_it_was_accepted_at() {
+        let (mut sink, _) = text_sink(4);
+        sink.write(b"abc").unwrap();
+        assert!(sink.write(b"de").is_err());
+    }
+
+    #[test]
+    fn a_message_decodes_as_the_js_session_decodes_it() {
+        assert_eq!(decode_text("caf\u{e9}".as_bytes()), "caf\u{e9}");
+        assert_eq!(decode_text(b"\xef\xbb\xbfbom"), "bom");
+        assert_eq!(decode_text(b"a\xffb"), "a\u{fffd}b");
+        assert_eq!(decode_text(b""), "");
+    }
+
+    #[test]
+    fn a_typed_message_is_offered_as_text() {
+        let bytes = io::Cursor::new(b"hi".to_vec());
+        let mut source = TextSource { name: "message.txt".into(), mime: "text/plain".into(), size: 2, bytes };
+        assert_eq!(Source::mime(&source), "text/plain");
+        let mut buf = [0; 2];
+        Source::read_exact(&mut source, &mut buf).unwrap();
+        assert_eq!(&buf, b"hi");
     }
 
     #[test]
@@ -543,6 +719,7 @@ mod tests {
             ("confirm", Word::Confirm),
             ("reject", Word::Reject),
             ("accept", Word::Accept),
+            ("acceptText", Word::AcceptText),
             ("decline", Word::Decline),
             ("cancel", Word::Cancel),
         ] {

@@ -50,7 +50,7 @@ import { getPlatform } from './platform.js'
 import { renderQR, scanQR, cameraAvailable } from './qr.js'
 import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
-import { isText, textFile, textBytes, tooLongMessage, createTextSink, TEXT_MAX_BYTES } from './text.js'
+import { isText, textFile, textBytes, tooLongMessage, createTextSink, TEXT_MAX_BYTES, TEXT_MIME } from './text.js'
 import { patch } from './vdom.js'
 import { render, dialogContent, NO_CAMERA_SCAN, NO_SAVE_FOLDER } from './view.js'
 import { copyText } from './copy.js'
@@ -521,6 +521,7 @@ export class QRDropElement extends HTMLElement {
       qrIsLink: false,
       path: /** @type {NetworkPath | null} */ (null),
       lan: false,
+      quic: false,
       pathDebug: /** @type {string | null} */ (null),
       cameraAvailable: cameraAvailable(),
       // Read once per instance, same as cameraAvailable above -- neither
@@ -571,12 +572,10 @@ export class QRDropElement extends HTMLElement {
       beamEnlarged: false,
       saveLocation: /** @type {string | null} */ (null),
       canChangeFolder: false,
-      // Sending text needs this page's own WebRTC, because the text is a File
-      // the page built and a native session sends only what has a path. So it
-      // is offered where RTCPeerConnection exists, and nowhere else -- which
-      // leaves out exactly Linux's webview, where the native session is the
-      // only road.
-      canSendText: typeof RTCPeerConnection !== 'undefined',
+      // Offered wherever a transfer can run, which is rtcAvailable's test. A
+      // native session takes the text itself rather than as a path (_sendText),
+      // so Linux's webview, with no WebRTC of its own, has it too.
+      canSendText: typeof RTCPeerConnection !== 'undefined' || Boolean(getPlatform().session),
       isText: false,
       text: /** @type {string | null} */ (null),
       draft: '',
@@ -1403,7 +1402,7 @@ export class QRDropElement extends HTMLElement {
     // trust. Accurate and misleading at once. Caught by looking at the
     // screenshot; every assertion in check-layout.mjs was green.
     this._setState({
-      screen: 'done', outcome: 'mismatch', file: null, digest: '', message: null, path: null, lan: false,
+      screen: 'done', outcome: 'mismatch', file: null, digest: '', message: null, path: null, lan: false, quic: false,
     })
   }
 
@@ -1437,7 +1436,7 @@ export class QRDropElement extends HTMLElement {
       sas: '', sasWords: [], offer: null, file: null, progress: null,
       outcome: null, message: null, digest: '', pairing: false, copied: null, dragging: false,
       mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
-      path: null, lan: false, pathDebug: null, saveLocation: null, canChangeFolder: false,
+      path: null, lan: false, quic: false, pathDebug: null, saveLocation: null, canChangeFolder: false,
       isText: false, text: null, draftError: null,
       // Last key wins over the `error: null` _setState injects for any
       // update carrying a screen change, which is what lets this one reset
@@ -1476,7 +1475,10 @@ export class QRDropElement extends HTMLElement {
    * an over-long message is a complaint about what was typed, not a failure.
    *
    * From here it is an ordinary send of an ordinary File -- see text.js for
-   * why there is no other road -- so the SAS comes before any manifest.
+   * why there is no other road -- so the SAS comes before any manifest. A
+   * native session sends the same name, type and bytes, handed over as text
+   * because a File has no path it could open, and it waits for the same
+   * Confirm.
    *
    * @param {string} raw
    */
@@ -1487,7 +1489,9 @@ export class QRDropElement extends HTMLElement {
     const size = textBytes(text)
     if (size > TEXT_MAX_BYTES) return this._setState({ draft: text, draftError: tooLongMessage(size) })
     this._setState({ modal: null, draft: '', draftError: null })
-    this._startSend(textFile(text)).catch(e => this._fail(e))
+    const file = textFile(text)
+    const start = getPlatform().session ? this._startNativeSend(file, text) : this._startSend(file)
+    start.catch(e => this._fail(e))
   }
 
   /**
@@ -1992,19 +1996,24 @@ export class QRDropElement extends HTMLElement {
    * session is up, so a too-large file on a relayed path fails just after
    * Confirm rather than just before it. The manifest still never goes out.
    *
-   * @param {NativeFile} file
+   * @param {NativeFile | File} file A path to open, or with `text` the File
+   *   textFile() built around it.
+   * @param {string} [text] A typed message, sent from memory: it has no path,
+   *   and a temporary file would put it on disk.
    */
-  async _startNativeSend(file) {
+  async _startNativeSend(file, text) {
     const native = /** @type {NativeSession} */ (getPlatform().session)
     this._setState({
       screen: 'send', role: 'sender', status: 'Starting…', pairing: true, file: { name: file.name, size: file.size },
+      isText: text !== undefined,
     })
     const progress = this._trackProgress('Sent')
     let sending = false
     let paired = false
     const { control, live } = this._nativeTeardown()
 
-    const started = await native.send(file, ev => {
+    /** @param {NativeEvent} ev */
+    const onEvent = ev => {
       if (!live()) return
       switch (ev.t) {
         case 'paired':
@@ -2027,7 +2036,10 @@ export class QRDropElement extends HTMLElement {
         case 'error': return this._nativeFailed(new Error(ev.message), sending || paired)
         default: return this._nativeCommon(ev)
       }
-    })
+    }
+    const started = text === undefined
+      ? await native.send(/** @type {NativeFile} */ (file), onEvent)
+      : await native.sendText({ text, name: file.name, mime: TEXT_MIME }, onEvent)
     control.to(started.control)
     if (!live()) return started.control('cancel')
 
@@ -2039,6 +2051,11 @@ export class QRDropElement extends HTMLElement {
    * _startReceive on the native session. The receiver's Accept is still the
    * one gesture that answers the SAS and the offer together, and nothing is
    * written before it: native.rs opens the destination on the 'accept' word.
+   *
+   * Text is decided here, by isText, as _startReceive decides it. The answer
+   * is the word Accept sends: 'acceptText' has native.rs hold the bytes in
+   * memory and open nothing, and they come back on 'received', which only
+   * follows a digest that checked out.
    *
    * @param {Bytes} secret
    */
@@ -2055,7 +2072,8 @@ export class QRDropElement extends HTMLElement {
         case 'paired':
           paired = true
           return this._setState({ pairing: false, screen: 'verify', sas: ev.sas, sasWords: ev.words })
-        case 'offer':
+        case 'offer': {
+          const text = isText(ev)
           this._onOfferDecline = () => {
             this._onOfferDecline = null
             this._onOfferAccept = null
@@ -2066,9 +2084,10 @@ export class QRDropElement extends HTMLElement {
             this._onOfferAccept = null
             this._onOfferDecline = null
             this._setState({ busy: true })
-            control('accept')
+            control(text ? 'acceptText' : 'accept')
           }
-          return this._setState({ offer: { name: ev.name, size: ev.size } })
+          return this._setState({ offer: { name: ev.name, size: ev.size }, isText: text })
+        }
         case 'tooLarge':
           this._sessionEnded = true
           return this._setState({ screen: 'done', outcome: 'too-large', message: ev.message })
@@ -2086,8 +2105,11 @@ export class QRDropElement extends HTMLElement {
           return this._setState({
             screen: 'done', outcome: 'received',
             file: { name: ev.name, size: ev.size }, digest: ev.digest,
-            saveLocation: ev.location,
-            canChangeFolder: Boolean(getPlatform().changeSaveLocation),
+            // As _startReceive's onFileDone: nothing was saved for text, so
+            // there is no location to report and no folder to change yet.
+            saveLocation: ev.text === null ? ev.location : null,
+            canChangeFolder: ev.text === null && Boolean(getPlatform().changeSaveLocation),
+            text: ev.text,
           })
         case 'error': return this._nativeFailed(new Error(ev.message), paired)
         default: return this._nativeCommon(ev)
@@ -2132,6 +2154,7 @@ export class QRDropElement extends HTMLElement {
       // Already both sides' verdicts combined, by the session.
       case 'path': return this._announcePath(ev.path)
       case 'lan': return this._setState({ lan: true })
+      case 'quic': return this._setState({ quic: true })
     }
   }
 

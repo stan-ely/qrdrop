@@ -133,6 +133,22 @@ export const LAN_PATH = {
 }
 
 /**
+ * The badge once the file is moving over the direct QUIC connection between
+ * two Rust peers (crates/qrdrop-session/src/quic.rs). A separate fact for the
+ * reason LAN_PATH is, and it loses to LAN_PATH when both are somehow set,
+ * because the session prefers the LAN.
+ *
+ * It takes the 'direct' colour and promises only that no relay is involved.
+ * QUIC's whole purpose is crossing networks, so unlike LAN_PATH it must not
+ * say the bytes stay on this one, and it must not say they leave it either:
+ * nothing at this layer knows which addresses the connection settled on.
+ */
+export const QUIC_PATH = {
+  label: 'Direct, over QUIC',
+  detail: 'A direct connection to the other device, not through a relay, faster than the usual route.',
+}
+
+/**
  * The size at which crossing the internet is worth saying out loud.
  *
  * 25 MiB, and deliberately NOT RELAYED_MAX_BYTES, though the two constants now

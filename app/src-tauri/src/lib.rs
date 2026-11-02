@@ -69,6 +69,7 @@ pub fn run() {
             native::native_session_default,
             native::native_stat,
             native::native_send,
+            native::native_send_text,
             native::native_receive,
             native::native_control,
             // Where a received file goes, and the Android folder grant

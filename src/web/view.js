@@ -49,7 +49,7 @@
 
 import { h } from './vdom.js'
 import { bytes, duration } from '../core/format.js'
-import { pathDescription, meteredWarning, LAN_PATH } from '../core/messages.js'
+import { pathDescription, meteredWarning, LAN_PATH, QUIC_PATH } from '../core/messages.js'
 // A value import, not just a type -- checked once against beam.js's own
 // module top level before relying on it here: it defines constants and
 // exported functions and touches neither `document` nor a camera at import
@@ -89,6 +89,8 @@ import { TEXT_NAME } from './text.js'
  *   local-network fast path: the sender once it switched at Accept, the
  *   receiver once the first frame arrived over it. Never set on the website,
  *   which has no LanPlatform. The badge prefers it to `path`.
+ * @property {boolean} quic the same, for the direct QUIC connection between
+ *   two native sessions. The badge prefers it to `path` and `lan` to it.
  * @property {string | null} pathDebug TEMPORARY: the raw candidate-pair dump,
  *   populated only under `?debug=path`. Remove with collectPathEvidence.
  * @property {boolean} cameraAvailable
@@ -138,7 +140,8 @@ import { TEXT_NAME } from './text.js'
  * @property {boolean} canChangeFolder whether the done screen offers "Change
  *   folder": set after a receive on a platform with a folder to change.
  * @property {boolean} canSendText whether the choose screen offers "Send text":
- *   wherever this page has WebRTC of its own (see element.js).
+ *   wherever a transfer can run at all, on this page's WebRTC or a native
+ *   session (see element.js).
  * @property {boolean} isText whether this session's file is text (web/text.js),
  *   set from the file on the sending end and from the manifest on the
  *   receiving one. It changes copy only: the screens are the same screens.
@@ -197,15 +200,18 @@ const builders = {
  * @param {State} state
  */
 function pathBadge(state) {
-  if ((!state.path && !state.lan) || state.mode === 'beam') return null
+  if ((!state.path && !state.lan && !state.quic) || state.mode === 'beam') return null
 
   // The fast path wins over the classification, which describes the WebRTC
   // connection the file has stopped using. It arrives on the transfer screen
   // (the switch is at Accept), replacing a badge already there, which is what
   // the aria-live below is for. It takes the 'local' colour because it makes
   // the 'local' promise, and no metered warning, because nothing it carries
-  // leaves the network.
-  const { label, detail } = state.lan ? LAN_PATH : pathDescription(state.path ?? 'unknown')
+  // leaves the network. QUIC replaces the badge the same way, but it can cross
+  // the internet, so it keeps the metered warning and takes the 'direct' colour.
+  const { label, detail } = state.lan ? LAN_PATH
+    : state.quic ? QUIC_PATH
+      : pathDescription(state.path ?? 'unknown')
   // The sender knows the file, the receiver knows the offer; whichever this
   // side has is the size the warning should be about.
   const subject = state.file ?? state.offer
@@ -214,7 +220,7 @@ function pathBadge(state) {
     : null
 
   return h('div', { class: 'path-info', 'aria-live': 'polite' }, [
-    h('p', { class: `path-badge ${state.lan ? 'local' : state.path}` }, label),
+    h('p', { class: `path-badge ${state.lan ? 'local' : state.quic ? 'direct' : state.path}` }, label),
     h('p', { class: 'note' }, detail),
     warning ? h('p', { class: 'callout warn' }, warning) : null,
     // TEMPORARY, `?debug=path` only. Text content via h(), never innerHTML --

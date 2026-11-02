@@ -338,9 +338,10 @@ file. The SAS is confirmed before its manifest goes out, and the receiver answer
 with Accept. A receiving web UI treats any offer that is `text/plain` and 64 KiB or
 smaller as text (`src/web/text.js`). It hands `createReceiver` a sink that keeps the
 bytes in memory instead of opening a save dialog. Once the digest has checked out, it
-shows them as a text node with Copy and Save as file. A peer that has never heard of
-this (either CLI, the app's native session, an older page) sees a small text file and
-saves it, so neither side has to know what the other runs.
+shows them as a text node with Copy and Save as file. The app's native session does the
+same from Rust, with the page still applying that rule. A peer that has never heard of
+this (either CLI, an older page) sees a small text file and saves it, so neither side
+has to know what the other runs.
 
 The type and the size are the sender's claims, like everything in a manifest. Showing
 the text is safe whatever it says, because the view has no `innerHTML` path. The size

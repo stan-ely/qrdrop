@@ -13,10 +13,15 @@
  *
  * The receiver recognises text by what the manifest says, and only that:
  * plain text, and small. Everything older -- both CLIs, a page from before
- * this, the app's native session -- sees a small .txt file and saves it, which
- * is the right degradation and needs nothing from them. The rule is the same
- * one the sender's screens use, so a `notes.txt` someone dropped is shown as
- * text on both ends too, and both ends agree about what they are looking at.
+ * this -- sees a small .txt file and saves it, which is the right degradation
+ * and needs nothing from them. The rule is the same one the sender's screens
+ * use, so a `notes.txt` someone dropped is shown as text on both ends too, and
+ * both ends agree about what they are looking at.
+ *
+ * The app's native session keeps to all of this from Rust, and the page still
+ * decides: a typed message goes to native.rs with the name and type below, and
+ * isText picks the word Accept sends, which has native.rs hold the bytes in
+ * memory (its TextSink, this file's createTextSink on that side).
  *
  * The type and the size are claims from the peer. That is safe because of
  * what showing the text means: view.js renders it as a text node through h(),

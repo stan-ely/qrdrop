@@ -21,7 +21,8 @@
  * On Android a pick is a `content://` URI with no display name, which only new
  * Kotlin could supply, so `pick` is not offered there and a picked file keeps
  * the JS session; a share handoff is a real path in the cache directory and
- * goes native.
+ * goes native. A typed message is the exception: it crosses as text and Rust
+ * sends it from memory, so it never has a path to need.
  */
 
 const OVERRIDE_KEY = 'qrdrop:native-session'
@@ -70,6 +71,11 @@ export async function createNativeSession({ android }) {
     async send(file, onEvent) {
       /** @type {{ id: number, code: string }} */
       const started = await invoke('native_send', { path: file.path, name: file.name, events: channel(onEvent) })
+      return { code: started.code, control: control(started.id) }
+    },
+    async sendText({ text, name, mime }, onEvent) {
+      /** @type {{ id: number, code: string }} */
+      const started = await invoke('native_send_text', { text, name, mime, events: channel(onEvent) })
       return { code: started.code, control: control(started.id) }
     },
     async receive(code, onEvent) {

@@ -24,6 +24,10 @@
  *    where, and the file is removed afterwards.
  * 3. The app declines an offer: the CLI sender exits 1, the app is back on
  *    choose, and nothing is written.
+ * 4. The app sends text from the compose sheet, past the same SAS, and the CLI
+ *    saves it: the CLI has no idea it was typed.
+ * 5. The app receives text, from send-text-peer.mjs since neither CLI offers
+ *    any. It is shown on the done screen, and nothing lands in Downloads.
  *
  * Build first: `mise run app:build-site`, then
  * `npx tauri build --debug --no-bundle` in app/. QRDROP_APP points at another
@@ -265,6 +269,90 @@ async function appDeclines(page, tmp) {
   }
 }
 
+/**
+ * @param {import('playwright').Page} page
+ * @param {string} tmp
+ */
+async function appSendsText(page, tmp) {
+  const message = `sent from the app's native session ${randomBytes(4).toString('hex')} é世`
+  const outDir = fs.mkdtempSync(path.join(tmp, 'cli-text-'))
+
+  await toChoose(page)
+  await page.click('#btn-text')
+  await page.fill('#text-input', message)
+  await page.click('#btn-text-send')
+  await page.waitForFunction(
+    () => /^qrdrop:/.test(document.querySelector('qr-drop')?.shadowRoot?.querySelector('#manual-code')?.textContent?.trim() ?? ''),
+    null, { timeout: TIMEOUT },
+  )
+  const code = await text(page, '#manual-code')
+
+  const peer = cli(['receive', code, '--out', outDir], 'recv:js')
+  try {
+    await page.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
+    const appSas = await text(page, '#sas')
+    const theirs = await cliSas(peer)
+    if (appSas !== theirs) throw new Error(`SAS mismatch: app ${appSas} vs CLI ${theirs}`)
+    peer.say('y')
+    // The SAS before any manifest: with the CLI's half answered, nothing may
+    // reach it until the app's Confirm is pressed.
+    await new Promise(resolve => setTimeout(resolve, 3000))
+    if (/Incoming:/.test(peer.output)) throw new Error('an offer reached the peer before the SAS was confirmed')
+    log('SAS agreed, no offer before Confirm:', appSas)
+
+    await page.click('#verify-status button.primary')
+    await peer.waitFor(/Incoming:.*Accept\?/)
+    peer.say('y')
+
+    const exit = await peer.exited
+    if (exit !== 0) throw new Error(`qrdrop receive exited ${exit}`)
+    await page.waitForSelector('#screen-done:not([hidden])', { timeout: TIMEOUT })
+    const landed = fs.readFileSync(path.join(outDir, 'message.txt'), 'utf8')
+    if (landed !== message) throw new Error(`text differs: sent ${message}, got ${landed}`)
+    console.log(`\nPASS  app(native) text -> js  ${Buffer.byteLength(landed)} bytes`)
+  } finally {
+    peer.child.kill()
+  }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ */
+async function appReceivesText(page) {
+  const message = `sent to the app's native session ${randomBytes(4).toString('hex')} é世\n<b>inert</b>`
+  const folder = path.join(os.homedir(), 'Downloads', 'qrdrop')
+  const listing = () => (fs.existsSync(folder) ? fs.readdirSync(folder).sort().join('\n') : '')
+  const before = listing()
+
+  const peer = launch(process.execPath, [path.join(ROOT, 'e2e', 'send-text-peer.mjs'), message], 'send:text')
+  try {
+    const [, code] = await peer.waitFor(/(qrdrop:[A-Za-z0-9_-]{43})/)
+    await toChoose(page)
+    await page.evaluate(c => { location.hash = c }, code)
+
+    await page.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
+    const appSas = await text(page, '#sas')
+    const theirs = await cliSas(peer)
+    if (appSas !== theirs) throw new Error(`SAS mismatch: app ${appSas} vs peer ${theirs}`)
+    log('SAS agreed:', appSas)
+
+    await page.waitForSelector('#verify-status button.primary:has-text("Accept")', { timeout: TIMEOUT })
+    await page.click('#verify-status button.primary')
+
+    const exit = await peer.exited
+    if (exit !== 0) throw new Error(`the text peer exited ${exit}`)
+    await page.waitForSelector('#done-text', { timeout: TIMEOUT })
+
+    const shown = await page.textContent('#done-text')
+    if (shown !== message) throw new Error(`text differs: sent ${message}, shown ${shown}`)
+    if (listing() !== before) throw new Error('text reached the Downloads folder')
+    await page.waitForSelector('button:has-text("Save as file")', { timeout: TIMEOUT })
+    console.log(`\nPASS  js text -> app(native)  ${Buffer.byteLength(message)} bytes shown, nothing written`)
+  } finally {
+    peer.child.kill()
+  }
+}
+
 async function main() {
   if (process.platform !== 'win32') throw new Error('Windows only: it attaches to WebView2 over CDP')
   if (!fs.existsSync(APP)) throw new Error(`no app at ${APP}: build it with \`npx tauri build --debug --no-bundle\` in app/`)
@@ -299,6 +387,8 @@ async function main() {
     await appSends(page, tmp)
     await appReceives(page, tmp)
     await appDeclines(page, tmp)
+    await appSendsText(page, tmp)
+    await appReceivesText(page)
     if (errors.length) throw new Error('page errors:\n' + errors.join('\n'))
     console.log('\nAPP-NATIVE E2E PASSED')
   } finally {
