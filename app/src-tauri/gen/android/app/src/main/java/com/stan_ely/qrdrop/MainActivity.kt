@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Log
 import android.view.View
+import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -72,6 +74,41 @@ class MainActivity : TauriActivity() {
 
     /** Named by src/share.rs's LAUNCH_HANDOFF. The two must agree. */
     const val LAUNCH_HANDOFF = "qrdrop-launch.json"
+  }
+
+  /**
+   * Back walks the history the page actually has, by asking the page to.
+   *
+   * WryActivity's own callback does canGoBack() and goBack(). The session guard
+   * answers a press by pushing its sentinel back with no user activation, and
+   * after that goBack() the WebView said there was nowhere to go: measured on
+   * API 29 with WebView 158, index 2 of 3 and canGoBack=false, 1.9 s after the
+   * push. So a second Back closed the app mid-transfer however slowly it was
+   * pressed, where it should have cancelled. This looks like Chromium's history
+   * manipulation intervention, which skips such entries. Anything sent over
+   * devtools carries a user gesture and clears it, so a test that reads the page
+   * between two presses passes against the bug.
+   *
+   * Traversing from the page does not trip it: canGoBack stayed true throughout.
+   * goBackOrForward(-1) is the obvious alternative and did not help, the app
+   * still closed. The list's index is the test because it is the one reading
+   * that stayed right when canGoBack was wrong.
+   *
+   * This is added after WryActivity's callback, so it runs first, and it stands
+   * aside at the bottom of the stack so that Back still leaves the app from Home.
+   */
+  override fun onWebViewCreate(webView: WebView) {
+    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        if (webView.copyBackForwardList().currentIndex > 0) {
+          webView.evaluateJavascript("history.back()", null)
+          return
+        }
+        isEnabled = false
+        onBackPressedDispatcher.onBackPressed()
+        isEnabled = true
+      }
+    })
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {

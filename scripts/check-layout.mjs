@@ -293,8 +293,8 @@ async function checkAppNavigation(page) {
 
   await page.click('#nav-settings')
   await page.click('#settings-about')
-  // Nothing may be pushed in answer to Back: until the push lands, canGoBack()
-  // is false, and a second press in that window finishes the activity.
+  // Nothing may be pushed in answer to Back here: only the session guard has to
+  // push with no user activation, and that needed MainActivity's help on Android.
   const pushed = await page.evaluate(async () => {
     const real = history.pushState
     let count = 0
@@ -323,7 +323,22 @@ async function checkAppNavigation(page) {
   await session({ screen: 'receive', role: 'receiver' })
   at = await where()
   expect('a session hides the bar', at.barHidden && at.guard, at)
-  await back()
+  // A press must land on the spare and not on the page: the re-push happens in
+  // popstate, and with nothing under the sentinel until it lands, a second press
+  // finishes the activity. Read before the push, or it reads the sentinel.
+  const landed = await page.evaluate(async () => {
+    const real = history.pushState
+    /** @type {any} */
+    let state = null
+    history.pushState = function (...args) { state ??= history.state; return real.apply(this, args) }
+    const popped = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }))
+    history.back()
+    await popped
+    history.pushState = real
+    return state
+  })
+  expect('a press in a session lands on the spare', Boolean(landed?.qrdropGuard && landed?.spare), landed)
+  await settle()
   at = await where()
   expect('Back in a session is refused', at.screen === 'receive' && at.guard && Boolean(at.toast), at)
   await session({ screen: 'verify', sas: 'a b c d', sasWords: ['a', 'b', 'c', 'd'] })

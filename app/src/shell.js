@@ -18,9 +18,9 @@
  * session, and that Back there is answered, never navigated with. This keeps
  * it with one entry per step away from Home, so Back only ever pops and nothing
  * is pushed in answer to it. About used to share Settings' entry, with Back
- * re-pushing it from popstate, as _onBackGesture re-pushes its guard. Until that
- * push lands canGoBack() is false, so a second press inside the window finished
- * the activity: on an emulator, two presses from About went to the launcher.
+ * re-pushing it from popstate, and a push with no user activation left the next
+ * press finding canGoBack() false, so it left the app. _onBackGesture has no
+ * choice but to re-push, and MainActivity.onWebViewCreate is its way out.
  * Which page is showing still lives in state and not in history.
  *
  * Navigation cannot be touched while a session runs, because the bar is hidden.

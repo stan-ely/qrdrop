@@ -862,10 +862,9 @@ draw the top bar, Settings, About and History around `<qr-drop shell="app">`, an
   unprompted when text is pasted. `#app-page` is opaque and `<qr-drop>` is `inert`
   underneath, which a modal dialog escapes.
 - **The shell has one history entry per step from Home, Back only ever pops, and the page
-  lives in state, not in `history.state`.** Nothing may be pushed in answer to Back: until
-  a push from `popstate` lands `canGoBack()` is false, so a second press finishes the
-  activity. About sharing Settings' entry did exactly that on an emulator, going to the
-  launcher, and `checkAppNavigation` counts the pushes. While a session runs every popstate
+  lives in state, not in `history.state`.** Nothing may be pushed in answer to Back here: a
+  push with no user activation is what left `canGoBack()` false (below), and
+  `checkAppNavigation` counts the pushes. While a session runs every popstate
   belongs to the component. A session can start over a page (a deep link, a share, a tile),
   and `screenchange` pulls the page down, leaving ours under the sentinel; each popstate
   after the session winds one off. Reading the page from `history.state` would put Settings
@@ -939,7 +938,7 @@ Paths are under `app/src-tauri/gen/android/app/src/main/`.
 | `AndroidManifest.xml` | The `ACTION_SEND` / `ACTION_SEND_MULTIPLE` intent-filter. The share sheet. |
 | `AndroidManifest.xml` | `<meta-data android:name="android.app.shortcuts">`. The launcher shortcuts stop appearing, and `res/xml/shortcuts.xml` is orphaned with no error anywhere. |
 | `AndroidManifest.xml` | The `QrdropTileService` `<service>`. The Quick Settings tile stops being offered; the class stays in the tree doing nothing. |
-| `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. `clearNavigationBar`, without which the app's action bar sits behind the navigation bar, since the WebView reports `env(safe-area-inset-bottom)` as 0 there. |
+| `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. `clearNavigationBar`, without which the app's action bar sits behind the navigation bar, since the WebView reports `env(safe-area-inset-bottom)` as 0 there. `onWebViewCreate`'s Back callback, without which a second Back closes the app mid-transfer. |
 | `res/values/ic_launcher_background.xml` | The adaptive-icon background colour, which **`tauri icon` also** resets to white every time. |
 | `../../build.gradle.kts` (that is, `gen/android/app/`) | Three things. The version read from `src-tauri/Cargo.toml`: without it every release is versionCode 1 and none installs over another. The release signing config: without it a release APK is unsigned. The per-ABI `versionCode` block: without it the split APKs share one code and F-Droid cannot tell them apart. |
 
@@ -1460,10 +1459,28 @@ notification frees the display for the rest of the transfer.
 `WryActivity` installs an `OnBackPressedCallback` that calls `mWebView.goBack()`
 when `canGoBack()` and finishes the activity otherwise — so before this, an
 accidental swipe closed the app mid-transfer, silently, and the installed PWA
-and a browser tab did the same. `element.js` pushes one sentinel `pushState`
-entry while a session is running and winds it off when it ends; a `pushState`
-entry is a navigation-controller entry, so `canGoBack()` sees it and one
-implementation covers the app, the PWA and the web. **Screens are not history
+and a browser tab did the same. `element.js` pushes a sentinel `pushState` entry
+while a session is running and winds it off when it ends; a `pushState` entry is
+a navigation-controller entry, so `canGoBack()` sees it and one implementation
+covers the app, the PWA and the web. The sentinel has a **spare entry under it**,
+because catching a press means re-pushing from `popstate`, and with nothing
+underneath until that lands a second press finishes the activity. The wind-off is
+one `history.go()`, because `shell.js` reads the first popstate after a session
+as its cue.
+
+**That re-push is why the app's Back is not `goBack()`.** It runs with no user
+activation, and after a native `goBack()` the WebView then answered `canGoBack()`
+false with every entry still there: measured as index 2 of 3, 1.9 s after the push.
+That looks like Chromium's history manipulation intervention. So a second Back closed
+the app at any speed, unless the screen had been touched in between.
+`MainActivity.onWebViewCreate` reads the back/forward list and runs `history.back()`
+in the page instead, and on that path `canGoBack()` stays true. `goBackOrForward(-1)`
+did not help. **A test driving this over CDP cannot see it**: Playwright's `evaluate`
+carries a user gesture, so reading the page between two presses clears the very thing
+under test. Script the presses with nothing in between. How a browser's own Back button
+treats the second press on the site has not been measured.
+
+**Screens are not history
 entries and back must never move between them.** The entry exists only to be
 caught, and the answer to catching it is a question — refuse once with a toast,
 cancel on a second press inside the toast's own 4000ms. That is what keeps the

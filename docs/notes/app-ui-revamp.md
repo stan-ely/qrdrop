@@ -89,10 +89,23 @@ which had to stay byte-identical and whose copy reads with no script running. So
 `history.state`. A deep link arriving on About left two stale entries behind the sentinel, and
 when the session ended the top one said "about", so the done screen was replaced by a page
 nobody had asked for. The second had one entry, with Back from About re-pushing it from
-`popstate`. Every desktop and Playwright run passed, and on the emulator two quick presses
-from About went to the launcher, because `canGoBack()` is false until that push lands. The
-third is one entry per page with the page held in state, which fixes both. See the header of
-`shell.js`.
+`popstate`. Every desktop and Playwright run passed, and on the emulator a second press went
+to the launcher. This note and `e9acf63` blamed a window before the push landed, and that was
+wrong: see "A second Back" below. The third is one entry per page with the page held in state,
+which fixes both. See the header of `shell.js`.
+
+**A second Back closed the app at any speed, not just a quick one.** The guard re-pushes from
+`popstate` with no user activation, and after a native `goBack()` a log in `MainActivity` read
+index 2 of 3 and `canGoBack=false`, 1.9 s after the push. That looks like Chromium's history
+manipulation intervention, though only the symptom was measured. Three readings were wrong
+before that log. Slow presses seemed to work only because Playwright's `evaluate` carries a user
+gesture, so reading the page between presses hid the bug; a spare entry alone changed nothing;
+and `goBackOrForward(-1)` changed nothing. The app now reads the back/forward list and runs
+`history.back()` in the page (`MainActivity.onWebViewCreate`), and `canGoBack` stayed true
+throughout. Six double presses at gaps from 0 to 900 ms cancelled the session with the app
+alive, where the same script closed it six times out of six. The spare entry is kept for the
+real window before the re-push lands, 30 to 100 ms here. The site has no such callback, and how
+a browser's own Back button treats a second press there has not been measured.
 
 **`transferend` exists with nobody listening.** It is here because the plan puts the seam in
 this phase and it is cheap to pin what the record leaves out. Phase 4 is where it is first
@@ -116,13 +129,6 @@ crate's minor version or `tauri build` refuses, and that refusal is easy to miss
 - Settings has one setting. History's off switch and Clear history join it in phase 4.
 - The strip under the navigation bar is the window's white rather than `--bg`, now that
   `clearNavigationBar` pads the content view. Phase 5's. It hides nothing.
-- **Two quick presses of Back during a session close the app, and this is open.**
-  `_onBackGesture` re-pushes from `popstate`, which is the window Back from About had, and on
-  the emulator two presses took a running receive screen to the launcher. It predates this
-  phase and it is in `element.js`, so the site has it as well, which is why it was left out of
-  a phase that had to keep the site unchanged. Holding a spare sentinel would close it, at the
-  cost of a second wind-off step. It wants a phone's number first: an emulator under load
-  stretches the window well past what a device has.
 
 **Measured on an emulator, not a phone.** No phone was attached, so everything Android here ran
 on one API 29 emulator with WebView 158 and three-button navigation. Settings showed

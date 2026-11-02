@@ -13,6 +13,9 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**Pressing Back twice during a transfer now cancels it, as the message says.** Pressed
+quickly, the second press could close the app instead.
+
 **The app is now a window of its own, not a web page.** The first screen has a top bar
 with **History** and **Settings**, and the transfer screens fill the window. The bar goes
 away while a transfer is running. **Settings** shows where received files are saved, with

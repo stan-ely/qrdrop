@@ -1150,6 +1150,18 @@ export class QRDropElement extends HTMLElement {
    * a transition. That distinction is what keeps the two safety gestures safe
    * -- back can offer to cancel on the verify screen and on beam's Accept, and
    * there is no gesture that can advance past either.
+   *
+   * TWO ENTRIES, NOT ONE. Catching a press means pushing the sentinel back from
+   * popstate, and on a fresh app there is nothing under it until that lands, so
+   * a second press in those 30-100 ms finished the activity. The spare stays
+   * under the sentinel, so there is always one more entry to pop and the second
+   * press reaches _onBackGesture like the first.
+   *
+   * THAT RE-PUSH HAS A COST THIS FILE CANNOT PAY. It runs with no user
+   * activation, and after a native goBack() the WebView's canGoBack() then
+   * answers false with every entry still there. The app gets round that in
+   * MainActivity.onWebViewCreate. A browser's own Back button is out of reach
+   * from here, and how it treats the second press has not been measured.
    */
   _syncBackGuard() {
     const running = this.isConnected && RUNNING_SCREENS.has(this._state.screen)
@@ -1159,8 +1171,7 @@ export class QRDropElement extends HTMLElement {
       // No URL argument: the address must not change. A history entry that
       // altered the URL would be one a person could bookmark or share, and on
       // this component the only thing a URL ever carries is a code.
-      history.pushState({ qrdropGuard: true }, '')
-      this._backGuard = true
+      this._fillBackGuard()
       return
     }
 
@@ -1169,12 +1180,25 @@ export class QRDropElement extends HTMLElement {
     // Wind the sentinel back off on the way out, or it would outlive the
     // session that needed it: back from the done screen would then be absorbed
     // by a guard for a transfer that has already finished, and a person would
-    // have to press it twice to leave. history.back() fires popstate
-    // asynchronously, hence the suppression flag rather than a local.
+    // have to press it twice to leave. A traversal fires popstate
+    // asynchronously, hence the suppression flag rather than a local. One
+    // history.go() and not two back() calls, because the second of those is not
+    // reliably honoured in a WebView, and because app/src/shell.js takes the
+    // first popstate after a session as the sign that its own entries are next.
     if (history.state?.qrdropGuard) {
       this._popSuppressed = true
-      history.back()
+      history.go(history.state.spare ? -1 : -2)
     }
+  }
+
+  /**
+   * Brings the guard back to its two entries from wherever a press left it: on
+   * the spare, or off both when two presses landed before either was answered.
+   */
+  _fillBackGuard() {
+    if (!history.state?.qrdropGuard) history.pushState({ qrdropGuard: true, spare: true }, '')
+    history.pushState({ qrdropGuard: true }, '')
+    this._backGuard = true
   }
 
   /**
@@ -1196,8 +1220,7 @@ export class QRDropElement extends HTMLElement {
     // Put the sentinel straight back, so a third press is caught too. Done
     // before anything else: if this throws or the state below changes, the
     // guard must already be in place.
-    history.pushState({ qrdropGuard: true }, '')
-    this._backGuard = true
+    this._fillBackGuard()
 
     // Back on the enlarged code means "put it back", which is what back
     // means on every full-screen image viewer a person has used. It is not a
