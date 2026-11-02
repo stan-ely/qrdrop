@@ -98,6 +98,18 @@ were never once laid out by it. That both engines report `pointer: coarse` from
 imposes a mobile meta viewport, which would have the two engines measuring
 different pages.
 
+**The app tree is the third one to walk, and it is a different page.**
+`mise run app:build-site && node scripts/check-layout.mjs app/dist`. Served as
+`make-store-screenshots.mjs` serves it, with every `invoke` failing and `main.js`
+carrying on, so the platform-specific rows come from the fixtures. On that tree it
+also walks `APP_FIXTURES` (Settings, About, History, driven through
+`window.qrdropShell.setState` as the screens are through `_setState`), asserts the
+top bar is hidden on every running screen and shown on the rest, and runs
+`checkAppNavigation`: real clicks and `history.back()` against the real sentinel,
+once per engine, including a session arriving over a page. A page may scroll down by
+design, so on these it is sideways overflow, one `<h1>` and a 44px floor on a coarse
+pointer that are fatal.
+
 `--shots` writes a picture of **every** combination rather than only the
 failures, into the same gitignored directory. Use it after anything that changes
 the touch layout: the assertions here can only see a layout that is *illegal*,
@@ -156,14 +168,14 @@ rule is `safe center` now. Zero-box children are exempt, for the same reason the
 offscreen check exempts a closed dialog: an element that is not laid out reports
 0x0 at the origin, which is above every scroll container on the page.
 
-**The `copyScroll` budget is 27px at 800x360 and none at 844x390, and it is not
+**The `copyScroll` budget is 28px at 800x360 and none at 844x390, and it is not
 beam's any more.** A budget and not the `allowBodyScroll` flag it replaced, because
 an on/off exemption lets the one screen that legitimately overflows hide every
 screen that does not — and that happened here: the budget was beam-send's 79px
 (and 49), and under it the network path's send (27), verify (17) and toast (14)
 screens had been scrolling unnoticed. Beam fits both landscape phones now, since its
 encryption warning moved into the sheets (below), so a beam screen overflowing is a
-regression. The 27 is send's, in both engines; closing it is a layout job of its own.
+regression. The 28 is send's (27, and 28 on some Firefox runs of an unchanged tree); closing it is a layout job of its own.
 Take the larger engine's number whenever they differ, or the budget passes one
 engine and fails the other on an unchanged tree.
 
@@ -183,7 +195,11 @@ returns the moment the phone is turned back. A rule rather than a branch in
 
 Run it after anything that touches `src/web/view.js`, `src/web/styles.js`, or the
 site's page chrome, **and run it against both deployed trees** — they differ in the
-build stamp, and the page chrome is where this layout has no vertical slack.
+build stamp, and the page chrome is where this layout has no vertical slack — **and
+against `app/dist`**, where the same screens lay out with no chrome and a different
+scarce axis. `:host([shell="app"])` is where its differences live, and the same vnode
+tree on both is the rule: going full-bleed made a phone's media slot taller than it was
+wide, which came out as a 328x416 beam stage until the block size got a cap of its own.
 
 The stamp sits beside the wordmark (`.masthead`), and that is a layout decision as
 much as an editorial one: the h1's line box is already taller than `--fs--1` text, so
@@ -717,8 +733,10 @@ matters:
   prop is the escape hatch for real DOM nodes the view does not describe — the QR `<svg>`
   and the scanner `<video>`, whose `MediaStream` a rebuild would destroy.
 - **`src/web/view.js`** — pure `render(state, dispatch) -> VNode[]`. **All user-facing
-  copy lives here.** No DOM APIs, no room/session objects, no promises. This is the file
-  to read to understand the UI.
+  copy lives here**, with one exception: `app/src/app-view.js` holds the app-only pages,
+  under the same rules (pure, no `innerHTML`), so that none of it reaches the website or
+  the tarball. No DOM APIs, no room/session objects, no promises. This is the file to
+  read to understand the UI.
 - **`src/web/element.js`** — only what a pure function cannot hold: rooms, receivers,
   teardown, the `_sessionEnded` flag, and the whole-component native events (drag, drop,
   paste, `location.hash`).
@@ -829,6 +847,53 @@ The desktop/mobile shell. It has its own `package.json` and `src-tauri/`, and it
 onboarding is recorded phase by phase in `app/CAPABILITIES.md` — read that for the
 measurements behind the rules below.
 
+**The app has its own page, and only the screens are shared.** `build-site.mjs` takes
+`app/index.html` and `app/styles.css` on the app channel, with the same CSP, tokens,
+breakpoints and placeholder guard as the site, and it now also requires `__CSP__`,
+`__SCRIPT__` and `__STYLES__` of a template, because a template that lacks one passes a
+check for leftovers. `app/src/shell.js` (state, history) and `app/src/app-view.js` (pure)
+draw the top bar, Settings, About and History around `<qr-drop shell="app">`, and
+`docs/notes/app-ui-revamp.md` has the plan. Four things there break quietly:
+
+- **`<qr-drop>` is written in the template and sits outside both patched roots**
+  (`#app-bar`, `#app-page`), so no render can rebuild it and end a session.
+- **The pages lie over Home; Home is never `display: none`.** A `<dialog>` in a hidden
+  subtree renders nothing and still blocks the document, and the component opens one
+  unprompted when text is pasted. `#app-page` is opaque and `<qr-drop>` is `inert`
+  underneath, which a modal dialog escapes.
+- **The shell has one history entry per step from Home, Back only ever pops, and the page
+  lives in state, not in `history.state`.** Nothing may be pushed in answer to Back: until
+  a push from `popstate` lands `canGoBack()` is false, so a second press finishes the
+  activity. About sharing Settings' entry did exactly that on an emulator, going to the
+  launcher, and `checkAppNavigation` counts the pushes. While a session runs every popstate
+  belongs to the component. A session can start over a page (a deep link, a share, a tile),
+  and `screenchange` pulls the page down, leaving ours under the sentinel; each popstate
+  after the session winds one off. Reading the page from `history.state` would put Settings
+  over the done screen the moment the transfer ended.
+- **`screenchange` is dispatched before the focus move and before `_syncBackGuard`**,
+  because the host has to bring an inert component back before focus lands on it.
+
+**`element.js` dispatches two events on itself and knows nothing about the shell.**
+`screenchange` (`{ screen, running }`, from `RUNNING_SCREENS`) and `transferend`, on
+reaching done. The second has no listener yet: History is `docs/notes/app-ui-revamp.md`'s
+phase 4. Its record is built by `transferRecord` in `src/web/events.js`, as an explicit list
+of fields and away from `element.js` so a test can pin what it leaves out, which is the code,
+the digest and any text.
+
+**About's copy is read from `site/index.html` at build time, and is not written in `app/`.**
+`infoCopy` in `build-site.mjs` lifts the two headings, the steps, the disclosure and the two
+docs links into `app/index.html`'s `<template>`, the shell clones them, and the view adopts
+the clones. It throws if the template stops matching, so a reworded site fails the build
+rather than shipping an empty About. A disclosure is the worst thing to hold twice: the
+second copy is the app promising something the site has stopped claiming. Adjust the site's
+markup with that in mind; the words now describe both.
+
+**External links go through `plugin-opener`, scoped to this repository.** A webview has
+nowhere to open `target="_blank"`, and Android navigates the app itself to the page.
+`shell.js` catches every link under `#app-page`, including those in the adopted copy.
+`capabilities/default.json` lists the two URL patterns, narrower than `opener:default`'s
+every http and https URL, and `test/app-view.test.mjs` checks every About link against them.
+
 **`app/` is not in the npm tarball, and `@tauri-apps/*` is not a root dependency.**
 The root `package.json` `files` array lists `src`, `types`, `site/dist` and nothing
 else; "no new runtime dependencies" (see `## Invariants`) is a root-package rule, so
@@ -874,7 +939,7 @@ Paths are under `app/src-tauri/gen/android/app/src/main/`.
 | `AndroidManifest.xml` | The `ACTION_SEND` / `ACTION_SEND_MULTIPLE` intent-filter. The share sheet. |
 | `AndroidManifest.xml` | `<meta-data android:name="android.app.shortcuts">`. The launcher shortcuts stop appearing, and `res/xml/shortcuts.xml` is orphaned with no error anywhere. |
 | `AndroidManifest.xml` | The `QrdropTileService` `<service>`. The Quick Settings tile stops being offered; the class stays in the tree doing nothing. |
-| `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. |
+| `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. `clearNavigationBar`, without which the app's action bar sits behind the navigation bar, since the WebView reports `env(safe-area-inset-bottom)` as 0 there. |
 | `res/values/ic_launcher_background.xml` | The adaptive-icon background colour, which **`tauri icon` also** resets to white every time. |
 | `../../build.gradle.kts` (that is, `gen/android/app/`) | Three things. The version read from `src-tauri/Cargo.toml`: without it every release is versionCode 1 and none installs over another. The release signing config: without it a release APK is unsigned. The per-ABI `versionCode` block: without it the split APKs share one code and F-Droid cannot tell them apart. |
 

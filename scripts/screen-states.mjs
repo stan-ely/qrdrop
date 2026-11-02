@@ -393,6 +393,40 @@ export const FIXTURES = [
   },
 ]
 
+/**
+ * The app's own pages, which only exist in the app tree (app/index.html). Not
+ * in FIXTURES, because the site has no such pages: check-layout.mjs walks these
+ * after them, and only when the tree it was given is the app channel.
+ *
+ * `shell` goes to app/src/shell.js's setState as `state` goes to the
+ * component's. The folder is a long one, in the state that also offers Change
+ * folder: both at once is the row's tallest and narrowest form.
+ *
+ * @typedef {object} AppFixture
+ * @property {string} name
+ * @property {Record<string, unknown>} shell
+ */
+
+/** @type {AppFixture[]} */
+export const APP_FIXTURES = [
+  {
+    name: 'app-settings',
+    shell: {
+      page: 'settings', canChangeFolder: true,
+      saveLocation: 'primary:Documents/Received from qrdrop/a folder with a long name',
+    },
+  },
+  {
+    // The shape a desktop and an Android 10+ phone start in: nothing to change.
+    name: 'app-settings-fixed',
+    shell: { page: 'settings', canChangeFolder: false, saveLocation: 'Downloads/qrdrop' },
+  },
+  { name: 'app-about', shell: { page: 'about', version: '1.3.0' } },
+  // With the long disclosure open, which is the one state that has to scroll.
+  { name: 'app-about-open', shell: { page: 'about', version: '1.3.0' } },
+  { name: 'app-history', shell: { page: 'history' } },
+]
+
 /** The three fixtures the README leads with, by name. */
 export const README_SHOTS = ['send', 'verify', 'beam']
 

@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium, firefox } from 'playwright'
 
 import { serveStatic } from '../src/node/serve.js'
-import { FIXTURES, LINK, installState } from './screen-states.mjs'
+import { APP_FIXTURES, FIXTURES, LINK, installState } from './screen-states.mjs'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 // Which built tree to walk, so the edge build can be checked too:
@@ -52,6 +52,18 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 // pushed a button off the bottom at 1280x620" is precisely the class of thing
 // this file exists to catch. A check that only ever saw one of the two trees
 // would be checking the half that did not change.
+//
+// The app tree is the third, and it is a different page rather than a variant:
+//
+//   mise run app:build-site
+//   node scripts/check-layout.mjs app/dist
+//
+// Served the way make-store-screenshots.mjs serves it. Nothing here runs Tauri:
+// every invoke fails, and app/src/main.js treats each as a shell with nothing
+// to add, so the platform-specific rows are put there by the fixtures. Which
+// tree this is gets read off the page's data-channel, and an app tree adds
+// three things below: the pages (APP_FIXTURES), the bar's assertions on every
+// screen, and a walk of Back that a viewport-sized sweep cannot see.
 const args = process.argv.slice(2)
 
 /*
@@ -145,8 +157,9 @@ const VIEWPORTS = [
    * So 844x390 has no budget, and a beam screen overflowing either viewport
    * again is a regression.
    *
-   * What the 27 here is, found by setting it to zero: the network path's send
-   * screen (27px, both engines, with or without its info sheet), verify (17)
+   * What the 28 here is, found by setting it to zero: the network path's send
+   * screen (27px, both engines, with or without its info sheet, and 28 on about
+   * half of Firefox's layouts of the same unchanged tree, so 28), verify (17)
    * and the toast fixture, which sits over send (14). All three were already
    * scrolling by those amounts before beam gave its budget back -- measured on
    * the unchanged tree -- and beam's larger number had been hiding them. They
@@ -154,7 +167,7 @@ const VIEWPORTS = [
    * tiles stay whole; closing them is a layout job of its own for the send
    * and verify screens, and until then this is their number, not beam's.
    */
-  { name: 'phone-narrow-landscape', width: 800, height: 360, copyScroll: 27 },
+  { name: 'phone-narrow-landscape', width: 800, height: 360, copyScroll: 28 },
   { name: 'phone-landscape', width: 844, height: 390 },
   { name: 'tablet', width: 834, height: 1112 },
   { name: 'laptop', width: 1440, height: 900 },
@@ -224,6 +237,125 @@ const BROWSERS = [
 /** @type {string[]} */
 const failures = []
 
+/**
+ * Back on the app's pages, against the real sentinel in element.js. A layout
+ * sweep has nothing to say about this, and a mistake here is silent: a session
+ * started from Settings that drops the person back on Settings when it ends, or
+ * a press of Back that a stale entry swallows.
+ *
+ * `window.qrdropShell` is not used for navigation: these press the real buttons
+ * and call history.back(), which is what the gesture reaches on Android.
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<string[]>}
+ */
+async function checkAppNavigation(page) {
+  /** @type {string[]} */
+  const problems = []
+  const fresh = async () => {
+    await page.goto(server.url)
+    await page.waitForFunction(() => customElements.get('qr-drop') !== undefined)
+    // A marker on the base entry, so "back on the page we started on" is a
+    // fact to read rather than an assumption about history.length.
+    await page.evaluate(() => history.replaceState({ base: true }, ''))
+  }
+  const where = () => page.evaluate(() => {
+    const el = /** @type {any} */ (document.querySelector('qr-drop'))
+    return {
+      title: document.getElementById('page-title')?.textContent ?? 'home',
+      barHidden: /** @type {HTMLElement} */ (document.getElementById('app-bar')).hidden,
+      screen: el._state.screen,
+      inert: el.hasAttribute('inert'),
+      guard: Boolean(history.state?.qrdropGuard),
+      shellEntry: Boolean(history.state?.qrdropShell),
+      base: Boolean(history.state?.base),
+      toast: el._state.toast,
+    }
+  })
+  /** @param {string} label @param {boolean} ok @param {unknown} seen */
+  const expect = (label, ok, seen) => { if (!ok) problems.push(`${label}: ${JSON.stringify(seen)}`) }
+  // A traversal lands asynchronously, and the wind-off is two of them in turn.
+  const settle = () => page.waitForTimeout(150)
+  /** @param {Record<string, unknown>} state */
+  const session = state => page.evaluate(next => {
+    const el = /** @type {any} */ (document.querySelector('qr-drop'))
+    el._setState(next)
+  }, state)
+  const back = async () => { await page.evaluate(() => history.back()); await settle() }
+
+  await fresh()
+  await page.click('#nav-settings')
+  let at = await where()
+  expect('Settings opens', at.title === 'Settings' && at.inert && at.shellEntry, at)
+  await back()
+  at = await where()
+  expect('Back from Settings is Home', at.title === 'home' && !at.inert && at.base, at)
+
+  await page.click('#nav-settings')
+  await page.click('#settings-about')
+  // Nothing may be pushed in answer to Back: until the push lands, canGoBack()
+  // is false, and a second press in that window finishes the activity.
+  const pushed = await page.evaluate(async () => {
+    const real = history.pushState
+    let count = 0
+    history.pushState = function (...args) { count++; return real.apply(this, args) }
+    const landed = new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }))
+    history.back()
+    await landed
+    history.pushState = real
+    return count
+  })
+  expect('Back from About pushes nothing', pushed === 0, pushed)
+  await settle()
+  at = await where()
+  expect('Back from About is Settings', at.title === 'Settings' && at.shellEntry, at)
+  await page.click('#nav-back')
+  await settle()
+  at = await where()
+  expect('the arrow from Settings is Home', at.title === 'home' && at.base, at)
+
+  await page.click('#nav-history')
+  await back()
+  at = await where()
+  expect('Back from History is Home', at.title === 'home' && at.base, at)
+
+  // A session on Home: the sentinel, and only the sentinel.
+  await session({ screen: 'receive', role: 'receiver' })
+  at = await where()
+  expect('a session hides the bar', at.barHidden && at.guard, at)
+  await back()
+  at = await where()
+  expect('Back in a session is refused', at.screen === 'receive' && at.guard && Boolean(at.toast), at)
+  await session({ screen: 'verify', sas: 'a b c d', sasWords: ['a', 'b', 'c', 'd'] })
+  await back()
+  await back()
+  at = await where()
+  expect('Back never moves between session screens', at.screen === 'choose' && at.base, at)
+
+  // A session arriving over a page, as a deep link or a tile does.
+  await page.click('#nav-settings')
+  await page.click('#settings-about')
+  await session({ screen: 'receive', role: 'receiver' })
+  at = await where()
+  expect('a session over a page takes Home', at.title === 'home' && at.barHidden && !at.inert, at)
+  await session({ screen: 'done', outcome: 'received' })
+  await settle()
+  at = await where()
+  expect('its end stays on done, with the entries wound off', at.title === 'home' && at.screen === 'done' && at.base, at)
+
+  // Text pasted on a page opens the compose sheet from a document listener, and
+  // the sheet has to be there to see: a dialog in a hidden subtree is not.
+  await fresh()
+  await page.click('#nav-settings')
+  await session({ modal: 'text-compose' })
+  const sheet = await page.evaluate(() => {
+    const el = /** @type {any} */ (document.querySelector('qr-drop'))
+    return /** @type {HTMLElement} */ (el.shadowRoot.querySelector('dialog')).getBoundingClientRect().height
+  })
+  expect('a sheet opened over a page is visible', sheet > 0, sheet)
+  return problems
+}
+
 for (const engine of BROWSERS) {
   let browser
   try {
@@ -253,6 +385,8 @@ for (const pointer of POINTERS) {
     await route.fulfill({ path: QRCODE, contentType: 'text/javascript' })
   })
   await page.addScriptTag({ url: '/qrcode-generator.js' })
+
+  const isApp = await page.evaluate(() => document.documentElement.dataset.channel === 'app')
 
   for (const fixture of FIXTURES) {
     // One page drives every fixture, so each has to start from a closed sheet.
@@ -357,7 +491,20 @@ for (const pointer of POINTERS) {
       const media = screen ? screen.querySelector('.qr, .beam-stage, .scan-panel') : null
       const mediaBox = media ? media.getBoundingClientRect() : null
 
+      // The app's top bar, which belongs to Home and to nothing that is running.
+      // Null on the two website trees, which have no such element. Its buttons
+      // are the way off this screen, so they are held to the same rule as the
+      // ones in the card -- and they sit outside `screen`, so nothing above
+      // would see them.
+      const bar = document.getElementById('app-bar')
+      const barButtons = bar && !bar.hidden ? [...bar.querySelectorAll('button')] : []
+
       return {
+        barHidden: bar ? bar.hidden : null,
+        barOffscreen: barButtons
+          .map(b => ({ label: b.getAttribute('aria-label') ?? '', box: b.getBoundingClientRect() }))
+          .filter(b => b.box.top < -1 || b.box.right > window.innerWidth + 1 || b.box.bottom > window.innerHeight + 1)
+          .map(b => b.label),
         // Named rather than assumed, so the failure says which of the three
         // boxes it measured. It used to hardcode ".qr/.beam-stage" in the
         // message, which was already a guess between two and is now one
@@ -447,6 +594,14 @@ for (const pointer of POINTERS) {
     for (const s of report.strayActions) problems.push(`non-button in .card-actions: ${s}`)
     // Focus trapped on the sheet heading whenever a sheet is open.
     if (report.sheetFocusProblem) problems.push(report.sheetFocusProblem)
+    // Navigation cannot be reached on a running screen, and must be on the rest.
+    if (report.barHidden !== null) {
+      const shouldHide = !['choose', 'done'].includes(fixture.screen)
+      if (report.barHidden !== shouldHide) {
+        problems.push(`the top bar is ${report.barHidden ? 'hidden' : 'shown'} on ${fixture.screen}`)
+      }
+      for (const b of report.barOffscreen) problems.push(`top bar button out of view: ${b}`)
+    }
 
     if (problems.length === 0) {
       if (SHOTS) await page.screenshot({ path: path.join(OUT, `${id}.png`) })
@@ -464,9 +619,77 @@ for (const pointer of POINTERS) {
     failures.push(`${id}: ${problems.join('; ')}`)
   }
 
+  // The app's own pages. No .card here, so the assertions above have nothing to
+  // hold: what can go wrong is sideways, since a page may scroll down by design
+  // and a long folder name may not push anything off the right-hand edge.
+  for (const fixture of isApp ? APP_FIXTURES : []) {
+    await page.evaluate(installState, { state: { screen: 'choose' }, link: LINK })
+    await page.evaluate(({ shell, open }) => {
+      const app = /** @type {any} */ (window).qrdropShell
+      app.setState(shell)
+      if (open) document.querySelectorAll('details').forEach(d => { d.open = true })
+    }, { shell: fixture.shell, open: fixture.name === 'app-about-open' })
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+
+    const report = await page.evaluate(() => {
+      const box = /** @type {HTMLElement} */ (document.getElementById('app-page'))
+      const controls = [...document.querySelectorAll('#app-bar button, #app-page button, #app-page a, #app-page summary')]
+      return {
+        pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
+        sideways: box.scrollWidth - box.clientWidth,
+        headings: document.querySelectorAll('h1').length,
+        offscreen: controls
+          .map(c => ({ label: (c.getAttribute('aria-label') ?? c.textContent ?? '').trim().slice(0, 40), box: c.getBoundingClientRect() }))
+          .filter(c => c.box.right > window.innerWidth + 1 || c.box.left < -1)
+          .map(c => c.label),
+        untouchable: matchMedia('(pointer: coarse)').matches
+          ? controls
+            .map(c => ({ label: (c.getAttribute('aria-label') ?? c.textContent ?? '').trim().slice(0, 40), box: c.getBoundingClientRect() }))
+            .filter(c => c.box.height > 0 && c.box.height < 44)
+            .map(c => `${c.label} (${Math.round(c.box.height)}px)`)
+          : [],
+      }
+    })
+
+    const id = `${fixture.name}.${vp.name}.${pointer.name}.${engine.name}`
+    const problems = []
+    if (report.pageOverflow > 1) problems.push(`page scrolls by ${report.pageOverflow}px`)
+    if (report.sideways > 1) problems.push(`page scrolls sideways by ${report.sideways}px`)
+    if (report.headings !== 1) problems.push(`${report.headings} <h1>, expected 1`)
+    for (const c of report.offscreen) problems.push(`control off the side: ${c}`)
+    for (const c of report.untouchable) problems.push(`control too small for a finger: ${c}`)
+
+    if (SHOTS || problems.length) await page.screenshot({ path: path.join(OUT, `${id}.png`) })
+    await page.evaluate(() => /** @type {any} */ (window).qrdropShell.setState({ page: 'home' }))
+
+    if (problems.length === 0) {
+      console.log(`  ok    ${id}`)
+      continue
+    }
+    console.log(`  FAIL  ${id}`)
+    for (const p of problems) console.log(`          ${p}`)
+    failures.push(`${id}: ${problems.join('; ')}`)
+  }
+
   await context.close()
 }
 }
+
+  // Once per engine: the stack does not depend on the viewport.
+  {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(server.url)
+    const isApp = await page.evaluate(() => document.documentElement.dataset.channel === 'app')
+    if (isApp) {
+      for (const p of await checkAppNavigation(page)) {
+        console.log(`  FAIL  back.${engine.name}: ${p}`)
+        failures.push(`back.${engine.name}: ${p}`)
+      }
+      console.log(`  done  back.${engine.name}`)
+    }
+    await context.close()
+  }
 
   await browser.close()
 }

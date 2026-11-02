@@ -24,14 +24,17 @@
  * why buildStamp's 'app' branch emits no absolute URLs and this constant is
  * written here rather than read from `location`.
  */
+import { getVersion } from '@tauri-apps/api/app'
+import { openUrl } from '@tauri-apps/plugin-opener'
+
 import { defineQRDrop, registerPlatform } from '../../src/web/index.js'
-import { wireInfoSheets } from '../../site/wire-sheets.js'
 import {
-  createTauriSink, canStreamToDisk, prepareReceive, changeSaveLocation, saveMode,
+  createTauriSink, canStreamToDisk, prepareReceive, changeSaveLocation, saveLocation, saveMode,
 } from './tauri-sink.js'
 import { secretFromDeepLink } from './deep-link.js'
 import { createTauriLan } from './lan.js'
 import { createNativeSession, onNativeDrop, stat } from './native.js'
+import { createShell } from './shell.js'
 
 const APP_LINK_ORIGIN = 'https://share.stan-ely.com/'
 
@@ -66,10 +69,28 @@ createTauriLan().then(
   error => console.warn('qrdrop: local-network fast path unavailable', String(error)),
 )
 
+const el = /** @type {any} */ (document.querySelector('qr-drop'))
+
+// Before defineQRDrop, whose connectedCallback can start a session from a code
+// in the URL: the shell has to be listening for that screen change.
+const shell = createShell({
+  el,
+  barRoot: /** @type {HTMLElement} */ (document.getElementById('app-bar')),
+  pageRoot: /** @type {HTMLElement} */ (document.getElementById('app-page')),
+  changeFolder: mode === 'android' ? changeSaveLocation : undefined,
+  openLink: url => openUrl(url).catch(error => console.warn('qrdrop: could not open a link', String(error))),
+})
+
+// What check-layout.mjs drives the pages through, as it drives the component
+// through _setState. A browser has no shell to ask for the rest of this.
+Object.assign(window, { qrdropShell: shell })
+
 defineQRDrop()
 
-const el = document.querySelector('qr-drop')
 el?.setAttribute('base-url', APP_LINK_ORIGIN)
+
+getVersion().then(version => shell.setState({ version }), () => {})
+saveLocation().then(location => shell.setState({ saveLocation: location }), () => {})
 
 // A desktop drop reaches a native session as a path. Only there: the JS
 // session sends a File, which the page's own drop handler already gives it.
@@ -78,9 +99,6 @@ if (session?.pick) {
     console.warn('qrdrop: window drop unavailable', String(error))
   })
 }
-
-// Shared with site/main.js -- see wire-sheets.js's own comment.
-wireInfoSheets()
 
 /**
  * Hands a deep-link URL to <qr-drop> by writing the code into location.hash,

@@ -253,6 +253,27 @@ pub async fn save_change_folder(app: tauri::AppHandle) -> Result<Option<String>,
     }
 }
 
+/// The folder a receive would go to now, by the rule in the module comment,
+/// for Settings to say. None only where that rule has no answer yet: Android 7
+/// to 9 before a folder is granted, and iOS, which asks every time.
+#[tauri::command]
+pub async fn save_location(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        let status = android::status(&app).await?;
+        if status.folder.is_some() {
+            return Ok(status.folder);
+        }
+        let shared = status.sdk >= android::MEDIASTORE_DOWNLOADS_SDK;
+        Ok(shared.then(|| format!("Download/{FOLDER_NAME}")))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok((MODE == "fixed").then(|| format!("Downloads/{FOLDER_NAME}")))
+    }
+}
+
 /// The Rust end of `StoragePlugin.kt`, the only Kotlin this module needs.
 ///
 /// An app-local Tauri plugin rather than another hand-edit in MainActivity.kt,

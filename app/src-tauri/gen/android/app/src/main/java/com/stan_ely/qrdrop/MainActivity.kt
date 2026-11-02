@@ -6,7 +6,11 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Log
+import android.view.View
 import androidx.activity.enableEdgeToEdge
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
 import java.io.File
 
@@ -73,9 +77,35 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    clearNavigationBar()
     // A share to an app that was not running lands here.
     stashSharedFile(intent)
     stashLaunchAction(intent)
+  }
+
+  /**
+   * Keeps the page out from under the navigation bar, which CSS cannot do.
+   *
+   * Edge to edge, the WebView lays out behind the system bars, and it reports
+   * the status bar to the page and not the navigation bar: measured on API 29
+   * with WebView 158, env(safe-area-inset-top) is 24px and -bottom is 0 in a
+   * viewport the full height of the screen. So every safe-area term in the CSS
+   * resolved to nothing, and the app's full-bleed action bar put Send text
+   * behind the Back button. Dropping enableEdgeToEdge() is not an alternative,
+   * because Android 15 enforces it at this targetSdk.
+   *
+   * The inset is consumed here so that a WebView that does report it cannot
+   * clear the same bar twice.
+   */
+  private fun clearNavigationBar() {
+    val content = findViewById<View>(android.R.id.content)
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val bar = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+      view.setPadding(bar.left, 0, bar.right, bar.bottom)
+      WindowInsetsCompat.Builder(insets)
+        .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
+        .build()
+    }
   }
 
   /**

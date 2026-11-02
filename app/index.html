@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  The app's own page, chosen by scripts/build-site.mjs on the app channel. The
+  website's template carries a masthead, a tagline, a build stamp, a footer and
+  a floating card, which is why the app used to read as a web page.
+
+  <qr-drop> is written here rather than created by the shell, and the two
+  patched roots sit either side of it, so no render can ever rebuild it: it
+  holds the room, the camera and the file, and replacing it ends the session.
+
+  The template at the bottom is copied out of site/index.html by the build
+  (infoCopy), so the disclosure has one home. See app/src/shell.js.
+-->
+<html lang="en" data-channel="__CHANNEL__" data-build-label="__BUILD_LABEL__" data-build-href="__BUILD_HREF__" data-build-title="__BUILD_TITLE__">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover and the env() padding in app/styles.css are one change,
+     as they are on the site: without this every inset resolves to 0. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>qrdrop</title>
+<!-- Generated from SIGNALING_URLS, never hand-edited. See buildCSP. -->
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+<meta name="theme-color" content="__THEME_COLOR__">
+<link rel="stylesheet" href="__STYLES__">
+</head>
+<body>
+
+<main class="app">
+  <div id="app-bar"></div>
+  <div class="app-stage">
+    <qr-drop shell="app"></qr-drop>
+    <div id="app-page" hidden></div>
+  </div>
+</main>
+
+<template id="about-copy">
+  <div data-copy="how" data-title="__HOW_TITLE__">
+    __HOW__
+    <p class="more">__HOW_MORE__</p>
+  </div>
+  <div data-copy="protect" data-title="__PROTECT_TITLE__">
+    __PROTECT__
+    <p class="more">__PROTECT_MORE__</p>
+  </div>
+</template>
+
+<script type="module" src="__SCRIPT__"></script>
+</body>
+</html>

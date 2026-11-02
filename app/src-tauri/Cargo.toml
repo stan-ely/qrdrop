@@ -53,6 +53,8 @@ base64 = "0.22"
 # routes a scanned link to the app; app/src/deep-link.js turns the URL back
 # into a code, preserving the fragment-only rule.
 tauri-plugin-deep-link = "2"
+# About's external links, handed to the system browser.
+tauri-plugin-opener = "2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 # The local-network fast path's relay (src/lan.rs): a listener a webview

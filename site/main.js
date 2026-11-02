@@ -43,8 +43,6 @@ defineQRDrop()
 // their own site.
 document.querySelector('qr-drop')?.setAttribute('base-url', location.origin + location.pathname)
 
-// Shared with app/src/main.js -- see wire-sheets.js's own comment for why
-// this isn't written twice.
 wireInfoSheets()
 
 /*

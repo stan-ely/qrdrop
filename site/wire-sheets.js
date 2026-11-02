@@ -1,8 +1,7 @@
 /**
  * Wires the page's two explanation dialogs ("How does this work?" and the
- * security disclosure). Shared by site/main.js and app/src/main.js -- the
- * markup lives in the template both entries build from (site/index.html), so
- * both need the same two `<dialog>`s to actually open.
+ * security disclosure). The website's alone: the app has its own template, and
+ * About shows the same words, which the build copies out of site/index.html.
  *
  * The copy lives in the markup and is *moved* into the dialog here rather
  * than written twice. That ordering matters for more than tidiness: with no

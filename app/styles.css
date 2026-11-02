@@ -1,0 +1,264 @@
+/*
+ * The app's page: the shell around <qr-drop>. Its counterpart on the website is
+ * site/styles.css, and they share no rules because they share no markup. The
+ * tokens are prepended by scripts/build-site.mjs, so do not add a :root block
+ * here. The screens themselves are styled in src/web/styles.js, under
+ * :host([shell="app"]).
+ */
+
+* { box-sizing: border-box; }
+
+/* Exactly the viewport, and it never scrolls: site/styles.css has the reasoning
+ * for 100dvh with its vh fallback. The pages scroll inside #app-page. */
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--fs-0)/var(--lh-body) var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  block-size: 100vh;
+  block-size: 100dvh;
+  overflow: hidden;
+}
+
+/* Every safe-area term in the app is here, so everything inside clears the
+ * notch and the gesture bar with nothing to remember. The bar and the component
+ * share this box; sheets are in the top layer and say it themselves. */
+.app {
+  block-size: 100%;
+  padding:
+    env(safe-area-inset-top)
+    env(safe-area-inset-right)
+    env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Said again for the usual reason: nothing here sets display on it directly,
+ * but the hidden root is also what collapses row 1, and .app-stage names row 2
+ * so that it does not slide up into the empty auto track and leave its
+ * minmax(0, 1fr) behind. */
+#app-bar[hidden] { display: none; }
+
+.app-stage {
+  grid-row: 2;
+  position: relative;
+  min-block-size: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* Left to the component's own :host display, as on the site, except before it
+ * is defined, when it would be inline and collapse. */
+qr-drop { min-block-size: 0; }
+qr-drop:not(:defined) { display: block; }
+
+/* The pages lie over Home rather than replacing it; shell.js says why. Opaque
+ * for that reason. */
+#app-page {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+}
+#app-page[hidden] { display: none; }
+
+.page-body {
+  max-inline-size: 40rem;
+  margin-inline: auto;
+  padding: var(--sp-2) var(--sp-4) var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+/* ---- the top bar ---- */
+
+.app-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-block-size: 3.5rem;
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-4);
+}
+
+.wordmark,
+.page-title {
+  margin: 0;
+  min-inline-size: 0;
+  flex: 1 1 auto;
+  font-size: var(--fs-1);
+  line-height: var(--lh-tight);
+  font-weight: 600;
+}
+.wordmark { font-size: var(--fs-2); letter-spacing: -0.02em; }
+.page-title:focus { outline: none; }
+
+/* On a page the arrow leads, so the padding that aligned the wordmark with the
+ * content would only push it in. */
+.app-bar:has(#nav-back) { padding-inline-start: var(--sp-2); }
+
+.app-nav { display: flex; gap: var(--sp-1); }
+
+/* 3rem square at every pointer: the coarse floor the component's buttons use,
+ * and on a desktop the bar is no taller for it. */
+.icon-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  inline-size: 3rem;
+  block-size: 3rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-full);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur-base), background var(--dur-base);
+}
+.icon-btn:hover { background: var(--surface-raised); color: var(--text); }
+.icon-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.icon {
+  flex: none;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---- rows ---- */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  border-block-end: 1px solid var(--line);
+}
+.group:last-child { border-block-end: none; }
+.group h2 {
+  margin: 0;
+  padding-block: var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs--1);
+  font-weight: 600;
+}
+
+.row,
+.row-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  inline-size: 100%;
+  min-block-size: 3rem;
+  padding: var(--sp-2) 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+.row.static { cursor: default; }
+.row:focus-visible,
+.row-details > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-sm); }
+
+.row .icon,
+.row-details > summary .icon { inline-size: 1.25rem; block-size: 1.25rem; color: var(--muted); }
+
+.row-text { display: flex; flex-direction: column; min-inline-size: 0; }
+.row-label { min-inline-size: 0; }
+.row-value { color: var(--muted); font-size: var(--fs--1); overflow-wrap: anywhere; }
+
+.text-btn {
+  flex: none;
+  min-block-size: 3rem;
+  padding: var(--sp-2) var(--sp-3);
+  margin-inline-end: calc(var(--sp-3) * -1);
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.text-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.note { margin: 0; color: var(--muted); font-size: var(--fs--1); }
+
+.empty { padding-block-start: var(--sp-6); align-items: center; gap: var(--sp-1); border: none; text-align: center; }
+.empty h2 { padding: 0; color: var(--text); font-size: var(--fs-1); }
+
+/* ---- About's two disclosures ---- */
+
+.row-details > summary { list-style: none; }
+.row-details > summary::-webkit-details-marker { display: none; }
+.row-details > summary .icon { transition: transform var(--dur-base); }
+.row-details[open] > summary .icon { transform: rotate(90deg); }
+
+.about-copy { padding-block-end: var(--sp-3); color: var(--muted); font-size: var(--fs--1); }
+.about-copy ul { margin: 0; padding-inline-start: 1.1rem; }
+.about-copy li { margin-block-end: var(--sp-2); }
+.about-copy strong { color: var(--text); font-weight: 600; }
+.about-copy code { font-family: var(--font-mono); }
+.about-copy .more { margin: 0; }
+/* 3rem like every other control here: on the site this is a link at the foot of
+ * a dialog, and on a phone it is something a thumb has to land on. */
+.about-copy .more a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 3rem;
+  color: var(--accent);
+}
+
+/* The numbers come from a counter, so they can be chips without a second
+ * element in the copy, as on the site. */
+.about-copy .how {
+  counter-reset: step;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text);
+}
+.about-copy .how li {
+  counter-increment: step;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+}
+.about-copy .how li::before {
+  content: counter(step);
+  flex: none;
+  display: grid;
+  place-items: center;
+  inline-size: 1.5em;
+  block-size: 1.5em;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.85em;
+  font-weight: 700;
+}
+
+/* A phone on its side: the bar stops taking a sixth of the height. The two
+ * buttons keep their size; what goes is the air above and below them. */
+@media (min-width: 48rem) and (max-height: 30rem) {
+  .app-bar { min-block-size: 0; padding-block: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn, .row-details > summary .icon { transition-duration: 0s; }
+}

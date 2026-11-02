@@ -56,6 +56,10 @@ pub fn run() {
         // JS side subscribes via @tauri-apps/plugin-deep-link in
         // app/src/main.js.
         .plugin(tauri_plugin_deep_link::init())
+        // About's Source and Feedback links, and the two docs links. A webview
+        // has nowhere to open target="_blank": Android navigates the app itself
+        // to the page. Scoped to this repository in capabilities/default.json.
+        .plugin(tauri_plugin_opener::init())
         .manage(sink::SinkState::default())
         .manage(lan::LanState::default())
         .manage(native::NativeState::default())
@@ -78,6 +82,7 @@ pub fn run() {
             storage::save_mode,
             storage::save_prepare,
             storage::save_change_folder,
+            storage::save_location,
             // The Android share sheet's pickup end. Registered on every
             // target, not gated on #[cfg(target_os = "android")]: it is
             // std::fs on the app's own cache directory, it returns Ok(None)

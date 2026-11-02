@@ -55,6 +55,7 @@ import { patch } from './vdom.js'
 import { render, dialogContent, NO_CAMERA_SCAN, NO_SAVE_FOLDER } from './view.js'
 import { copyText } from './copy.js'
 import { STYLES } from './styles.js'
+import { transferRecord } from './events.js'
 
 /**
  * @typedef {import('./platform.js').NativeFile} NativeFile
@@ -102,14 +103,16 @@ const CAPABILITY_NOTE =
  * started, and 'done', where it has finished. In between there is a room open,
  * a camera on, or bytes moving, and usually a peer on the other end waiting.
  *
- * ONE SET, TWO CONSEQUENCES, and they are two readings of the same fact rather
- * than a coincidence worth splitting. The display must not sleep here
+ * ONE SET, THREE CONSEQUENCES, and they are readings of the same fact rather
+ * than a coincidence worth splitting. A host hears it through `screenchange`,
+ * and the app hides its navigation for as long as it holds, which is what
+ * keeps a session's screens free of anything that leaves them. The display must not sleep here
  * (_syncWakeLock), because on none of these screens is anyone touching the
  * phone -- which is exactly what a display timeout counts, and a beam runs for
  * minutes held up to another device's camera. And the back gesture must not
  * walk out of here without asking (_syncBackGuard), because leaving abandons a
  * live session rather than a screen. Two sets would be two places to add the
- * next screen to, and forgetting either fails silently.
+ * next screen to, and forgetting one fails silently.
  *
  * @type {Set<string>}
  */
@@ -1024,6 +1027,18 @@ export class QRDropElement extends HTMLElement {
     this._render()
 
     if (this._state.screen !== prevScreen) {
+      // First, because the host may be keeping this component out of sight and
+      // inert behind a page of its own (the app's Settings, with a deep link
+      // arriving), and it has to bring it back before the focus below lands.
+      // The back guard after it, so a host reading history sees the session
+      // start from where it was.
+      const { screen } = this._state
+      this.dispatchEvent(new CustomEvent('screenchange', {
+        detail: { screen, running: RUNNING_SCREENS.has(screen) },
+      }))
+      if (screen === 'done') {
+        this.dispatchEvent(new CustomEvent('transferend', { detail: transferRecord(this._state) }))
+      }
       this._focusScreenHeading()
       // Both consequences of RUNNING_SCREENS -- whether the display may sleep
       // here, and whether the back gesture may leave. Hung off the screen

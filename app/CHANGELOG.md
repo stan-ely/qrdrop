@@ -13,6 +13,13 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**The app is now a window of its own, not a web page.** The first screen has a top bar
+with **History** and **Settings**, and the transfer screens fill the window. The bar goes
+away while a transfer is running. **Settings** shows where received files are saved, with
+**Change folder** on Android. **About**, reached from Settings, has How it works, What this
+does and does not protect, the version, and the Source and Feedback links, which now open
+in your browser. History is empty for now and will list your transfers in a later version.
+
 **Send text and show received text on Linux.** "Send text" is now on the first screen on
 Linux too, and a message that arrives there is shown with **Copy** and **Save as file**
 instead of being saved as `message.txt`. As on other platforms, the text appears only

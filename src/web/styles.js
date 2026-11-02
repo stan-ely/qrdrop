@@ -2020,6 +2020,54 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
   .card-body:not(.has-media) ~ .card-actions { grid-area: 2 / 1 / 3 / 4; }
 }
 
+/*
+ * Inside the app: the screens lose the card and fill the window.
+ *
+ * The card is what says "a widget on a web page": a floating box with a border,
+ * a shadow and a page behind it. app/src/shell.js puts shell="app" on the host
+ * and owns everything around it, so here the same tree draws edge to edge with
+ * the action bar at the bottom of the window.
+ *
+ * An attribute and these rules, and never a branch in view.js. The vnode tree
+ * must be the same shape on both, or canReuse would lose the adopted <svg>,
+ * <video> and <canvas> by position, and the site would no longer be checking
+ * the app's screens simply by being checked.
+ *
+ * \`:host([shell="app"]) .card\` outranks every plain \`.card\` padding rule in
+ * the media queries above, so this padding holds at every size. The safe-area
+ * insets are the shell's, on .app in app/styles.css: they have to clear the top
+ * bar as well, and the bar is not in here.
+ */
+:host([shell="app"]) .card {
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  /* The width the site's column opens to on a wide window. A maximised desktop
+   * window with no limit left a 22rem media box against one edge and the action
+   * bar a thousand pixels from it. */
+  inline-size: min(100%, 62rem);
+  align-self: center;
+}
+/* The inset was the card's corner radius, and there is no corner any more. */
+:host([shell="app"]) .rail { inset-inline: 0; }
+/* With no page chrome above it the media slot is taller than the window is wide,
+ * so height stops being the scarce axis: .qr's and .beam-stage's block-size then
+ * reach past max-inline-size, and aspect-ratio loses to that cap. check-layout
+ * measured the stage 328x416 at 360x800, a white band under the code. So the
+ * block size gets a cap of its own at the width the box can have. Not on the
+ * enlarged code, which is fixed to the viewport and sizes itself. */
+:host([shell="app"]) .qr,
+:host([shell="app"]) .beam-stage:not([aria-pressed="true"]) {
+  max-block-size: calc(100vw - var(--sp-4) * 2);
+}
+@media ${BREAKPOINT_FLAT} {
+  /* 18rem being the media track of this branch, above. */
+  :host([shell="app"]) .qr,
+  :host([shell="app"]) .beam-stage:not([aria-pressed="true"]) { max-block-size: 18rem; }
+}
+
 /* Absent from the pre-restyle stylesheet entirely: every transition and the
  * pairing shimmer are motion, and someone who has asked the OS to reduce
  * motion should get a UI that still communicates state (colour, text) without

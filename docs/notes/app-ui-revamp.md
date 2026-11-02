@@ -9,7 +9,7 @@ change could break moves into CLAUDE.md, the way the LAN path's rules did.
 | Phase | State | Depends on | Device needed | Notes |
 |---|---|---|---|---|
 | 1. Close the native gaps; start this note | built | none | no | text both ways and the QUIC badge on the native session; see "Phase 1: as built" |
-| 2. App shell, Home, Settings, About | not started | 1 | Android recommended | |
+| 2. App shell, Home, Settings, About | built | 1 | Android recommended | see "Phase 2: as built" |
 | 3. Screen redesign, shared with the site | not started | 2 | no | show the user the direction before implementing |
 | 4. History | not started | 2 | Android recommended | |
 | 5. Platform polish | not started | 3, 4 | yes | |
@@ -74,6 +74,62 @@ Made for the plan, open to change:
 - `check-layout.mjs` passes on both engines and every deployed tree, and the screenshots get looked
   at.
 - New hand edits under `gen/` get a row in CLAUDE.md's table.
+
+## Phase 2: as built
+
+CLAUDE.md has the rules, under "The app has its own page". What is recorded here is what they
+do not say.
+
+**The copy is lifted at build time, because the site template could not move.** The obvious
+home for shared words is a JS module both pages import, and that rewrites `site/index.html`,
+which had to stay byte-identical and whose copy reads with no script running. So
+`infoCopy` reads the site's markup and `app/index.html` carries it in a `<template>`.
+
+**Back took three shapes.** The first draft pushed one entry per page and read the page out of
+`history.state`. A deep link arriving on About left two stale entries behind the sentinel, and
+when the session ended the top one said "about", so the done screen was replaced by a page
+nobody had asked for. The second had one entry, with Back from About re-pushing it from
+`popstate`. Every desktop and Playwright run passed, and on the emulator two quick presses
+from About went to the launcher, because `canGoBack()` is false until that push lands. The
+third is one entry per page with the page held in state, which fixes both. See the header of
+`shell.js`.
+
+**`transferend` exists with nobody listening.** It is here because the plan puts the seam in
+this phase and it is cheap to pin what the record leaves out. Phase 4 is where it is first
+read, and the record's fields can change then: a failed transfer has cleared `file` by the
+time it reaches done, so its record has no name.
+
+**`plugin-opener` is a new app dependency, which the plan did not list.** The site's links
+are `target="_blank"`, which a webview has nowhere to send. The npm package must stay on the
+crate's minor version or `tauri build` refuses, and that refusal is easy to miss:
+`app-native` will happily run the previous binary.
+
+**Follow-ups for later phases.**
+
+- The disclosure says "this page serves a bundle" and "the server hosting it", which is the
+  website's situation. In the app the code is in the install. The copy is shared by decision,
+  so changing it is a change to the site's page; phase 3 touches both and is the place.
+- The store screenshots in `fastlane/` still show the website chrome. They are not regenerated
+  here, because phase 3 restyles the same screens and they would change again.
+- A viewfinder in a full-bleed window is taller than it is wide (`.scanner-frame` has no
+  square assertion). It works; phase 3 owns how it looks.
+- Settings has one setting. History's off switch and Clear history join it in phase 4.
+- The strip under the navigation bar is the window's white rather than `--bg`, now that
+  `clearNavigationBar` pads the content view. Phase 5's. It hides nothing.
+- **Two quick presses of Back during a session close the app, and this is open.**
+  `_onBackGesture` re-pushes from `popstate`, which is the window Back from About had, and on
+  the emulator two presses took a running receive screen to the launcher. It predates this
+  phase and it is in `element.js`, so the site has it as well, which is why it was left out of
+  a phase that had to keep the site unchanged. Holding a spare sentinel would close it, at the
+  cost of a second wind-off step. It wants a phone's number first: an emulator under load
+  stretches the window well past what a device has.
+
+**Measured on an emulator, not a phone.** No phone was attached, so everything Android here ran
+on one API 29 emulator with WebView 158 and three-button navigation. Settings showed
+`Download/qrdrop` and Change folder, the Source link opened Chrome and came back to About, the
+bar was hidden in a session, and landscape fit. What that cannot show is whether a newer
+device's WebView reports the navigation bar, which is why `clearNavigationBar` consumes it, or
+how a gesture-navigation phone looks.
 
 ## Phase 1: as built
 

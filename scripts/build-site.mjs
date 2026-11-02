@@ -37,6 +37,7 @@ import { sheetCSS, buttonCSS } from '../src/web/styles.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const SITE = path.join(ROOT, 'site')
+const APP = path.join(ROOT, 'app')
 const DIST = path.join(SITE, 'dist')
 
 /**
@@ -549,6 +550,45 @@ export function wellKnownFiles({ appleTeamId, androidCertFingerprints }) {
 }
 
 /**
+ * The orientation and disclosure copy, lifted out of site/index.html for the
+ * app's About page.
+ *
+ * The app has its own template (app/index.html) with none of the website's
+ * chrome, and the footer and dialogs that held these words went with it. They
+ * must still be said, and a second copy in app/ is the one thing that cannot be
+ * right for long: this is the security disclosure, and the failure mode of two
+ * copies is the app promising something the site has stopped claiming. So
+ * site/index.html stays their one home, as markup that reads with no script
+ * running, and the app build copies them across.
+ *
+ * Throws rather than returning an empty string, for the reason the placeholder
+ * guard in main() does: a reworded template should fail the build, not ship an
+ * About page with nothing under its headings.
+ *
+ * @param {string} template site/index.html
+ * @returns {{ howTitle: string, how: string, howMore: string, protectTitle: string, protect: string, protectMore: string }}
+ */
+export function infoCopy(template) {
+  /** @param {RegExp} pattern @param {string} source */
+  const take = (pattern, source = template) => {
+    const found = source.match(pattern)?.[1]
+    if (!found) throw new Error(`site/index.html no longer matches ${pattern} -- the app's About page reads its copy from there`)
+    return found.trim()
+  }
+  const dialog = (/** @type {string} */ id) => take(new RegExp(`(<dialog id="${id}"[\\s\\S]*?</dialog>)`))
+  const how = dialog('how-dialog')
+  const protect = dialog('protect-dialog')
+  return {
+    howTitle: take(/<h2[^>]*>([^<]+)<\/h2>/, how),
+    how: take(/(<ol class="how">[\s\S]*?<\/ol>)/),
+    howMore: take(/(<a [^>]*>[^<]+<\/a>)/, how),
+    protectTitle: take(/<h2[^>]*>([^<]+)<\/h2>/, protect),
+    protect: take(/<div id="protect-body" hidden>([\s\S]*?)<\/div>/),
+    protectMore: take(/(<a [^>]*>[^<]+<\/a>)/, protect),
+  }
+}
+
+/**
  * Bundles site/main.js with esbuild's JS API (never the CLI -- the API keeps
  * this script a single `node scripts/build-site.mjs` with no separate esbuild
  * install step to document).
@@ -694,7 +734,7 @@ async function main() {
   // instead of running site/main.js's frame-refusal check and base-url
   // wiring, neither of which mean anything inside a desktop/mobile shell.
   const entry = channel === 'app'
-    ? path.join(ROOT, 'app', 'src', 'main.js')
+    ? path.join(APP, 'src', 'main.js')
     : path.join(SITE, 'main.js')
   const { entryFile, outputs } = await bundle(dist, entry)
 
@@ -726,13 +766,20 @@ async function main() {
   // Breakpoint strings are interpolated at build time since CSS media queries
   // cannot read custom properties. This ensures the same breakpoint values are
   // used in both the component's shadow-DOM styles and the page's styles.
-  let siteCSS = await readFile(path.join(SITE, 'styles.css'), 'utf8')
+  //
+  // The app channel has a stylesheet of its own for the same reason it has a
+  // template of its own, and takes the tokens and the breakpoints the same way.
+  // It has no page-level dialog and no .chip, so sheetCSS and buttonCSS stay out.
+  const pageCSS = await readFile(path.join(channel === 'app' ? APP : SITE, 'styles.css'), 'utf8')
   // Interpolate breakpoint values into media query strings so they match the
   // component's styles exactly (defined in src/web/tokens.js).
-  siteCSS = siteCSS.replaceAll('(min-width: 48rem) and (max-height: 62rem)', BREAKPOINT_WIDE)
-  siteCSS = siteCSS.replaceAll('(min-width: 48rem) and (max-height: 30rem)', BREAKPOINT_FLAT)
-  siteCSS = siteCSS.replaceAll('(max-height: 46rem)', BREAKPOINT_SHORT)
-  const css = tokensCSS(':root') + sheetCSS('var(--col)') + buttonCSS() + siteCSS
+  const interpolated = pageCSS
+    .replaceAll('(min-width: 48rem) and (max-height: 62rem)', BREAKPOINT_WIDE)
+    .replaceAll('(min-width: 48rem) and (max-height: 30rem)', BREAKPOINT_FLAT)
+    .replaceAll('(max-height: 46rem)', BREAKPOINT_SHORT)
+  const css = channel === 'app'
+    ? tokensCSS(':root') + interpolated
+    : tokensCSS(':root') + sheetCSS('var(--col)') + buttonCSS() + interpolated
 
   // Content-hashed exactly like the JS bundles, and for a reason that cost a
   // live deploy to learn: GitHub Pages serves everything with max-age=600 and
@@ -812,7 +859,22 @@ async function main() {
   // tauri.conf.json alone is not enough while this tag also ships in the
   // bundle. Both come from the same generator so they cannot disagree.
   const csp = buildCSP(SIGNALING_URLS, { ipc: channel === 'app', lan: channel === 'app' })
-  const template = await readFile(path.join(SITE, 'index.html'), 'utf8')
+  const siteTemplate = await readFile(path.join(SITE, 'index.html'), 'utf8')
+  // The app's page is its own (app/index.html): no masthead, tagline, build
+  // stamp or footer, which are what made it read as a website. The substitutions
+  // and the guard below are shared, so it cannot miss the CSP or the theme colour
+  // by being a different file -- and because a template that simply lacked a
+  // token would pass a check for leftovers, the three it cannot run without are
+  // required of both.
+  const templateFile = channel === 'app' ? path.join(APP, 'index.html') : path.join(SITE, 'index.html')
+  const template = channel === 'app' ? await readFile(templateFile, 'utf8') : siteTemplate
+  const templateName = path.relative(ROOT, templateFile).split(path.sep).join('/')
+  for (const token of ['__CSP__', '__SCRIPT__', '__STYLES__']) {
+    if (!template.includes(token)) throw new Error(`${templateName} has no ${token}`)
+  }
+  // Empty for every channel but the app, whose template is the only one naming
+  // these. A function replacer for all six, so a `$` in the copy stays literal.
+  const copy = channel === 'app' ? infoCopy(siteTemplate) : null
   // replaceAll, not replace: __ORIGIN__ appears three times (og:url and two
   // image URLs) and `String.replace` with a string argument substitutes only
   // the first. The guard below is what turns that class of mistake into a
@@ -832,6 +894,12 @@ async function main() {
   const origin = stamp.channel === 'app' ? '' : ORIGIN
 
   const html = template
+    .replaceAll('__HOW_TITLE__', () => copy?.howTitle ?? '')
+    .replaceAll('__HOW_MORE__', () => copy?.howMore ?? '')
+    .replaceAll('__HOW__', () => copy?.how ?? '')
+    .replaceAll('__PROTECT_TITLE__', () => copy?.protectTitle ?? '')
+    .replaceAll('__PROTECT_MORE__', () => copy?.protectMore ?? '')
+    .replaceAll('__PROTECT__', () => copy?.protect ?? '')
     .replaceAll('__CSP__', csp)
     .replaceAll('__SCRIPT__', entryFile)
     .replaceAll('__STYLES__', cssFile)
@@ -848,9 +916,10 @@ async function main() {
     '__CSP__', '__SCRIPT__', '__STYLES__', '__OG_URL__', '__ORIGIN__',
     '__CHANNEL__', '__BUILD_LABEL__', '__BUILD_HREF__', '__BUILD_TITLE__',
     '__DOCS__', '__THEME_COLOR__',
+    '__HOW_TITLE__', '__HOW_MORE__', '__HOW__', '__PROTECT_TITLE__', '__PROTECT_MORE__', '__PROTECT__',
   ].filter(t => html.includes(t))
   if (leftover.length) {
-    throw new Error(`site/index.html placeholder(s) not replaced: ${leftover.join(', ')} -- check the token still exists in the template`)
+    throw new Error(`${templateName} placeholder(s) not replaced: ${leftover.join(', ')} -- check the token still exists in the template`)
   }
 
   await writeFile(path.join(dist, 'index.html'), html)

@@ -216,6 +216,14 @@ export const prepareReceive = () => invoke('save_prepare')
 export const changeSaveLocation = () => invoke('save_change_folder')
 
 /**
+ * The folder received files go to now, for Settings to say. Null when Android
+ * has been given none yet, which only versions 7 to 9 can be.
+ *
+ * @returns {Promise<string | null>}
+ */
+export const saveLocation = () => invoke('save_location')
+
+/**
  * Always true: sink_write streams straight to disk, so there is no
  * buffer-in-memory fallback here and no capability note to show for it.
  */
