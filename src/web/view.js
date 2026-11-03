@@ -1300,6 +1300,11 @@ function verifyStatus(state, dispatch) {
   ]
 }
 
+/** @param {string} text */
+function capitalise(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 /** @param {Dispatch} dispatch */
 function cancelButton(dispatch) {
   return h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel')
@@ -1697,8 +1702,10 @@ const BEAM_TAG = 'Not encrypted'
 // instruction that pushes the rest of the screen out of view is not a safer
 // screen, which is the whole lesson of the Accept button that started this
 // layout. The longer form ("nothing comes back here") is said once, in the
-// confirm sheet, where there is room for it.
-const BEAM_KEEP_SHOWING = 'Keep this on screen until the other device is done.'
+// confirm sheet, where there is room for it. "until the other device is done"
+// was still two lines once the slot started hugging the code, and a hugging
+// slot is one whose code no longer gives way to a second line: it was 8px over.
+const BEAM_KEEP_SHOWING = 'Keep this on screen until it is done.'
 const BEAM_KEEP_GOING = 'Keep pointing until this says it is done.'
 
 /**
@@ -1774,7 +1781,7 @@ function beamSend(state, dispatch) {
     ],
 
     // The speed control and the line reporting what that speed is producing,
-    // grouped -- changing the select changes the number in the status below
+    // grouped -- changing the speed changes the number in the status beside
     // it, so they are one control and its readout rather than two rows. They
     // move together for that reason: split across two regions, the cause would
     // be beside the buttons and the effect several inches away in the prose.
@@ -1788,16 +1795,32 @@ function beamSend(state, dispatch) {
     // The screen loses nothing either way: styles.js places it, view.js does
     // not know which shape it is in, and there is no media query in this file.
     controls: [
+      // Four radios drawn as one segmented control, where this was a <select>.
+      // A select hides the choices behind a tap and, on a phone, behind the
+      // platform's own picker sheet -- for a control whose whole point is that a
+      // sender tries a slower rate when the other camera struggles, and then
+      // perhaps a slower one again. All four on show is one tap each. Real
+      // radio inputs with one name, so arrow keys move between them and a
+      // screen reader announces a group of four with the current one checked;
+      // `checked` is set as a property by vdom.js, so it follows state after a
+      // click. Each one's accessible name carries its visible number.
       h('div', { class: 'beam-controls' }, [
-        h('label', { for: 'beam-fps' }, 'Speed'),
-        h('select', {
-          id: 'beam-fps',
-          value: String(fps),
-          onchange: /** @param {Event} ev */ ev =>
-            dispatch('beam:fps', Number(/** @type {HTMLSelectElement} */ (ev.target).value)),
-        }, FPS_CHOICES.map(choice => h('option', { key: String(choice), value: String(choice) }, `${choice} fps`))),
+        h('span', { id: 'beam-fps-label', class: 'beam-fps-label' }, 'Speed'),
+        h('div', { class: 'segmented', role: 'radiogroup', 'aria-labelledby': 'beam-fps-label' },
+          FPS_CHOICES.map(choice => h('label', { key: String(choice), class: 'segment' }, [
+            h('input', {
+              type: 'radio', name: 'beam-fps', value: String(choice), checked: choice === fps,
+              'aria-label': `${choice} frames a second`,
+              onchange: () => dispatch('beam:fps', choice),
+            }),
+            h('span', { 'aria-hidden': 'true' }, String(choice)),
+          ]))),
       ]),
 
+      // The rate first, which is the unit the segments above leave unsaid:
+      // as a word beside them it wrapped onto a line of its own wherever this
+      // slot is narrow, and here it is also the readout of the choice just made.
+      //
       // Loops, not percent: a sender has no back channel at all (see
       // core/beam.js's header), so "how far along is the other device" is a
       // question this screen structurally cannot answer. The one honest signal
@@ -1805,13 +1828,16 @@ function beamSend(state, dispatch) {
       // single pass takes -- which at least turns "keep it up indefinitely" into
       // a number someone can plan around.
       h('p', { class: 'status', 'aria-live': 'polite' },
-        `Shown ${loops}× · ${duration(eta)} per pass`),
+        `${fps} fps · shown ${loops}× · ${duration(eta)} per pass`),
     ],
 
     // "Stop", not "Cancel": what this button ends is a thing visibly running,
-    // and nothing here is waiting to be cancelled.
+    // and nothing here is waiting to be cancelled. Tonal rather than ghost: it
+    // is the screen's only button and the one thing a sender will press, so it
+    // has to look pressable, and it is not a primary because nothing here is
+    // what the screen asks of anyone -- the sender's job is to hold still.
     actions: [
-      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Stop'),
+      h('button', { class: 'btn', type: 'button', onclick: () => dispatch('cancel') }, 'Stop'),
     ],
 
     // The keep-it-on-screen instruction stays inline -- it is the one thing the
@@ -1899,7 +1925,16 @@ function beamReceive(state, dispatch) {
       // at the column gap it was a paragraph that happened to follow a bar.
       // This is the block a person stares at for minutes while holding a phone
       // steady, so it is the one that most wants to read as a single object.
-      h('div', { class: 'stack' }, [
+      //
+      // The percentage is said large above the bar, as transfer says it, and for
+      // transfer's reason: this end holds a phone up for minutes watching it. It
+      // is aria-hidden for the same reason too -- the progressbar already
+      // exposes the value -- so the status line under the bar keeps only what
+      // the bar cannot say, how much longer.
+      h('div', { class: 'stack beam-progress' }, [
+        state.beam && blocks > 0
+          ? h('p', { class: 'transfer-pct', 'aria-hidden': 'true' }, `${Math.floor(pct)}%`)
+          : null,
         state.beam ? h('div', {
           id: 'beam-progress', class: 'bar', role: 'progressbar',
           'aria-valuemin': '0', 'aria-valuemax': String(blocks), 'aria-valuenow': String(solved),
@@ -1912,9 +1947,8 @@ function beamReceive(state, dispatch) {
         // achieving rather than from the sender's chosen fps, which this device
         // has no way to learn; it stays absent for the first few seconds because
         // an estimate extrapolated from two blocks reads as broken.
-        state.beam && blocks > 0
-          ? h('p', { class: 'status', 'aria-live': 'polite' },
-            `${Math.floor(pct)}%` + (state.beam.eta ? ` · ${duration(state.beam.eta)} left` : ''))
+        state.beam && blocks > 0 && state.beam.eta
+          ? h('p', { class: 'status', 'aria-live': 'polite' }, `${capitalise(duration(state.beam.eta))} left`)
           : null,
       ]),
     ],

@@ -1138,7 +1138,6 @@ ${buttonCSS()}
  * this is the UA button styling undone, as the dropzone's rule does it.
  */
 .beam-stage {
-  block-size: min(26rem, 100%);
   /* A floor that scales with the window, where .qr's is a fixed 7rem. The
    * stage is the box .card-media gives up first, so on any card with copy in
    * it the code sat AT its floor -- 112px, the size of the README picture
@@ -1154,6 +1153,30 @@ ${buttonCSS()}
   -webkit-tap-highlight-color: transparent;
 }
 .beam-stage:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/*
+ * The slot hugs the code on a stacked layout, rather than taking the card's
+ * slack as every other media slot does.
+ *
+ * On a phone the code is bounded by the slot's WIDTH, so a growing slot could
+ * not make it any bigger: it only centred a square in a taller box, and the
+ * difference came out as about 80px of nothing between the caption and the
+ * filename. Hugging, the code, its caption and the copy sit together under
+ * the heading and the slack collects above the speed control, next to the
+ * thing it is spare room for. The stage sizes from the slot's width (cqi)
+ * here, not from a percentage of a height that is now its own. The wide and
+ * flat branches place the slot in a grid track, where none of this applies.
+ *
+ * min-block-size: 0 is the other half, and without it the hug is a fixed
+ * height: a flex item's automatic minimum is its content, so the slot could
+ * never shrink below the code it hugs, and a card a few pixels short
+ * scrolled its copy instead (8px at 390x844). With it the slot gives way
+ * first and the stage, flex: 0 1 auto inside it, follows it down to its floor.
+ * The shrink factor is the default slot's 100, for its reason: the code gives way
+ * before the copy does, where 1 against the copy's 1 split the difference.
+ */
+.card-media:has(> .beam-stage) { flex: 0 100 auto; min-block-size: 0; }
+.beam-stage { block-size: min(26rem, 100cqi); }
 
 /* The caption under the code in the card; see the enlarged rules for its
  * second job. flex: none, so the code is what gives way to a short card. */
@@ -1274,24 +1297,69 @@ ${buttonCSS()}
 }
 
 
+/* Wrapping, so its narrowest is the segmented track alone. In the flat
+ * branch this is an auto grid track beside the buttons, and on one line the
+ * label, the four segments and a unit beside them came to 276px and pushed Stop off the
+ * right edge of an 800px phone. Wrapped there, the label takes the line
+ * above; everywhere else the row has room and stays one line. */
 .beam-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-2) var(--sp-3);
 }
-.beam-controls select {
-  font: inherit;
-  font-size: var(--fs--1);
-  padding: var(--sp-1) var(--sp-3);
-  /* The one control on the beam screen, on the one screen that runs for
-   * minutes and where changing the rate is the only thing a sender can
-   * actually do. It was a ~28px target. */
-  min-block-size: var(--tap);
+.beam-fps-label { font-weight: 600; }
+
+/*
+ * The speed picker: four radios in one track, the checked one raised out of
+ * it. The track is the tonal fill the secondary buttons use, so it reads as a
+ * control at the same weight as Stop beside it, and the raised segment is
+ * --surface with the first elevation step -- the same "this one" a tab strip
+ * uses, rather than the accent, which on this screen would compete with the
+ * Not encrypted tag for the eye. Each segment is a --tap square: the one
+ * control on the one screen that runs for minutes.
+ *
+ * The input itself is hidden with the sr-only clip, not display: none, so it
+ * stays focusable and arrow keys still move the selection; the ring is drawn
+ * on the segment while its input has focus.
+ */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--line-strong);
-  background: var(--surface-sunken);
-  color: var(--text);
+  background: var(--surface-tonal);
 }
+.segment {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-inline-size: var(--tap);
+  min-block-size: calc(var(--tap) - 6px);
+  padding-inline: var(--sp-2);
+  border-radius: calc(var(--r-sm) - 3px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--dur-base), color var(--dur-base);
+}
+.segment > input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  margin: 0;
+}
+.segment:hover { color: var(--text); }
+.segment:has(> input:checked) {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+.segment:has(> input:focus-visible) { box-shadow: var(--focus-ring); }
 
 /* ---- camera scanner + corner-bracket viewfinder ----
  * .scanner-frame is a plain positioned box; .viewfinder draws its four
@@ -1843,7 +1911,7 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
    * 248px in a media column with less than that to give, and the caption
    * under it painted across the speed control. Legal to every assertion in
    * check-layout.mjs, and visible in the first screenshot. */
-  .beam-stage { block-size: min(18rem, 100%); min-block-size: 7rem; }
+  .beam-stage { block-size: min(18rem, 100cqi); min-block-size: 7rem; }
   /* The scan panel joins them, and for the same reason spelled out on the
    * wide-branch rule below: height is the scarce axis here, so it has to be
    * the one that governs, with inline-size released so aspect-ratio can
@@ -2244,6 +2312,13 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
    * or a rotation leaves a control that can be focused and cannot be seen.
    */
   #btn-photo { display: none; }
+
+  /* The speed row without its visible label, which is the one word this
+   * track cannot afford: wrapped onto its own line it made the controls 174px
+   * tall and the copy beside them scroll by 36. The readout under the segments
+   * still says what they are, and the label stays the radio group's accessible
+   * name -- aria-labelledby reads a node that is not rendered. */
+  .beam-fps-label { display: none; }
 
   /* An 8rem basis for the bar's buttons here, not the 12rem they take
    * everywhere else. This bar is the third grid track, about 400px at
