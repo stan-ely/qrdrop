@@ -175,7 +175,7 @@ const SUCCESS_OUTCOMES = new Set(['sent', 'received'])
 // palette). The functions are declarations, so referencing them from a
 // module-scope const above their definitions is safe -- they are hoisted and
 // initialised before this runs.
-/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { media?: any, body: any[], controls?: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[], label?: string } | null }>} */
+/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { title: string, heroFirst?: boolean, media?: any, body: any[], controls?: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[], label?: string } | null }>} */
 const builders = {
   choose, send, receive, verify, transfer, done,
   'beam-send': beamSend, 'beam-receive': beamReceive,
@@ -637,7 +637,7 @@ function screen(name, state, dispatch) {
   // (the bug being that anything else in there grows and pushes the real
   // buttons off a phone), and the bar wraps, so on a narrow screen the control
   // would take a row from the buttons rather than sitting beside them.
-  const { media, body, actions, controls, info } = builders[name](state, dispatch)
+  const { title, heroFirst, media, body, actions, controls, info } = builders[name](state, dispatch)
 
   // The Details button is appended here, by the frame, when a builder declares
   // `info` -- never rendered by the builder itself. It is the exact same
@@ -663,7 +663,22 @@ function screen(name, state, dispatch) {
     // currently showing, drawn into each card. Only one of them is ever
     // visible, which is the same trick the screens themselves use.
     stepRail(state),
-    h('div', { class: `card-body${media ? ' has-media' : ''}` }, [
+    // The heading is drawn by the frame, from the builder's `title`, and it is
+    // the body's first child rather than the copy column's. It used to open
+    // `body`, which put it under the media on every stacked layout: verify
+    // asked "check both devices show the same symbols" below the symbols, and
+    // the question a screen exists to ask was the fifth thing on it. Here it
+    // comes first on a phone and heads the copy column beside the media on the
+    // wide and flat layouts (styles.js places it). `heroFirst` is for the two
+    // screens whose media is the answer -- a percentage, an outcome -- where the
+    // heading reads as its caption, and it is an `order` in CSS, never a
+    // different tree, for the canReuse reason on the controls slot below.
+    //
+    // The frame owns it for the Details button's reason: one place that draws,
+    // labels and focuses it (element.js's _focusScreenHeading finds it as the
+    // screen's only <h2>, which check-layout.mjs asserts).
+    h('div', { class: `card-body${media ? ' has-media' : ''}${heroFirst ? ' hero-first' : ''}` }, [
+      h('h2', { class: 'card-title', tabindex: '-1' }, title),
       media ? h('div', { class: 'card-media' }, media) : null,
       h('div', { class: 'card-copy' }, body),
     ].filter(Boolean)),
@@ -800,9 +815,9 @@ function choose(state, dispatch) {
   // titled for a situation ("no network") that is not the one they are in.
   if (!state.rtcAvailable) {
     return {
+      title: 'Send or receive a file',
       media: dropzone(state, dispatch),
       body: [
-        h('h2', { tabindex: '-1' }, 'Send or receive a file'),
         h('p', { class: 'note' },
           'This platform has no WebRTC, so network transfer is not available here. '
           + 'Beam sends a file as an animated QR code instead — no network, no encryption.'),
@@ -833,10 +848,9 @@ function choose(state, dispatch) {
     // deliberate: on a phone the bar is where the eye ends up, and the box is
     // where the thumb lands, and neither audience should have to find the
     // other one's control.
+    title: 'Send or receive a file',
     media: dropzone(state, dispatch),
     body: [
-      h('h2', { tabindex: '-1' }, 'Send or receive a file'),
-
       // Shown only when this browser cannot stream a download to disk (see
       // web/sink.js's canStreamToDisk) -- everyone else never sees this note.
       state.capabilityNote ? h('p', { class: 'note' }, state.capabilityNote) : null,
@@ -959,10 +973,9 @@ function choose(state, dispatch) {
  */
 function send(state, dispatch) {
   return {
+    title: 'Scan this on the other device',
     media: h('div', { id: 'qr', class: 'qr', key: 'qr', adopt: state.qrNode }),
     body: [
-    h('h2', { tabindex: '-1' }, 'Scan this on the other device'),
-
     // The one thing the send screen never said, and the thing a first-time
     // sender is actually stuck on: who scans this, and with what. "Scan this
     // on the other device" reads as an instruction to find a scanner, which
@@ -1047,10 +1060,8 @@ function receive(state, dispatch) {
       : h('div', { class: 'scanner-frame is-empty' }, [
         h('p', { class: 'note' }, NO_CAMERA_SCAN),
       ]),
+    title: "Scan the sender's code",
     body: [
-    h('h2', { tabindex: '-1' }, "Scan the sender's code"),
-
-
     // A plain, always-visible label rather than a collapsed <details> --
     // manual entry is the fallback everyone needs when the camera fails or is
     // absent, so it is promoted out of hiding.
@@ -1151,9 +1162,8 @@ function verify(state, dispatch) {
         h('span', { class: 'sas-emoji', 'aria-hidden': 'true' }, emoji[i] ?? ''),
         h('span', { class: 'sas-word' }, word),
       ]))),
+    title: 'Check both devices show the same symbols',
     body: [
-      h('h2', { tabindex: '-1' }, 'Check both devices show the same symbols'),
-
       // The exact-string element the e2e suite and CLI interop depend on --
       // see SR_ONLY_STYLE's comment above for why this is separate from the
       // tile grid rather than being the tile grid's container.
@@ -1301,8 +1311,9 @@ function transfer(state, dispatch) {
         'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(moved),
       }, [h('div', { class: 'bar-fill', style: { '--progress': `${pct}%` } })]),
     ]),
+    title: state.role === 'receiver' ? 'Receiving' : 'Sending',
+    heroFirst: true,
     body: [
-    h('h2', { tabindex: '-1' }, state.role === 'receiver' ? 'Receiving' : 'Sending'),
     h('div', { class: 'stack' }, [
       state.file ? h('p', { class: 'filename' }, subject(state, state.file)) : null,
       pathBadge(state),
@@ -1415,8 +1426,12 @@ function done(state, dispatch) {
         h('span', { class: 'glyph', 'aria-hidden': 'true' }, info.glyph),
         h('p', {}, outcomeMessage(state)),
       ]),
+    title: info.title,
+    // The outcome is the answer and the heading its caption -- except for
+    // received text, where the message is the subject and the heading says
+    // what the box under it is before anyone reads it.
+    heroFirst: text === null,
     body: [
-    h('h2', { tabindex: '-1' }, info.title),
     text !== null ? h('p', { class: 'note' }, outcomeMessage(state)) : null,
     h('div', { class: 'stack' }, [
       // Small and in the copy rather than a third button in the bar, which
@@ -1679,9 +1694,8 @@ function beamSend(state, dispatch) {
         ? (state.coarse ? 'Tap to shrink' : 'Click or press Esc to shrink')
         : (state.coarse ? 'Tap the code to enlarge it' : 'Click the code to enlarge it')),
     ],
+    title: 'Show this to the other device',
     body: [
-    h('h2', { tabindex: '-1' }, 'Show this to the other device'),
-
     // The file and BEAM_TAG on one line. BEAM_WARNING itself was said in the
     // confirm sheet before this screen existed; see its comment for why it is
     // not repeated here.
@@ -1787,9 +1801,8 @@ function beamReceive(state, dispatch) {
       : h('div', { class: 'scanner-frame is-empty' }, [
         h('p', { class: 'note' }, NO_CAMERA_BEAM),
       ]),
+    title: 'Point the camera at the other screen',
     body: [
-      h('h2', { tabindex: '-1' }, 'Point the camera at the other screen'),
-
       // Unlike receive()'s scanner there is no manual-entry fallback here -- a
       // beam code is thousands of frames, not one string a person could read
       // aloud or paste -- so a missing camera has to be said outright rather

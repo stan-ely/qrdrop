@@ -276,6 +276,7 @@ ${tokensCSS(':host')}
  * change and not on the progress ticks that re-render the same visible screen
  * ten times a second during a beam.
  */
+.card:not([hidden]) > .card-body > .card-title,
 .card:not([hidden]) > .card-body > .card-media,
 .card:not([hidden]) > .card-body > .card-copy {
   animation: screen-in var(--dur-slower) var(--ease-out);
@@ -298,7 +299,7 @@ ${tokensCSS(':host')}
  */
 .card[hidden] { display: none; }
 
-/* The card body: the media slot and the copy slot, stacked. */
+/* The card body: the heading, the media slot and the copy slot, stacked. */
 .card-body {
   flex: 1 1 auto;
   min-block-size: 0;
@@ -306,6 +307,25 @@ ${tokensCSS(':host')}
   flex-direction: column;
   gap: var(--sp-4);
 }
+
+/* flex: none: the question is the last thing on a screen to give up room. */
+.card-title { flex: none; }
+
+/*
+ * The two screens whose media is the answer -- transfer's percentage and
+ * done's outcome -- put the heading under it, as its caption.
+ *
+ * And the group stops filling the card. Everywhere else the media slot takes
+ * the slack (see its grow factor below), which here would have the number
+ * centred in a tall box and its caption at the box's foot, a third of a
+ * screen from it. A percentage and an outcome have no shape to keep, so the
+ * slot hugs them and the three pieces centre together. \`order\`, never a
+ * different tree: see the heading's comment in view.js.
+ */
+.card-body.hero-first { justify-content: center; }
+.card-body.hero-first > .card-media { flex: 0 1 auto; }
+.card-body.hero-first > .card-title { order: 1; text-align: center; }
+.card-body.hero-first > .card-copy { order: 2; }
 
 /* The two halves of a card body. .card-media holds the screen's one visual
  * thing -- QR, camera, SAS tiles -- and .card-copy everything else. They stack
@@ -353,6 +373,9 @@ ${tokensCSS(':host')}
  * short viewport, and BREAKPOINT_SHORT drops it entirely.
  */
 .card-media {
+  /* A size container, so the square boxes in it can be capped at the slot's
+   * own width (100cqi, below) rather than at a guess at it. */
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -1038,6 +1061,22 @@ ${buttonCSS()}
 .qr svg { display: block; inline-size: 100%; block-size: 100%; aspect-ratio: 1; }
 
 /*
+ * Never taller than the slot is wide.
+ *
+ * The block cap is the scarce-axis rule above, and it assumes height is the
+ * short side. When it is not, block-size reaches past max-inline-size, and an
+ * aspect-ratio box whose width is clamped and whose height is not stops being
+ * square: the beam stage came out 352x361 in the wide layout's 22rem column
+ * once the heading left the copy column and the media spanned the body's full
+ * height. 100cqi is that column's width, read off .card-media as a size
+ * container, so the cap is the real one at every layout without restating
+ * each branch's track. Not on the enlarged code, which is fixed to the
+ * viewport and sizes itself -- and would otherwise still be measured against
+ * the slot it left.
+ */
+.qr, .beam-stage:not([aria-pressed="true"]) { max-block-size: 100cqi; }
+
+/*
  * The beam code gets a higher cap than the pairing QR, and that is the whole
  * of the difference between them.
  *
@@ -1715,7 +1754,33 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
  * only single-home option.
  */
 @media ${BREAKPOINT_WIDE} {
-  .card-body.has-media { flex-direction: row; align-items: stretch; gap: var(--sp-5); }
+  /*
+   * A grid now, where it was a flex row of media and copy, because the heading
+   * is a third child and belongs at the head of the copy column: a row of three
+   * would put it in a column of its own.
+   *
+   * The four rows centre the heading and the copy as one block beside the
+   * media, which \`safe center\` on the copy column did when the heading was
+   * inside it. The outer two are 1fr spacers, the copy's is
+   * \`minmax(0, max-content)\`: it takes what it needs while there is room and
+   * gives way to zero when there is not, so a long column scrolls inside its
+   * own track, from the top, with the heading still above it -- the clipped-
+   * above failure \`safe\` was written for cannot arise, because nothing is
+   * centred inside the box that scrolls.
+   *
+   * \`row-gap: 0\` because a gap would also fall between the empty spacer
+   * rows; the heading carries the one space it needs as padding.
+   */
+  .card-body.has-media {
+    display: grid;
+    grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+    grid-template-rows: 1fr auto minmax(0, max-content) 1fr;
+    column-gap: var(--sp-5);
+    row-gap: 0;
+  }
+  .card-body.has-media > .card-media { grid-area: 1 / 1 / 5 / 2; }
+  .card-body.has-media > .card-title { grid-area: 2 / 2 / 3 / 3; padding-block-end: var(--sp-4); text-align: start; }
+  .card-body.has-media > .card-copy { grid-area: 3 / 2 / 4 / 3; }
   /* The floor is a stacked-layout concern only: in two columns the media
    * column already stretches to the row's height, so reserving a minimum
    * would be reserving space the layout has given it anyway. */
@@ -1981,19 +2046,23 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
    * measure 82 and 83 with a --sp-3 gap, so 177px puts them on one row and
    * 176 stacks them into a 108px column. A floor of 11rem is 176.
    */
+  /* A heading row on top of the second and third tracks, which the copy used
+   * to start at. It is \`auto\` and the copy's row the one that gives way, so
+   * the question is never what scrolls. */
   .card {
     display: grid;
     grid-template-columns: 18rem auto minmax(13rem, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     column-gap: var(--sp-5);
     row-gap: 0;
   }
 
   .card-body.has-media { display: contents; }
-  .card-media { grid-area: 1 / 1 / 3 / 2; }
-  .card-copy { grid-area: 1 / 2 / 2 / 4; }
-  .card-controls { grid-area: 2 / 2 / 3 / 3; }
-  .card-actions { grid-area: 2 / 3 / 3 / 4; }
+  .card-body.has-media > .card-media { grid-area: 1 / 1 / 4 / 2; }
+  .card-body.has-media > .card-title { grid-area: 1 / 2 / 2 / 4; padding-block-end: var(--sp-3); text-align: start; }
+  .card-body.has-media > .card-copy { grid-area: 2 / 2 / 3 / 4; justify-content: flex-start; }
+  .card-controls { grid-area: 3 / 2 / 4 / 3; }
+  .card-actions { grid-area: 3 / 3 / 4 / 4; }
 
   /* A row here, a column everywhere else: wrapping, because the track it is
    * in is about 190px at 800x360 and the label, the select and the "shown in
@@ -2040,8 +2109,8 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
    * it. The sibling combinator rather than a second class, because
    * \`has-media\` already records the fact and a screen should not have to say
    * it twice. */
-  .card-body:not(.has-media) { grid-area: 1 / 1 / 2 / 4; }
-  .card-body:not(.has-media) ~ .card-actions { grid-area: 2 / 1 / 3 / 4; }
+  .card-body:not(.has-media) { grid-area: 1 / 1 / 3 / 4; }
+  .card-body:not(.has-media) ~ .card-actions { grid-area: 3 / 1 / 4 / 4; }
 }
 
 /*
