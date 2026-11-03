@@ -106,7 +106,7 @@ two together. Neither is optional.
 The crates form a Cargo workspace at the repo root, under `crates/`, and since phase 7
 `app/src-tauri` is a member of it (not a default one), with one `Cargo.lock` at the root. It was a
 separate workspace until then, and that could not survive its first dependency on `crates/`: see
-"Phase 7: what it found". `app/src-tauri/.cargo/config.toml` keeps its output in
+"Phase 7: what it found". `app/.cargo/config.toml` keeps its output in
 `app/src-tauri/target`, so every hard-coded path there still holds, and its `version` stays a
 literal, so the `sed` in `app-release.yml` that reads the first `version =` line of
 `app/src-tauri/Cargo.toml` still works. A `version.workspace = true` there would break that `sed`.
@@ -1106,7 +1106,7 @@ The desktop half was done on 2026-10-18; the gate is a phone, and none was attac
 workspace's root is hashed into Cargo's metadata by its absolute path, so the app depending on
 `crates/` from its own workspace built differently in every checkout directory, and
 `app-reproducible.yml` builds in two. As a member, every path is relative to one root. The app
-keeps its own `target/` (`app/src-tauri/.cargo/config.toml`), because every workflow and the
+keeps its own `target/` (`app/.cargo/config.toml`), because every workflow and the
 `gen/` Gradle project look for it there, and `default-members` keeps a bare `cargo` at the root
 from compiling Tauri. Merging the two lock files unified 17 semver-compatible crates on the
 higher version.

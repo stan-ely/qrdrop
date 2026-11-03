@@ -961,7 +961,7 @@ reasoning as `buildCSP` itself. Hand-editing `tauri.conf.json`'s `connect-src` i
 drift this exists to prevent. `Cargo.lock` is committed because this is a binary,
 and it is the **root** one: the app is a member of the root workspace, which is a
 reproducible-build requirement and not tidiness (the root `Cargo.toml` says why). Its
-output still lands in `app/src-tauri/target`, through `app/src-tauri/.cargo/config.toml`,
+output still lands in `app/src-tauri/target`, through `app/.cargo/config.toml` (in `app/`, because Gradle runs cargo from there),
 and it is not a default member, so a bare `cargo test` at the root is the session crates
 and every `--workspace` run says `--exclude qrdrop`.
 `app/dist/` is *not* committed (it is `dist/`-gitignored); `mise run app:dev` /

@@ -14,10 +14,10 @@
 # to refuse, because f-droid.org's checkout is never at our path.
 #
 # What the app's own workspace used to protect is kept another way:
-# - Its target/ is still app/src-tauri/target, through app/src-tauri/.cargo/
-#   config.toml, so every path in the workflows and scripts stays true. Cargo
-#   reads that file only when it runs from app/src-tauri, which is where Tauri
-#   runs it.
+# - Its target/ is still app/src-tauri/target, through app/.cargo/config.toml,
+#   so every path in the workflows and scripts stays true. Cargo reads that
+#   file only when it runs from app/ or below: Gradle runs it from app/, the
+#   Tauri CLI from app/src-tauri.
 # - Its version is still the literal first `version =` in its Cargo.toml, so
 #   app-release.yml's sed and cargo-release read the app's own number.
 # - It is not a default member. A bare `cargo test` or `cargo clippy` here is

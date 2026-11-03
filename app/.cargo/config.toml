@@ -1,0 +1,20 @@
+# The app's build output stays in app/src-tauri/target now that the app is a
+# member of the root workspace (see the root Cargo.toml for why it is one).
+# Every path in app-release.yml, app-reproducible.yml and make-msix.mjs names
+# that directory, and so does Gradle's view of the Rust libraries through the
+# Tauri CLI, which asks `cargo metadata` from app/src-tauri. A relative
+# target-dir is resolved against this .cargo directory's parent, app/.
+#
+# It lives in app/ and not app/src-tauri/ because cargo reads config from the
+# directory it runs in and that directory's parents, never from below. Gradle's
+# rustBuild task runs `tauri android android-studio-script` from app/, so from
+# app/src-tauri/.cargo this file was invisible to the cargo that builds each
+# ABI's library: it went to the root target/, Tauri looked for it here, and the
+# app-v1.3.0 release failed at rustBuildArmRelease with "Library artifact not
+# found". arm64 only appeared to work, because a stale library from an earlier
+# build was already here to be picked up.
+#
+# A `cargo build -p qrdrop` from the repository root builds into the root
+# target/ instead, harmlessly and slowly.
+[build]
+target-dir = "src-tauri/target"
