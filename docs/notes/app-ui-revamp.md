@@ -75,6 +75,116 @@ Made for the plan, open to change:
   at.
 - New hand edits under `gen/` get a row in CLAUDE.md's table.
 
+## Phase 3: proposed direction
+
+Written 2026-11-02 from every fixture photographed in light mode on the site and app trees, at
+390x844 touch and 1280x720 mouse, before any code changed. Nothing here is built yet.
+
+**What the pictures show.** Six faults, and each one repeats across screens.
+
+- The heading is the weakest thing on the screen. It is 18px, under the media on a phone, so
+  `verify` asks its question below the thing it is asking about.
+- The two most important moments are the smallest. The SAS tiles sit at about 80x60 with 200px of
+  white above them. `transfer`'s 54% is 30px in a screen that is otherwise empty.
+- Everything secondary is 13px muted text, and a ghost button looks like a line of that text. On
+  desktop `choose` is four controls in one row, two of them reading as plain words.
+- The rail reads as a status light: green and terracotta side by side, on a card that has no other
+  green or red meaning at that moment.
+- `verify-accept` has three exits and they wrap badly: Accept, then Decline and Cancel at different
+  heights. `verify` is three rows of buttons on a phone.
+- `done` splits one thought in two: a pale banner carrying the sentence, and the heading ~120px
+  below it. `done-failed` is worse, with the whole card between them.
+- Beam has the same faults, and a few of its own. On `beam` the media slot stretches, which leaves
+  about 80px of nothing between "Tap the code to enlarge it" and the heading, and the heading still
+  sits under the code. Speed is a raw native `<select>` with a 13px readout under it, and Stop, the
+  only button, is ghost text. On `beam-receive` a person holds the phone up for minutes watching a
+  6px bar and a 13px line, under a viewfinder twice as tall as it is wide.
+- Text has no screens of its own: it is the compose sheet over `choose`, then `verify` and
+  `transfer` exactly as a file, then `done`. Both ends of that need work. The compose sheet's box is
+  six rows on a phone with the rest of the sheet's height unused, and its note repeats what `verify`
+  will show. On `done-text` the message comes first with nothing to say what it is, and the
+  heading, "Nothing was saved", Save as file, the path badge and the digest are stacked between it
+  and Copy. The restart reads "Receive another file" after a message, where the sender's already
+  reads "Send something else".
+
+Two things are simply broken. `receive-no-camera` and `beam-receive-no-camera` draw `--muted` on
+`--scan-bg`, about 3:1, in a frame the size of a camera that is not there. And the no-camera frame
+takes the room from the form that is the only way through.
+
+**The direction: one question per screen, asked at the top and answered by one large thing.**
+
+1. *Structure.* The heading leaves `.card-copy` and becomes a slot the frame draws (`title`, on the
+   same enforced-shape argument as the Details button). It goes above the media on a stacked
+   layout, and beside it at the top of the copy column on the wide and flat branches. `transfer` and
+   `done` put it below their hero with `order`, because there the hero is the answer and the
+   heading its caption.
+2. *Type.* Headings go to 22px at weight 700, tightened, and hold that on a phone. A new `--fs-4`
+   (2.75rem) for `transfer`'s number. Notes and status go from 13px to 14px through a new token, so
+   the site chrome that shares `--fs--1` does not move. No web font: the CSP and the install stay
+   as they are.
+3. *Colour.* The accent means "the one thing to press" and "how far along", and nothing else. The
+   rail becomes accent-filled up to the current step on `--line`. Green and red are for outcomes
+   only, which is what makes them mean something when they arrive: the outcome becomes a solid disc
+   with a glyph on it, needing a new `--on-status` token. Every new pair gets measured in both
+   palettes and the number goes in `tokens.js`.
+4. *Buttons.* Three weights, named: `primary` (filled, one per screen), a tonal secondary (replacing
+   the outlined `.btn`), and `ghost` for exits, which gains enough presence to look pressable.
+   `.danger` stays outlined.
+5. *Less copy.* `send` loses the camera sentence's second half and folds its bar and status into one
+   line. `verify` says "If they differ, stop." and the path sentence goes behind nothing, since it
+   is already gone on a phone. `receive`'s status becomes a caption inside the camera frame, where
+   it is said once rather than beside a heading saying the same. This is what pays for the larger
+   type, and it is the route to closing send's and verify's overflow at 800x360, so the
+   `copyScroll` budget should fall from 28, not grow.
+6. *Fewer exits.* Once there is an offer, `verify` drops Cancel: Decline already is the way out, and
+   it tells the sender. The sender keeps one primary on its own row and "They don't match" beside
+   Cancel on the next. The primary still names the file, truncated.
+7. *Sheets.* On a coarse pointer: a drag handle, slide up and slide down, a backdrop that fades, and
+   drag or backdrop tap to dismiss, in `element.js` since a view cannot hold a gesture. Dismissing is
+   what Escape already does, so no sheet gains a way past a safety gesture. The compose sheet ignores
+   a backdrop tap while its box has text, so a stray tap cannot lose a message. On a mouse they stay
+   centred and fade. `@starting-style` and `allow-discrete` carry the exit, with a plain cut wherever
+   an engine lacks them.
+8. *Motion.* Each transition says something: the heading and hero rise on a new screen, the SAS
+   tiles arrive in sequence, the outcome disc scales in once, a sheet comes from the edge it returns
+   to. Nothing loops but a wait. Under reduced motion all of it cuts, and state still reads from
+   colour and text.
+9. *`choose`.* The dropzone fills its column on a mouse too. Send is primary, Receive is tonal, and
+   Send text and No network? drop to a quiet second row.
+10. *Beam.* Both ends get the title slot, so the instruction comes first and the code or camera
+    under it. On `beam` the code takes the slot's full width with its caption directly under it, and
+    the gap goes away. The filename and the Not encrypted tag go on one line, and the keep-showing
+    callout follows. Speed becomes a segmented control of `FPS_CHOICES` (5, 10, 15, 20) with "Shown
+    2× · 30 s a pass" beside it. These are still real radio inputs in `controls`, so the flat branch
+    places them as before. Stop becomes the tonal secondary: it ends something running, and nothing
+    here is the primary. On `beam-receive` the viewfinder is capped square-ish, which is the tall
+    viewfinder follow-up, and the progress gets `transfer`'s treatment: the percentage at `--fs-4`,
+    a thicker bar, and the time left as its caption. Review file stays the one primary. Both beam
+    sheets get the bottom-sheet behaviour in point 7. `BEAM_WARNING` stays the danger callout at the
+    top, Start beaming or Accept is the primary, and Cancel or Decline is secondary. The enlarged
+    overlay is unchanged.
+11. *Text.* The compose sheet's box grows to the height the sheet has, staying above the keyboard
+    where `dvh` allows. Its note shortens to "You will both check four symbols before it is sent."
+    The backdrop-tap guard in point 7 is the one exception to dismissal. On `done-text` the title
+    slot puts "Message received" above the message, with a small solid check beside it, so the disc
+    is not spent on a screen whose subject is the text. The message takes the slack. Copy stays the
+    one primary. Save as file stays out of the bar, where a third button wrapped it at 800x360. It
+    becomes a small tonal button on the box's caption row, beside "Nothing was saved to this
+    device", which is the sentence it answers. The path badge and digest drop to one quiet row. The receiver's restart becomes "Receive something else" to
+    match the sender's. `#done-text` and `btn-copy-text` are unchanged. A sent message takes the
+    ordinary `done` treatment.
+
+**Kept as they are:** every id in CLAUDE.md's contract, `#sas` verbatim, the QR and beam surfaces, the
+scan tokens, the 2x2 SAS grid, `BEAM_WARNING`'s words and where it is said, the keep-showing callout,
+Accept's no-await rule, and the vnode shape across pointer and orientation.
+
+**`check-layout.mjs` has to change once.** It measures one frame after a state lands, and a sheet
+sliding up is off-screen then, so it waits for finite animations first, as
+`make-store-screenshots.mjs` already does.
+
+**Phase 2's follow-ups taken here:** the disclosure's website-only wording, the `fastlane/`
+screenshots, and how the tall viewfinder looks.
+
 ## Phase 2: as built
 
 CLAUDE.md has the rules, under "The app has its own page". What is recorded here is what they
