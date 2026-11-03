@@ -168,16 +168,23 @@ rule is `safe center` now. Zero-box children are exempt, for the same reason the
 offscreen check exempts a closed dialog: an element that is not laid out reports
 0x0 at the origin, which is above every scroll container on the page.
 
-**The `copyScroll` budget is 28px at 800x360 and none at 844x390, and it is not
-beam's any more.** A budget and not the `allowBodyScroll` flag it replaced, because
-an on/off exemption lets the one screen that legitimately overflows hide every
-screen that does not — and that happened here: the budget was beam-send's 79px
-(and 49), and under it the network path's send (27), verify (17) and toast (14)
-screens had been scrolling unnoticed. Beam fits both landscape phones now, since its
-encryption warning moved into the sheets (below), so a beam screen overflowing is a
-regression. The 28 is send's (27, and 28 on some Firefox runs of an unchanged tree); closing it is a layout job of its own.
-Take the larger engine's number whenever they differ, or the budget passes one
-engine and fails the other on an unchanged tree.
+**There is no `copyScroll` budget left anywhere, and a new one is a regression to fix,
+not a number to raise.** `VIEWPORTS` still takes the field. It was 28px at 800x360,
+which was send's, and before that beam-send's 79. It went to zero in the phase-3
+screen redesign (`docs/notes/app-ui-revamp.md`) by cutting copy, not by moving it:
+each screen's question went into a heading the frame draws (the `title` slot), the
+explanations went into the Details sheet, and two bars that wrapped onto a second row
+lost a button that said the same thing a second way. It used to be a budget rather
+than the `allowBodyScroll` flag before it, because an on/off exemption lets the one
+screen that legitimately overflows hide every screen that does not. Under beam-send's
+79, send (27), verify (17) and toast (14) had been scrolling unnoticed. If a budget
+ever has to come back, take the larger engine's number, or it passes one engine and
+fails the other on an unchanged tree.
+
+**A button the page has hidden is not checked for position**, which is
+`checkVisibility()` in the button filter: the done screen's digest Copy sits inside a
+closed `<details>`, and a box that is not rendered reports a position outside every
+viewport.
 
 **What the first screenshot of that branch caught, which no assertion did:** the
 part below the fold was `.callout.warn`, the keep-it-on-screen instruction
@@ -757,9 +764,14 @@ found. `node scripts/check-layout.mjs` is that, automated.
 (`site/styles.css`: `body` is `100dvh`, `main` is an auto/1fr/auto grid) and the
 component fills the row it is given — `:host` is `block-size: 100%`, never `100dvh`,
 or it would overflow by exactly the height of the page chrome above it. Every screen
-builder returns `{ media, body, controls, actions }`: the body may scroll as a last
-resort, the action bar never does. There is nowhere else for a button to go, which is
-the point. `media` is the screen's one visual thing and `controls` its one control
+builder returns `{ title, media, body, controls, actions }` (and `heroFirst`, `info`):
+the body may scroll as a last resort, the action bar never does. There is nowhere else
+for a button to go, which is the point. `title` is the screen's question, drawn by
+`screen()` as the `h2.card-title` above the media on every layout, which is why a builder
+never writes its own `<h2>` and why `_focusScreenHeading`'s `querySelector('h2')` still
+finds it. One primary per screen: a second action is `.btn` (tonal) or `ghost`, and a
+way out that another button already provides (Cancel beside Decline) is dropped
+rather than shown twice. `media` is the screen's one visual thing and `controls` its one control
 that is not a button (only beam-send has one) — both are slots rather than entries in
 `body` because "beside" is not something CSS can say about one child among siblings,
 and both are rendered as children of `.card` so a media query can place them. Adding
@@ -779,6 +791,17 @@ sets `display` on `qr-drop`.
 `autofocus`, because `showModal()` would otherwise focus the first control, and on the
 beam sheet that is Accept: a stray Enter would accept a file. Same rule, same reason as
 `_focusScreenHeading`.
+
+**Sheets animate in and out, and close by a backdrop tap or a drag from the handle.**
+`sheetCSS` (shared with the site's two dialogs) uses `@starting-style` and
+`allow-discrete` transitions on `display` and `overlay`. That means **a closing sheet is
+still on screen**, so `_render` patches the dialog's contents only while a sheet is
+wanted. Patching it to nothing at close slid an empty box off the screen. The gestures are
+`src/web/sheet-gesture.js`, which ends in `dialog.close()` and so reports through the
+`close` listener Escape already used. That equivalence is the safety argument: no sheet
+decides anything by closing. The one `canDismiss` refusal is a backdrop tap on the
+compose sheet while its box has text. A drag is wired only under `pointer: coarse`, where
+the handle is drawn. A drawn handle that ignores a drag is worse than no handle.
 
 **These ids are a contract with `e2e/transfer.e2e.mjs`**: `#btn-send`, `#screen-send`,
 `#manual-code`, `#qr`, `#btn-receive`, `#screen-receive`, `#manual-input`, `#manual-form`,

@@ -156,7 +156,7 @@ test('About\'s copy is read from the site\'s template, whole', () => {
   assert.match(copy.how, /^<ol class="how">[\s\S]*Check the words match[\s\S]*<\/ol>$/)
   // The first bullet and the last, so a selector that stopped short fails here.
   assert.match(copy.protect, /Files are encrypted end to end/)
-  assert.match(copy.protect, /has always had\.<\/li>\s*<\/ul>$/)
+  assert.match(copy.protect, /code always has\.<\/li>\s*<\/ul>$/)
   assert.match(copy.howMore, /__DOCS__\/protocol\.md/)
   assert.match(copy.protectMore, /__DOCS__\/threat-model\.md/)
 })

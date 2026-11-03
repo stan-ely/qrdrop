@@ -239,18 +239,16 @@
           Show the QR to the person you mean to send to, and not to a room.</li>
         <li><strong>Both devices learn each other's IP address.</strong> That is inherent
           to a direct connection.</li>
-        <li><strong>Code is self-hosted, not loaded from a CDN.</strong> This page serves
-          a bundle built from source. The server hosting it could still serve modified
-          code, the same way any web app's server could. No in-browser design prevents
-          that. For genuinely sensitive material, use a tool you can verify before running.</li>
-        <li><strong>The QR code can encode a link, and that link still keeps the key off
-          the wire.</strong> Scanning it with a phone's own camera app opens this page
-          with the key in the URL's <em>fragment</em> -- the part after <code>#</code>.
-          A fragment is never sent to a server as part of the HTTP request; the browser
-          keeps it local and hands it to this page's own script. So yes, you should be
-          wary of a link containing what looks like a key -- that instinct is correct in
-          general -- but here the fragment is exactly what stops it from leaving your
-          device, the same guarantee the plain <code>qrdrop:</code> code has always had.</li>
+        <li><strong>You are trusting whoever delivered this code.</strong> The website is
+          a bundle built from source and loads nothing from a CDN; the app carries its
+          own copy. Either could still be swapped by whoever hosts or ships it, as with
+          any software. For genuinely sensitive material, use a tool you can verify
+          before running.</li>
+        <li><strong>A link in the QR code still keeps the key off the wire.</strong> A
+          phone's camera app opens qrdrop with the key in the URL's <em>fragment</em>,
+          the part after <code>#</code>, which is never sent to a server. Being wary of
+          a link that carries a key is right in general; here the fragment is what keeps
+          it on your device, as the plain <code>qrdrop:</code> code always has.</li>
       </ul>
     </div>
 

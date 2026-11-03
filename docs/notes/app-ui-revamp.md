@@ -10,7 +10,7 @@ change could break moves into CLAUDE.md, the way the LAN path's rules did.
 |---|---|---|---|---|
 | 1. Close the native gaps; start this note | built | none | no | text both ways and the QUIC badge on the native session; see "Phase 1: as built" |
 | 2. App shell, Home, Settings, About | built | 1 | Android recommended | see "Phase 2: as built" |
-| 3. Screen redesign, shared with the site | not started | 2 | no | show the user the direction before implementing |
+| 3. Screen redesign, shared with the site | built | 2 | no | direction approved 2026-11-03; see "Phase 3: as built". Not yet seen on a phone |
 | 4. History | not started | 2 | Android recommended | |
 | 5. Platform polish | not started | 3, 4 | yes | |
 | 6. Offline-pairing UI | blocked | 3 and offline pairing phase C | yes | phases B and C of `offline-pairing.md` are unbuilt, and this copy must not ship before the feature works |
@@ -184,6 +184,39 @@ sliding up is off-screen then, so it waits for finite animations first, as
 
 **Phase 2's follow-ups taken here:** the disclosure's website-only wording, the `fastlane/`
 screenshots, and how the tall viewfinder looks.
+
+## Phase 3: as built
+
+Built 2026-11-03 in five commits: tokens and weights, the title slot, the screens, beam, then
+sheets and motion. CLAUDE.md now has the rules (the title slot, one primary per screen, no
+copyScroll budget, and how sheets close). This section records what they do not say.
+
+**The scroll budget fell to copy, not to CSS.** Every landscape overflow left the same way.
+The screen's question moved into the heading the frame draws, the explanation moved behind
+Details, and a bar that wrapped lost a button that repeated another one (the receiver's
+Cancel beside Decline, and Save as file moved next to the sentence it answers). Rearranging
+the grid bought a few pixels each time and nothing more.
+
+**Beam's media slot hugs its code on a stacked layout, and that cost three tries.** In portrait
+the code is bounded by the slot's width, so a slot that took the card's slack only centred a
+square in a taller box: 80px of nothing between the caption and the filename. Hugging alone
+fixed that, but made the slot rigid, so the copy scrolled 8px at 390x844. Adding
+`min-block-size: 0` brought that to 3px, because the copy, with a shrink factor of 1 like the
+slot, took half the loss. The slot needs the default media slot's 100 as well. The
+keep-showing line was cut to "Keep this on screen until it is done." so it fits on one line.
+
+**The speed picker is four radios, not a `<select>`.** A sender changes rate when the other
+camera struggles, sometimes twice, and a select hides the choices behind the platform's
+picker. Its label is hidden on a landscape phone, and the unit is in the readout.
+
+**A closing sheet is still on screen.** Once the exit animation existed, patching the dialog
+to nothing at close slid out an empty box. `_render` now patches the dialog only while a
+sheet is wanted.
+
+**What is not verified.** Every picture is from Playwright, in Chromium and Firefox. The
+drag-to-dismiss, the sheet's rise and the compose box above a real keyboard have not been seen
+on a phone. Safari and WebView2 have not run the `@starting-style` entrance. Without it the
+sheet still appears, just with no motion.
 
 ## Phase 2: as built
 
