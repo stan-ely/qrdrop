@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 import { serveStatic } from '../src/node/serve.js'
-import { FIXTURES, LINK, installState } from './screen-states.mjs'
+import { FIXTURES, LINK, installState, settleAnimations } from './screen-states.mjs'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DIST = path.join(ROOT, process.argv[2] ?? path.join('app', 'dist'))
@@ -94,22 +94,10 @@ for (const device of DEVICES) {
 
   for (const [i, shot] of shots.entries()) {
     await page.evaluate(installState, { state: shot.state, link: LINK })
-    // Wait out the screen transition. make-screenshots.mjs never had to, because
-    // its two measure-and-resize passes happen to take longer than the
-    // animation; photographed straight after the state lands, every screen came
-    // out half-faded with the previous one's QR still sliding over the header.
-    // The animations are in the shadow root, which document.getAnimations()
-    // does not reach, so each root is asked for its own. Infinite ones -- a
-    // spinner, a pulsing scanner frame -- are skipped: their `finished` never
-    // settles, and waiting on it hung the first run of this script for good.
-    await page.evaluate(async () => {
-      const el = /** @type {any} */ (document.querySelector('qr-drop'))
-      const roots = [document, el.shadowRoot]
-      await new Promise(requestAnimationFrame)
-      const finite = roots.flatMap(r => r.getAnimations())
-        .filter(a => a.effect?.getComputedTiming().iterations !== Infinity)
-      await Promise.all(finite.map(a => a.finished.catch(() => {})))
-    })
+    // Wait out the screen transition. Photographed straight after the state
+    // lands, every screen came out half-faded with the previous one's QR still
+    // sliding over the header. See settleAnimations.
+    await page.evaluate(settleAnimations)
     const out = path.join(outDir, `${i + 1}-${shot.name}.png`)
     await page.screenshot({ path: out })
     console.log(path.relative(ROOT, out))

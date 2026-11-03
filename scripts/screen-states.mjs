@@ -431,6 +431,32 @@ export const APP_FIXTURES = [
 export const README_SHOTS = ['send', 'verify', 'beam']
 
 /**
+ * Waits for a state to finish arriving, running **inside the page**.
+ *
+ * One frame used to be enough, because the only motion was a few pixels of
+ * rise on the card's contents. A sheet now slides up from the bottom edge,
+ * and measured one frame after showModal() it is still most of the way below
+ * the viewport -- so every button on it read as off-screen to check-layout,
+ * and the store pictures caught it half risen. So this waits out every finite
+ * animation, as make-store-screenshots.mjs already did for its own reasons.
+ *
+ * The component's animations are in its shadow root, which
+ * document.getAnimations() does not reach, so each root is asked for its own.
+ * Infinite ones -- the indeterminate bar -- are skipped: their `finished`
+ * never settles, and waiting on it hung the first run of that script for good.
+ * The frame first, because an animation is only created once style has run.
+ */
+export async function settleAnimations() {
+  const el = /** @type {any} */ (document.querySelector('qr-drop'))
+  const roots = [document, el?.shadowRoot].filter(Boolean)
+  await new Promise(requestAnimationFrame)
+  const finite = roots.flatMap(r => r.getAnimations())
+    .filter(a => a.effect?.getComputedTiming().iterations !== Infinity)
+  await Promise.all(finite.map(a => a.finished.catch(() => {})))
+  await new Promise(requestAnimationFrame)
+}
+
+/**
  * Installs one fixture, running **inside the page**.
  *
  * Passed to `page.evaluate`, which serialises it, so it must close over

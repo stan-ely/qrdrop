@@ -41,7 +41,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 import { serveStatic } from '../src/node/serve.js'
-import { FIXTURES, README_SHOTS, LINK, installState } from './screen-states.mjs'
+import { FIXTURES, README_SHOTS, LINK, installState, settleAnimations } from './screen-states.mjs'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DIST = path.join(ROOT, 'site', 'dist')
@@ -110,6 +110,9 @@ for (const scheme of /** @type {const} */ (['light', 'dark'])) {
       await page.setViewportSize({ width: WIDTH, height: await measure(page) })
     }
 
+    // The screen's entrance has to have finished, or the picture is of it
+    // arriving. See settleAnimations.
+    await page.evaluate(settleAnimations)
     const card = page.locator(`#screen-${shot.screen}`)
     const out = path.join(OUT, `${shot.name}.${scheme}.png`)
     await card.screenshot({ path: out })

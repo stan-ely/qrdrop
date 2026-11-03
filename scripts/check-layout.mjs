@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium, firefox } from 'playwright'
 
 import { serveStatic } from '../src/node/serve.js'
-import { APP_FIXTURES, FIXTURES, LINK, installState } from './screen-states.mjs'
+import { APP_FIXTURES, FIXTURES, LINK, installState, settleAnimations } from './screen-states.mjs'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 // Which built tree to walk, so the edge build can be checked too:
@@ -417,10 +417,10 @@ for (const pointer of POINTERS) {
     })
     await page.evaluate(installState, { state: fixture.state, link: LINK })
 
-    // One frame, so layout has settled before anything is measured. The
-    // component renders synchronously inside _setState, but style and layout
-    // are the browser's business and have not necessarily run yet.
-    await page.evaluate(() => new Promise(requestAnimationFrame))
+    // Until the screen and any sheet have finished arriving, not one frame: a
+    // sheet slides up from below the viewport, and its buttons measured one
+    // frame in are off-screen. See settleAnimations.
+    await page.evaluate(settleAnimations)
 
     const report = await page.evaluate(() => {
       const el = /** @type {any} */ (document.querySelector('qr-drop'))
