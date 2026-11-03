@@ -3,7 +3,7 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
-## Unreleased
+## 0.7.0 — 2026-11-03
 
 **Ready for codes that work without the internet.** A pairing code may now carry a
 short suffix after its key: where the other device can be reached on the local network.
