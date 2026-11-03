@@ -1,3 +1,5 @@
+import { enableSheetDismiss } from '../src/web/sheet-gesture.js'
+
 /**
  * Wires the page's two explanation dialogs ("How does this work?" and the
  * security disclosure). The website's alone: the app has its own template, and
@@ -47,6 +49,10 @@ function wireSheet(triggerId, dialogId, source, how) {
     dialog.showModal()
     /** @type {HTMLElement | null} */ (dialog.querySelector('h2'))?.focus()
   })
+  // The same sheet styling as the component's, handle included, so the same
+  // gestures: a sheet that draws a handle and ignores a drag on it is worse
+  // than one with no handle.
+  enableSheetDismiss(dialog)
 }
 
 /**

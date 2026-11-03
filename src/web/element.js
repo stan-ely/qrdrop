@@ -53,6 +53,7 @@ import { fromFile } from './source.js'
 import { isText, textFile, textBytes, tooLongMessage, createTextSink, TEXT_MAX_BYTES, TEXT_MIME } from './text.js'
 import { patch } from './vdom.js'
 import { render, dialogContent, NO_CAMERA_SCAN, NO_SAVE_FOLDER } from './view.js'
+import { enableSheetDismiss } from './sheet-gesture.js'
 import { copyText } from './copy.js'
 import { STYLES } from './styles.js'
 import { transferRecord } from './events.js'
@@ -239,6 +240,19 @@ export class QRDropElement extends HTMLElement {
       // some later click.
       this._pendingBeam = null
       if (this._state.modal) this._setState({ modal: null })
+    })
+
+    // A tap beside the sheet, or a drag down from its handle, closes it as
+    // Escape does, and the `close` listener above is what reports it. Asked
+    // first only on the compose sheet, and only while its box holds text: that
+    // is the one sheet whose contents are the person's own work, and a tap
+    // beside a half-written message must not throw it away.
+    enableSheetDismiss(this._dialogNode, {
+      canDismiss: () => {
+        if (this._state.modal !== 'text-compose') return true
+        const box = /** @type {HTMLTextAreaElement | null} */ (this._dialogNode.querySelector('#text-input'))
+        return !box?.value
+      },
     })
 
     /**
@@ -1259,8 +1273,17 @@ export class QRDropElement extends HTMLElement {
     // The dialog's own patch root. The pass above stops at the adopted node
     // and never descends into it (see vdom.js's adoptInto), so this is the
     // only thing that renders what is inside the sheet.
-    this._dialogPrev = patch(
-      this._dialogNode, dialogContent(this._state, this._dispatch), this._dialogPrev)
+    //
+    // Only while a sheet is wanted. A closing sheet keeps the contents it
+    // closed with, because it is still on screen: sheetCSS transitions its exit,
+    // and patching it to nothing at close slid out an empty box. A closed
+    // <dialog> renders nothing and is inert, so the leftovers cost nothing,
+    // and the next sheet patches over them before it opens.
+    const wantOpen = this._state.modal !== null
+    if (wantOpen) {
+      this._dialogPrev = patch(
+        this._dialogNode, dialogContent(this._state, this._dispatch), this._dialogPrev)
+    }
 
     // showModal(), not the `open` attribute. Only showModal puts the element
     // in the browser's top layer, and only the top layer is immune to being
@@ -1272,7 +1295,6 @@ export class QRDropElement extends HTMLElement {
     // Guarded on .open in both directions: showModal() on an already-open
     // dialog throws, and close() on a closed one fires a spurious 'close'
     // event straight back into _setState.
-    const wantOpen = this._state.modal !== null
     if (wantOpen && !this._dialogNode.open) this._dialogNode.showModal()
     else if (!wantOpen && this._dialogNode.open) this._dialogNode.close()
   }

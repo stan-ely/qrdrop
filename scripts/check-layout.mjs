@@ -652,7 +652,11 @@ for (const pointer of POINTERS) {
       app.setState(shell)
       if (open) document.querySelectorAll('details').forEach(d => { d.open = true })
     }, { shell: fixture.shell, open: fixture.name === 'app-about-open' })
-    await page.evaluate(() => new Promise(requestAnimationFrame))
+    // Settled, as the screens are, and not one frame: the fixture before this
+    // one may have had a sheet up, and a sheet's exit is a transition now, so
+    // one frame in it is still over the page, half faded. The pictures of
+    // Settings caught exactly that, with the last screen's error sheet on it.
+    await page.evaluate(settleAnimations)
 
     const report = await page.evaluate(() => {
       const box = /** @type {HTMLElement} */ (document.getElementById('app-page'))

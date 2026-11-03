@@ -55,6 +55,51 @@ export function sheetCSS(maxInlineSize = '30rem') {
 .sheet::backdrop { background: rgb(0 0 0 / 0.45); }
 
 /*
+ * A sheet arrives and leaves; it does not appear.
+ *
+ * A dialog that blinks in over a screen reads as an interruption, and every
+ * one of these is a step the person asked for (Details, Review file, a tap on
+ * Type a message). So it fades and settles from slightly small on a mouse, and
+ * on a finger rises from the bottom edge it is anchored to, below -- the
+ * direction tells the eye where the sheet will go when it is dismissed, which
+ * is also the direction the drag in sheet-gesture.js pulls it.
+ *
+ * Two pieces do the work and both are needed. @starting-style gives an opening
+ * dialog a "before" to transition from, since it goes from display: none to
+ * shown in one style change. And display and overlay are transitioned with
+ * allow-discrete, which keeps a closing dialog rendered, and in the top layer,
+ * for the length of its exit -- without them the exit is an instant cut and only
+ * the entrance animates. An engine with neither (Firefox before 129 for
+ * @starting-style) shows and hides the sheet as it always did, which is the
+ * whole of the fallback. Reduced motion zeroes every duration at the foot of
+ * the stylesheet, this one included.
+ */
+.sheet {
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity var(--dur-base) ease-out,
+    transform var(--dur-slow) cubic-bezier(0.2, 0.8, 0.2, 1),
+    display var(--dur-slow) allow-discrete,
+    overlay var(--dur-slow) allow-discrete;
+}
+.sheet[open] { opacity: 1; transform: none; }
+@starting-style {
+  .sheet[open] { opacity: 0; transform: scale(0.96); }
+}
+.sheet::backdrop {
+  opacity: 0;
+  transition:
+    opacity var(--dur-slow) ease-out,
+    display var(--dur-slow) allow-discrete,
+    overlay var(--dur-slow) allow-discrete;
+}
+.sheet[open]::backdrop { opacity: 1; }
+@starting-style {
+  .sheet[open]::backdrop { opacity: 0; }
+}
+
+/*
  * On a finger, a sheet comes up from the bottom.
  *
  * Not decoration. A centred dialog on a phone puts its buttons in the middle
@@ -86,7 +131,40 @@ export function sheetCSS(maxInlineSize = '30rem') {
     border-radius: var(--r-lg) var(--r-lg) 0 0;
     border-block-end: none;
     padding-block-end: calc(var(--sp-5) + env(safe-area-inset-bottom));
+    /* Rises rather than scales: closed is off the bottom edge, so both the
+     * entrance and the exit travel the one axis a finger dismisses it on. A
+     * full translate needs no fade, and an opacity ramp on a sheet that is
+     * still mostly off-screen only makes the backdrop look late. */
+    opacity: 1;
+    transform: translateY(100%);
+    padding-block-start: var(--sp-6);
   }
+  .sheet[open] { transform: none; }
+  @starting-style {
+    .sheet[open] { opacity: 1; transform: translateY(100%); }
+  }
+  /* The handle: the drawn half of the drag in sheet-gesture.js, whose handle
+   * zone is the top 40px this sits in. Without it a drag-to-dismiss is a
+   * gesture with no affordance, discoverable only by accident; with it the
+   * sheet says what it is. Decoration to assistive tech, which has Escape and
+   * every sheet's own buttons. padding-block-start above is what makes room. */
+  .sheet::before {
+    content: '';
+    position: absolute;
+    inset-block-start: var(--sp-2);
+    inset-inline-start: 50%;
+    inline-size: 2.25rem;
+    block-size: 4px;
+    margin-inline-start: -1.125rem;
+    border-radius: 2px;
+    background: var(--line-strong);
+  }
+}
+
+/* Said here as well as at the foot of the component's stylesheet, because the
+ * site's dialogs get this block and not that one. */
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet::backdrop { transition-duration: 0s; }
 }
 `
 }
@@ -1117,9 +1195,12 @@ ${buttonCSS()}
  * container, so the cap is the real one at every layout without restating
  * each branch's track. Not on the enlarged code, which is fixed to the
  * viewport and sizes itself -- and would otherwise still be measured against
- * the slot it left.
+ * the slot it left. The choose screen's scan panel is the same kind of box
+ * and needs the same cap: in the app at 844x390, with no page chrome taking
+ * height, its block size outgrew the 18rem track, and the panel ran into the
+ * heading beside it.
  */
-.qr, .beam-stage:not([aria-pressed="true"]) { max-block-size: 100cqi; }
+.qr, .beam-stage:not([aria-pressed="true"]), .scan-panel { max-block-size: 100cqi; }
 
 /*
  * The beam code gets a higher cap than the pairing QR, and that is the whole
@@ -1556,6 +1637,22 @@ ${buttonCSS()}
   min-block-size: 0;
   background: var(--surface-raised);
   border-radius: var(--r-md);
+  /* One after another, in reading order. They are read aloud in that order --
+   * "taco, umbrella, snake, rainbow" -- and four tiles landing at once are a
+   * block, where four landing in turn are a sequence. 60ms apart, so the last
+   * one is in place inside a quarter of a second: the screen is waiting on a
+   * person, and nothing on it may make them wait on it. \`both\` holds each
+   * tile hidden through its delay rather than flashing it in first. Once per
+   * screen, because the tiles are keyed by word and patch() keeps them across
+   * renders; reduced motion zeroes the delays as well as the durations. */
+  animation: sas-in var(--dur-slower) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.sas-tile:nth-child(2) { animation-delay: 60ms; }
+.sas-tile:nth-child(3) { animation-delay: 120ms; }
+.sas-tile:nth-child(4) { animation-delay: 180ms; }
+@keyframes sas-in {
+  from { opacity: 0; transform: translateY(var(--sp-2)) scale(0.96); }
+  to { opacity: 1; transform: none; }
 }
 
 .sas-emoji {
@@ -1705,7 +1802,18 @@ ${buttonCSS()}
   font-weight: 700;
   line-height: 1;
 }
-.outcome .glyph { inline-size: 5.5rem; block-size: 5.5rem; font-size: 2.75rem; }
+.outcome .glyph {
+  inline-size: 5.5rem; block-size: 5.5rem; font-size: 2.75rem;
+  /* Lands once, with a little overshoot: the one moment in the flow that is a
+   * result rather than a step, and the only motion on this screen. Not a loop
+   * and not a pulse -- a done screen can sit open for an hour. */
+  animation: outcome-in var(--dur-slower) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: 80ms;
+}
+@keyframes outcome-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: none; }
+}
 
 .outcome.ok .glyph, .title-glyph.ok { background: var(--ok); }
 .outcome.bad .glyph, .title-glyph.bad { background: var(--bad); }
@@ -1857,6 +1965,22 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
   resize: vertical;
   min-block-size: 6lh;
   line-height: 1.4;
+}
+/* On a phone the compose sheet is a page for writing on, and the box takes it.
+ * Six rows in a sheet that rose to its content left a short box above a
+ * keyboard, and the sheet's own resize handle is a mouse affordance. The sheet
+ * is given a height (dvh, so it gives way when the keyboard opens) and the box
+ * grows into every pixel of it the heading, the note and the buttons do not
+ * need. :has() rather than a class on the dialog, which element.js creates once
+ * and shares between every sheet. */
+@media (pointer: coarse) {
+  .sheet:has(#text-form) { block-size: min(85dvh, 40rem); }
+  .sheet-body:has(> #text-form) { flex: 1; }
+  #text-form { flex: 1; min-block-size: 0; }
+  /* Its six-line floor goes here, since growing is what sizes it now: on a
+   * landscape phone the sheet's height is under six lines plus the heading
+   * and the bar, and the floor ran the box over the note beneath it. */
+  #text-form .text-input { flex: 1; resize: none; min-block-size: 3lh; }
 }
 .message-text {
   margin: 0;
@@ -2393,7 +2517,16 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
  * motion should get a UI that still communicates state (colour, text) without
  * moving anything to do it. */
 @media (prefers-reduced-motion: reduce) {
-  * { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
+  /* animation-delay too, and ::before, ::backdrop with it: a zero-length
+   * animation still waits out its delay, and with fill-mode both that holds
+   * the third SAS tile invisible for 120ms of nothing. */
+  *, ::before, ::backdrop {
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
   .bar.indeterminate .bar-fill { animation: none; width: 40%; }
 }
 `

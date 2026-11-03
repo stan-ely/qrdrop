@@ -482,8 +482,7 @@ export function dialogContent(state, dispatch) {
           }),
         ]),
         state.draftError ? h('p', { id: 'text-error', class: 'callout danger', role: 'alert' }, state.draftError) : null,
-        h('p', { class: 'note' },
-          'You will both check the same four symbols before it is sent, as with a file.'),
+        h('p', { class: 'note' }, 'You will both check four symbols before it is sent.'),
       ]),
       h('div', { class: 'sheet-actions' }, [
         h('button', { id: 'btn-text-send', class: 'btn primary', type: 'submit', form: 'text-form' }, 'Send'),
