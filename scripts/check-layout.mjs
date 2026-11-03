@@ -660,7 +660,9 @@ for (const pointer of POINTERS) {
 
     const report = await page.evaluate(() => {
       const box = /** @type {HTMLElement} */ (document.getElementById('app-page'))
-      const controls = [...document.querySelectorAll('#app-bar button, #app-page button, #app-page a, #app-page summary')]
+      // label.row too: the History switch's target is its whole row, and the
+      // drawn switch inside it is smaller than a finger on purpose.
+      const controls = [...document.querySelectorAll('#app-bar button, #app-page button, #app-page a, #app-page summary, #app-page label.row')]
       return {
         pageOverflow: document.documentElement.scrollHeight - window.innerHeight,
         sideways: box.scrollWidth - box.clientWidth,
@@ -687,7 +689,7 @@ for (const pointer of POINTERS) {
     for (const c of report.untouchable) problems.push(`control too small for a finger: ${c}`)
 
     if (SHOTS || problems.length) await page.screenshot({ path: path.join(OUT, `${id}.png`) })
-    await page.evaluate(() => /** @type {any} */ (window).qrdropShell.setState({ page: 'home' }))
+    await page.evaluate(() => /** @type {any} */ (window).qrdropShell.setState({ page: 'home', confirm: null }))
 
     if (problems.length === 0) {
       console.log(`  ok    ${id}`)

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nothing of qrdrop's leaves the phone by Android's own backup or a move to a
+  new phone. The reason is History (app/src-tauri/src/history.rs): the names of
+  files sent and received, kept in the app data directory, which Settings
+  promises stay on this device. Android's defaults would copy them into the
+  person's Google account backup and onto the next phone, and say nothing.
+
+  Read on Android 12 and later, where android:allowBackup="false" in the
+  manifest turns off the cloud backup and not the device-to-device transfer:
+  that one only this file can refuse. Everything is excluded, not History
+  alone, because which directory app_data_dir resolves to is Tauri's choice and
+  can move, and nothing else here is worth restoring: a folder grant is not
+  carried across by a restore in any case.
+
+  No double hyphen in this comment: XML forbids it, and Gradle reports only
+  that the file could not be parsed.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

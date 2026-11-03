@@ -109,6 +109,29 @@ before relying on it. The mechanisms referred to here are described in
   the stats — the ordinary answer under `node-datachannel`, and not a fault.
 - **Relays and trackers see metadata**: that two throwaway keys met on a room,
   when, and roughly how much moved.
+- **The app keeps a history, and the names in it rest on the device.** The
+  desktop and Android apps list past transfers under History: each file's
+  name, its size, which way it went, when, by which route, how it ended, and
+  where a received file was saved. It is one file in the app's data
+  directory, unencrypted, readable by anything that can read that app's data
+  (on a desktop, any program running as you; on Android, the app itself and
+  anyone with root). A received file's name was chosen by the peer. It is on by
+  default and has an off switch and Clear history in Settings; turning it off
+  asks whether to clear what is there. The website keeps no history.
+
+  What it never holds is fixed in code and tested: no pairing code, no key, no
+  digest, no SAS, and no message. A typed message is recorded only as
+  "Message" with its size, never its text. The record is an explicit list of
+  fields on the page's side, and the app's Rust refuses any record with a
+  field outside that list, so a field added to one side later fails rather
+  than reaching the disk. On Android the app opts out of backup and of
+  device-to-device transfer, so History is not copied into a cloud backup or
+  onto a new phone.
+
+  The file names of what you received are already on your disk, next to the
+  files. What History adds is the names of files you *sent*, and of transfers
+  that failed, were declined or were cancelled, which leave nothing else
+  behind.
 - **Beam transfers are in the clear.** No handshake means no key agreement and
   no SAS. Anyone who can see the sender's screen — or a photograph of it, or a
   camera in the room — has the file. It is offered for air-gapped machines,

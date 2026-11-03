@@ -193,6 +193,87 @@ qr-drop:not(:defined) { display: block; }
 }
 .text-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
+.text-btn.quiet { color: var(--text); font-weight: 400; }
+.text-btn.danger { color: var(--bad); }
+
+.row:disabled { color: var(--muted); cursor: default; }
+
+/* ---- the History switch, and the question under it ---- */
+
+/* The checkbox itself, drawn as a switch. --line-strong is the off track
+ * because it is the token measured at 3:1 against the page for a control's
+ * boundary; the knob is the colour that sits on each track, as text on a
+ * primary button does. The whole row is the label, so the 3rem target is the
+ * row's and not this. */
+.switch {
+  appearance: none;
+  flex: none;
+  position: relative;
+  inline-size: 2.75rem;
+  block-size: 1.5rem;
+  margin: 0;
+  border-radius: var(--r-full);
+  background: var(--line-strong);
+  cursor: pointer;
+  transition: background var(--dur-base);
+}
+.switch::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 0.1875rem;
+  inset-inline-start: 0.1875rem;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  border-radius: var(--r-full);
+  background: var(--surface);
+  transition: transform var(--dur-base);
+}
+.switch:checked { background: var(--accent); }
+.switch:checked::before { background: var(--accent-text); transform: translateX(1.25rem); }
+.switch:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.confirm { flex-wrap: wrap; }
+.confirm .row-label { flex: 1 1 12rem; }
+.confirm-actions { display: flex; gap: var(--sp-1); margin-inline-start: auto; }
+.confirm-actions .text-btn { margin-inline-end: 0; }
+.confirm-actions .text-btn:last-child { margin-inline-end: calc(var(--sp-3) * -1); }
+
+/* ---- the History page ---- */
+
+.entries { margin: 0; padding: 0; list-style: none; }
+
+.entry {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding-block: var(--sp-3);
+  border-block-end: 1px solid var(--line);
+}
+.entry:last-child { border-block-end: none; }
+
+.entry-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: var(--r-full);
+  background: var(--surface-tonal);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+/* A peer chose this name, so nothing about its length holds: it wraps
+ * anywhere rather than pushing the page sideways, and it is shown whole,
+ * because a truncated filename is the one thing a person scanning History for
+ * a file cannot use. */
+.entry-name { font-weight: 600; overflow-wrap: anywhere; }
+.entry-name.message { font-weight: 400; font-style: italic; }
+.entry .row-text { flex: 1 1 auto; gap: 0.125rem; }
+.entry-outcome { font-size: var(--fs--1); font-weight: 600; color: var(--muted); }
+.entry-outcome.failed,
+.entry-outcome.mismatch { color: var(--bad); }
+
 .note { margin: 0; color: var(--muted); font-size: var(--fs--1); }
 
 .empty { padding-block-start: var(--sp-6); align-items: center; gap: var(--sp-1); border: none; text-align: center; }
@@ -260,5 +341,5 @@ qr-drop:not(:defined) { display: block; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .icon-btn, .row-details > summary .icon { transition-duration: 0s; }
+  .icon-btn, .row-details > summary .icon, .switch, .switch::before { transition-duration: 0s; }
 }

@@ -1,3 +1,4 @@
+mod history;
 mod lan;
 mod native;
 mod share;
@@ -94,6 +95,13 @@ pub fn run() {
             // end, the same shape and registered everywhere for the same
             // reasons. See src/share.rs.
             share::take_launch_action,
+            // The app's History: one file in the app data directory, and the
+            // switch that says whether to add to it. Every target, for
+            // share.rs's reason. See src/history.rs for what it never holds.
+            history::history_list,
+            history::history_append,
+            history::history_clear,
+            history::history_set_enabled,
             // The local-network fast path's relay: whether listening is
             // quiet here, and a listener for one peer and one page. Every
             // target, for share.rs's reason; on a target that says 'prompt'

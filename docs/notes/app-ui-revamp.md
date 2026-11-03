@@ -11,7 +11,7 @@ change could break moves into CLAUDE.md, the way the LAN path's rules did.
 | 1. Close the native gaps; start this note | built | none | no | text both ways and the QUIC badge on the native session; see "Phase 1: as built" |
 | 2. App shell, Home, Settings, About | built | 1 | Android recommended | see "Phase 2: as built" |
 | 3. Screen redesign, shared with the site | built | 2 | no | direction approved 2026-11-03; see "Phase 3: as built". Not yet seen on a phone |
-| 4. History | not started | 2 | Android recommended | |
+| 4. History | built | 2 | Android recommended | see "Phase 4: as built". Desktop verified end to end; not yet run on a phone |
 | 5. Platform polish | not started | 3, 4 | yes | |
 | 6. Offline-pairing UI | blocked | 3 and offline pairing phase C | yes | phases B and C of `offline-pairing.md` are unbuilt, and this copy must not ship before the feature works |
 
@@ -184,6 +184,87 @@ sliding up is off-screen then, so it waits for finite animations first, as
 
 **Phase 2's follow-ups taken here:** the disclosure's website-only wording, the `fastlane/`
 screenshots, and how the tall viewfinder looks.
+
+## Phase 4: as built
+
+Built 2026-11-03. CLAUDE.md now has the invariant (no code, key, digest or message text
+in History, with two fences) and the two endings `transferend` covers. This section
+records what it does not say.
+
+**`transferend` had to learn a second ending.** Phase 2 dispatched it on reaching done,
+and a receiver's Decline, Cancel, a second Back and a stopped beam all go back to choose
+without passing through it. `_reset` now records the session it ended when the prior
+screen was one of `SESSION_SCREENS` (verify onward) and the record has a subject. A
+cancel on the unscanned QR is not a transfer. An error sheet the person cancels out of
+is recorded as `failed`, since that is what ended it. Two outcomes exist only for
+History: `cancelled`, and `beamed` for a beam the sender stopped, which is all a beam
+sender can know. Phase 2's note that a failure had cleared `file` was right, and the
+record now reads the state just before done for the name.
+
+**A message keeps its size.** It is how long the message was, not what it said, and
+"Message · 64 B" is how a person tells two messages apart. Its name is dropped,
+because text.js gives every message the same one, and showing it would make the record
+look like a file.
+
+**The store is one file, `{ enabled, entries }`, and the switch lives with the list.**
+Separate files would let one survive without the other, and a missing switch reads as
+on. Writes go to a temporary file and are renamed over the old one, so a crash cannot
+leave half a list. A list that cannot be parsed is reported on the page, and Clear
+replaces it with recording off (CLAUDE.md says why). The cap is 200 entries, not an
+age: a list that empties itself on a schedule is one more thing for a person to keep in
+mind.
+
+**Clear and switching off ask on the row, not in a sheet.** The question replaces the
+Clear history row, focus moves to the harmless answer (Keep, or Cancel), and never to
+Clear, for the reason Accept is never focused. Turning the switch off records nothing
+further at once and then asks about what is kept. Someone turning it off may want the
+past gone, or may only want no more of it.
+
+**Android backup was a finding, not part of the plan.** `allowBackup` defaulted to true,
+so `history.json` would have gone into the person's Google backup and, on Android 12+,
+onto their next phone, and Settings' "on this device only" would have been false. The
+app now opts out of both (`allowBackup="false"` and `res/xml/data_extraction_rules.xml`,
+two new rows in CLAUDE.md's `gen/` table). Everything is excluded, not History alone,
+because which directory `app_data_dir` resolves to is Tauri's choice. Nothing else the
+app keeps is worth restoring: a folder grant is not carried across by a restore. The
+packaged manifest was checked with `aapt2`. Whether a real backup then leaves the file
+out has not been checked on a device (`adb shell bmgr backupnow` is the way to check).
+
+**`QRDROP_HISTORY_DIR` exists for `app-native`.** The debug binary shares its data
+directory with an installed copy, and an e2e run's transfers do not belong in a
+person's History. The suite points it at a temporary directory and reads the file back.
+
+**What is verified.** `app-native` ran all five legs against the Node CLI and then read
+`history.json`: five entries, newest first, the right kinds and outcomes, no name or
+location on either message, and no code, digest or message text anywhere in the file.
+It also opened the History page in the real app. `check-layout` passed on `app/dist` in
+both engines with the new fixtures, including a 146-character filename, and the
+pictures were looked at. A filename wraps anywhere and is shown whole. The location
+shows only the folder when it ends in the name already shown, and the whole path when
+the file was saved under another name (Android's `report (1).pdf`).
+
+**Not verified:** any of it on a phone. The Android History page, the switch under a
+finger, and whether `app_data_dir` survives an app update there.
+
+**Google Play's data safety form does not change.** Play counts data as collected only
+when it is transmitted off the device. History is stored and read on the device and is
+never sent anywhere, and with backup off, the platform no longer sends it either. The
+form's "no data collected, no data shared" stays true. The one caveat is that the form
+asks about the app as a whole and our answer depends on the backup opt-out: if a later
+change turns backup back on, the question is worth revisiting. The privacy policy at
+PRIVACY.md, which the store listings link to, now has a History section.
+
+**Follow-ups.**
+
+- **Open the file from History.** Left out on purpose. A desktop path would need
+  `plugin-opener`'s `openPath` and a capability scoped to the save folder. On Android
+  the location is a MediaStore entry or a document in a granted SAF tree, and opening
+  it needs a `content://` URI and an `ACTION_VIEW` intent with a read grant, which is
+  new Kotlin in `StoragePlugin.kt` and a new IPC route. History would also have to
+  record that URI, not the display path it holds now. Phase 5 is the natural home.
+- A received file that was later moved or deleted is still listed with its old
+  location. That is true of when it was received. Checking the disk on every render is
+  the alternative, and on Android it means a ContentResolver query per row.
 
 ## Phase 3: as built
 

@@ -14,7 +14,7 @@ because there is no qrdrop server for it to pass through.
 - No account, name, email address or phone number.
 - No analytics, telemetry, crash reports or advertising identifiers.
 - No copy of your files, their names or their contents on any server run for
-  qrdrop.
+  qrdrop. The app's History (below) stays on your device.
 - No contacts, location or browsing history.
 
 ## What other parties can see when you send a file
@@ -56,7 +56,25 @@ sending screen, or a photograph or recording of it, can read the file.
 ## Files you receive
 
 A received file is saved where you choose and nowhere else. qrdrop keeps no copy
-and no record of it.
+of it.
+
+## History, in the app
+
+The desktop and Android apps keep a list of your past transfers on your device,
+so you can find what you sent and received. Each entry holds the file's name, its
+size, whether it was sent or received, when, how it travelled (for example over
+the local network), how it ended, and where a received file was saved.
+
+- It is stored only on your device, in the app's own data, and is never sent
+  anywhere. On Android it is excluded from the system's backup and from
+  transfer to a new phone.
+- It never holds a pairing code, an encryption key, or the content of any file.
+  A typed message is recorded as "Message" and its size, never its text.
+- It is on by default. Settings has a switch to stop it and a button to clear
+  it, and turning it off asks whether to clear what is already there.
+  Uninstalling the app removes it.
+
+The website and the command-line tool keep no history.
 
 ## Where qrdrop is installed from
 
@@ -76,4 +94,5 @@ Changes to this policy are made in this file, and its history is public at
 https://github.com/stan-ely/qrdrop/commits/main/PRIVACY.md. Questions go to
 https://github.com/stan-ely/qrdrop/issues.
 
-Effective 11 September 2026.
+Effective 3 November 2026. The section on History was added then; the
+policy before it took effect on 11 September 2026.

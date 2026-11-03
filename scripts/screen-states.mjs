@@ -408,23 +408,69 @@ export const FIXTURES = [
  */
 
 /** @type {AppFixture[]} */
+/** What src-tauri/src/history.rs hands back, newest first. */
+const HISTORY_ENTRIES = [
+  {
+    kind: 'file', direction: 'received', size: 734_003_200, route: 'local', outcome: 'received',
+    name: 'Quarterly-planning-offsite-recording-day-two-afternoon-session-with-every-breakout-room-merged-final-FINAL-v3 (exported from the meeting tool).mp4',
+    location: 'Downloads/qrdrop/Quarterly-planning-offsite-recording-day-two-afternoon-session-with-every-breakout-room-merged-final-FINAL-v3 (exported from the meeting tool).mp4',
+    date: '2026-11-03T09:41:00.000Z',
+  },
+  { kind: 'file', direction: 'sent', size: 2_411_724, route: 'lan', outcome: 'sent', name: 'boarding-pass.pdf', location: null, date: '2026-11-02T18:05:00.000Z' },
+  { kind: 'text', direction: 'received', size: 64, route: 'direct', outcome: 'received', name: null, location: null, date: '2026-11-02T12:30:00.000Z' },
+  { kind: 'file', direction: 'sent', size: 104_857_600, route: 'relay', outcome: 'declined', name: 'holiday.zip', location: null, date: '2026-11-01T20:12:00.000Z' },
+  { kind: 'file', direction: 'sent', size: 9_120, route: null, outcome: 'mismatch', name: 'keys.txt', location: null, date: '2026-10-31T08:00:00.000Z' },
+  { kind: 'file', direction: 'received', size: 1_048_576, route: 'beam', outcome: 'received', name: 'config.tar.gz', location: 'Download/qrdrop/config.tar.gz', date: '2026-10-30T16:45:00.000Z' },
+  { kind: 'file', direction: 'received', size: 52_428_800, route: 'direct', outcome: 'failed', name: 'photos.zip', location: null, date: '2026-10-29T11:20:00.000Z' },
+]
+
 export const APP_FIXTURES = [
   {
     name: 'app-settings',
     shell: {
       page: 'settings', canChangeFolder: true,
       saveLocation: 'primary:Documents/Received from qrdrop/a folder with a long name',
+      history: { enabled: true, entries: [], error: null },
     },
   },
   {
     // The shape a desktop and an Android 10+ phone start in: nothing to change.
     name: 'app-settings-fixed',
-    shell: { page: 'settings', canChangeFolder: false, saveLocation: 'Downloads/qrdrop' },
+    shell: {
+      page: 'settings', canChangeFolder: false, saveLocation: 'Downloads/qrdrop',
+      history: { enabled: true, entries: HISTORY_ENTRIES.slice(0, 2), error: null },
+    },
   },
   { name: 'app-about', shell: { page: 'about', version: '1.3.0' } },
   // With the long disclosure open, which is the one state that has to scroll.
   { name: 'app-about-open', shell: { page: 'about', version: '1.3.0' } },
-  { name: 'app-history', shell: { page: 'history' } },
+  { name: 'app-history', shell: { page: 'history', history: { enabled: true, entries: [], error: null } } },
+  {
+    // Every shape an entry takes, and a filename long enough that nothing
+    // about its length can be assumed: a peer chose it.
+    name: 'app-history-entries',
+    shell: { page: 'history', history: { enabled: true, error: null, entries: HISTORY_ENTRIES } },
+  },
+  {
+    name: 'app-history-off',
+    shell: { page: 'history', history: { enabled: false, error: null, entries: HISTORY_ENTRIES.slice(1, 3) } },
+  },
+  {
+    // The question that replaces Clear history, which is the one row here
+    // with two buttons side by side.
+    name: 'app-settings-clear',
+    shell: {
+      page: 'settings', canChangeFolder: false, saveLocation: 'Downloads/qrdrop', confirm: 'clear',
+      history: { enabled: true, error: null, entries: HISTORY_ENTRIES },
+    },
+  },
+  {
+    name: 'app-settings-history-off',
+    shell: {
+      page: 'settings', canChangeFolder: true, saveLocation: 'Download/qrdrop', confirm: 'off',
+      history: { enabled: false, error: null, entries: HISTORY_ENTRIES },
+    },
+  },
 ]
 
 /** The three fixtures the README leads with, by name. */

@@ -122,6 +122,17 @@ const RUNNING_SCREENS = new Set([
 ])
 
 /**
+ * The running screens on which there is a transfer to speak of: a peer has
+ * paired, or a beam has begun. Leaving one of these ends a session that the
+ * host hears about as `transferend` (_recordReset); leaving the two before
+ * them is only putting a QR or a camera away. A subset rather than a flag on
+ * RUNNING_SCREENS, because what it answers is a different question.
+ *
+ * @type {Set<string>}
+ */
+const SESSION_SCREENS = new Set(['verify', 'transfer', 'beam-send', 'beam-receive'])
+
+/**
  * The shortest gap between two progress renders; see _trackProgress. Ten a
  * second is smoother than a person reads a percentage, and each skipped
  * render is main-thread time the sender spends sealing the next frame instead.
@@ -1022,7 +1033,8 @@ export class QRDropElement extends HTMLElement {
    * @param {Partial<ReturnType<QRDropElement['_initialState']>>} partial
    */
   _setState(partial) {
-    const prevScreen = this._state.screen
+    const prior = this._state
+    const prevScreen = prior.screen
     if ('screen' in partial && partial.screen !== prevScreen) {
       // `modal: null` alongside the error reset, and for the same reason: a
       // sheet belongs to the screen that opened it. Left set across a screen
@@ -1050,9 +1062,9 @@ export class QRDropElement extends HTMLElement {
       this.dispatchEvent(new CustomEvent('screenchange', {
         detail: { screen, running: RUNNING_SCREENS.has(screen) },
       }))
-      if (screen === 'done') {
-        this.dispatchEvent(new CustomEvent('transferend', { detail: transferRecord(this._state) }))
-      }
+      // With the state before as well, because the landing on done clears
+      // what a failure and a mismatch would otherwise be recorded without.
+      if (screen === 'done') this._recordEnd(transferRecord(this._state, { prior }))
       this._focusScreenHeading()
       // Both consequences of RUNNING_SCREENS -- whether the display may sleep
       // here, and whether the back gesture may leave. Hung off the screen
@@ -1475,8 +1487,12 @@ export class QRDropElement extends HTMLElement {
    *   did NOT ask for and cannot otherwise account for: dismissing the save
    *   dialog tears down a live, already-accepted transfer, and landing back
    *   on a blank choose screen with no word about it reads as a crash.
+   * @param {'declined' | 'cancelled'} [outcome] How the session ended, when
+   *   it was one: a Decline says so, and anything else is a cancel, or a
+   *   failure the person was already shown (see _recordReset).
    */
-  _reset(message) {
+  _reset(message, outcome) {
+    const prior = this._state
     try { this._teardown?.() } catch { /* already gone */ }
     this._teardown = null
     this._beam = null
@@ -1507,6 +1523,37 @@ export class QRDropElement extends HTMLElement {
       error: message ?? null,
       modal: message ? /** @type {const} */ ('error') : null,
     })
+    this._recordReset(prior, outcome)
+  }
+
+  /**
+   * transferend for a session that ends on choose rather than done.
+   *
+   * Done is not the only ending. A receiver's Decline goes back to choose, as
+   * do Cancel, a second Back, and a beam the sender stops, and a history that
+   * only heard about done screens would leave out every transfer someone
+   * turned down. So a reset records the session it ended, when there was one
+   * worth a line: the person had paired, or a beam had started, and the
+   * record has a subject. Cancelling a QR nobody scanned is not a transfer.
+   * Restart from done is not either, since the done screen recorded it.
+   *
+   * @param {ReturnType<QRDropElement['_initialState']>} prior
+   * @param {'declined' | 'cancelled'} [outcome]
+   */
+  _recordReset(prior, outcome) {
+    if (!SESSION_SCREENS.has(prior.screen)) return
+    if (!prior.file && !prior.offer && !prior.isText) return
+    const ended = outcome
+      ?? (prior.mode === 'beam' && prior.role === 'sender' ? 'beamed'
+        // An error the person is leaving behind is what ended it. The sheet
+        // said so; Cancel was only the way out of it.
+        : prior.error ? 'failed' : 'cancelled')
+    this._recordEnd(transferRecord(prior, { outcome: ended }))
+  }
+
+  /** @param {import('./events.js').TransferRecord} record */
+  _recordEnd(record) {
+    this.dispatchEvent(new CustomEvent('transferend', { detail: record }))
   }
 
   /**
@@ -1914,7 +1961,7 @@ export class QRDropElement extends HTMLElement {
             this._onOfferDecline = null
             this._onOfferAccept = null
             try { await decline() } catch (e) { this._fail(e) }
-            this._reset()
+            this._reset(undefined, 'declined')
           }
 
           // This is the receiver's half of the two safety gestures: this
@@ -2138,7 +2185,7 @@ export class QRDropElement extends HTMLElement {
             this._onOfferDecline = null
             this._onOfferAccept = null
             control('decline')
-            this._reset()
+            this._reset(undefined, 'declined')
           }
           this._onOfferAccept = () => {
             this._onOfferAccept = null
@@ -2482,7 +2529,7 @@ export class QRDropElement extends HTMLElement {
         this._onOfferDecline = () => {
           this._onOfferDecline = null
           this._onOfferAccept = null
-          this._reset()
+          this._reset(undefined, 'declined')
         }
 
         // The receiver's half of the two safety gestures, and it fires HERE --

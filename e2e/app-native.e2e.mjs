@@ -28,6 +28,8 @@
  *    saves it: the CLI has no idea it was typed.
  * 5. The app receives text, from send-text-peer.mjs since neither CLI offers
  *    any. It is shown on the done screen, and nothing lands in Downloads.
+ * 6. History holds those five, in a QRDROP_HISTORY_DIR of the suite's own,
+ *    with no code, digest or message text anywhere in the file.
  *
  * Build first: `mise run app:build-site`, then
  * `npx tauri build --debug --no-bundle` in app/. QRDROP_APP points at another
@@ -353,11 +355,72 @@ async function appReceivesText(page) {
   }
 }
 
+/**
+ * What the five legs above left in History: one entry each, newest first,
+ * read from the file history.rs wrote rather than from the page, and then
+ * the same list drawn on the History page.
+ *
+ * The file is also searched, whole, for what must never be in it. The codes,
+ * the digests and both messages went past the component during the legs
+ * above, so a record that carried any of them would carry it here.
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} dir QRDROP_HISTORY_DIR
+ */
+async function appHistory(page, dir) {
+  const file = path.join(dir, 'history.json')
+  // The last append is a moment behind the done screen.
+  const deadline = Date.now() + 10_000
+  /** @type {{ enabled: boolean, entries: any[] }} */
+  let store = { enabled: true, entries: [] }
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) store = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (store.entries.length >= 5) break
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  const raw = fs.readFileSync(file, 'utf8')
+  const shape = store.entries.map(e => `${e.direction} ${e.kind} ${e.outcome}`)
+  const expected = [
+    'received text received', 'sent text sent', 'received file declined', 'received file received', 'sent file sent',
+  ]
+  if (JSON.stringify(shape) !== JSON.stringify(expected)) {
+    throw new Error(`history holds\n  ${shape.join('\n  ')}\nexpected\n  ${expected.join('\n  ')}`)
+  }
+  for (const e of store.entries.filter(e => e.kind === 'text')) {
+    if (e.name !== null || e.location !== null) throw new Error(`a message was recorded with a name or place: ${JSON.stringify(e)}`)
+  }
+  if (store.entries[4].name !== 'from-app.bin') throw new Error(`the sent file is recorded as ${store.entries[4].name}`)
+  if (!/^Downloads\/qrdrop\//.test(store.entries[3].location ?? '')) {
+    throw new Error(`the received file's location is ${store.entries[3].location}`)
+  }
+  for (const [what, pattern] of /** @type {const} */ ([
+    ['a pairing code', /qrdrop:[A-Za-z0-9_-]{43}/],
+    ['a digest', /[0-9a-f]{64}/],
+    ['message text', /native session|é世|inert/],
+  ])) {
+    if (pattern.test(raw)) throw new Error(`history.json holds ${what}`)
+  }
+
+  await toChoose(page)
+  await page.click('#nav-history')
+  await page.waitForSelector('#app-page .entry', { timeout: TIMEOUT })
+  const names = await page.$$eval('#app-page .entry-name', els => els.map(e => e.textContent))
+  if (names.length !== 5 || names[0] !== 'Message' || names[4] !== 'from-app.bin') {
+    throw new Error(`the History page shows ${names.join(', ')}`)
+  }
+  await page.click('#nav-back')
+  console.log('\nPASS  app(native) history  five entries, newest first, no code, digest or text in it')
+}
+
 async function main() {
   if (process.platform !== 'win32') throw new Error('Windows only: it attaches to WebView2 over CDP')
   if (!fs.existsSync(APP)) throw new Error(`no app at ${APP}: build it with \`npx tauri build --debug --no-bundle\` in app/`)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qrdrop-app-native-'))
+  // Its own, so these transfers stay out of the History of an installed copy,
+  // which shares the debug build's data directory, and so it starts empty.
+  const historyDir = path.join(tmp, 'history')
   const app = launch(APP, [], 'app', {
+    QRDROP_HISTORY_DIR: historyDir,
     QRDROP_NATIVE_SESSION: '1',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
   })
@@ -389,6 +452,7 @@ async function main() {
     await appDeclines(page, tmp)
     await appSendsText(page, tmp)
     await appReceivesText(page)
+    await appHistory(page, historyDir)
     if (errors.length) throw new Error('page errors:\n' + errors.join('\n'))
     console.log('\nAPP-NATIVE E2E PASSED')
   } finally {

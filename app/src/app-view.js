@@ -14,6 +14,8 @@
  * scripts/build-site.mjs), so the disclosure has one home.
  */
 import { h } from '../../src/web/vdom.js'
+import { bytes } from '../../src/core/format.js'
+import { pathDescription, LAN_PATH, QUIC_PATH } from '../../src/core/messages.js'
 
 /**
  * @typedef {'home' | 'settings' | 'about' | 'history'} Page
@@ -29,6 +31,13 @@ import { h } from '../../src/web/vdom.js'
  * @property {string | null} saveError
  * @property {{ title: string, node: Element | null }} how
  * @property {{ title: string, node: Element | null }} protect
+ * @property {{ enabled: boolean, entries: Entry[], error: string | null }} history
+ *   what src-tauri/src/history.rs holds, newest first
+ * @property {'clear' | 'off' | null} confirm the question Settings is asking
+ *   about the history: whether to clear it, or, having just been switched
+ *   off, whether to clear what it already holds
+ *
+ * @typedef {import('../../src/web/events.js').TransferRecord} Entry
  */
 
 /** @typedef {(intent: string, payload?: any) => void} Dispatch */
@@ -135,6 +144,7 @@ function settings(state, dispatch) {
       ]),
       state.saveError ? h('p', { class: 'note', role: 'alert' }, state.saveError) : null,
     ]),
+    historySettings(state, dispatch),
     h('section', { class: 'group' }, [
       h('button', {
         id: 'settings-about', class: 'row', type: 'button',
@@ -142,6 +152,58 @@ function settings(state, dispatch) {
       }, [h('span', { class: 'row-label' }, 'About qrdrop'), CHEVRON_ICON()]),
     ]),
   ]
+}
+
+/**
+ * The switch and Clear history. A real checkbox with role="switch" inside its
+ * label, so the whole row is the target and assistive tech says on or off.
+ *
+ * The question under it is a row of two buttons rather than a dialog: it
+ * belongs to the control just pressed, and a sheet over a page with one
+ * decision on it would only be a second thing to dismiss.
+ *
+ * @param {ShellState} state
+ * @param {Dispatch} dispatch
+ */
+function historySettings(state, dispatch) {
+  const { enabled, entries } = state.history
+  const count = entries.length === 1 ? '1 transfer' : `${entries.length} transfers`
+  const question = state.confirm === 'off'
+    ? `History is off. Clear the ${count} already saved?`
+    : state.confirm === 'clear' ? `Clear ${count} from this device?` : null
+  return h('section', { class: 'group', 'aria-labelledby': 'history-heading' }, [
+    h('h2', { id: 'history-heading' }, 'History'),
+    h('label', { class: 'row', for: 'history-enabled' }, [
+      h('span', { class: 'row-text' }, [
+        h('span', { class: 'row-label' }, 'Keep a history'),
+        h('span', { class: 'row-value' },
+          'File names, sizes and where they were saved, on this device only. Never codes or messages.'),
+      ]),
+      h('input', {
+        id: 'history-enabled', class: 'switch', type: 'checkbox', role: 'switch', checked: enabled,
+        onchange: (/** @type {Event} */ ev) =>
+          dispatch('history:enabled', /** @type {HTMLInputElement} */ (ev.target).checked),
+      }),
+    ]),
+    question
+      ? h('div', { class: 'row static confirm', role: 'group', 'aria-labelledby': 'history-question' }, [
+        h('span', { id: 'history-question', class: 'row-label' }, question),
+        h('div', { class: 'confirm-actions' }, [
+          h('button', {
+            id: 'history-keep', class: 'text-btn quiet', type: 'button', onclick: () => dispatch('history:keep'),
+          }, state.confirm === 'off' ? 'Keep' : 'Cancel'),
+          h('button', {
+            id: 'history-clear-confirm', class: 'text-btn danger', type: 'button',
+            onclick: () => dispatch('history:clear-confirm'),
+          }, 'Clear'),
+        ]),
+      ])
+      : h('button', {
+        id: 'history-clear', class: 'row', type: 'button', disabled: entries.length === 0,
+        onclick: () => dispatch('history:clear'),
+      }, [h('span', { class: 'row-label' }, 'Clear history')]),
+    state.history.error ? h('p', { class: 'note', role: 'alert' }, state.history.error) : null,
+  ])
 }
 
 /**
@@ -175,13 +237,97 @@ function about(state) {
   ]
 }
 
-/** A placeholder until the History phase of docs/notes/app-ui-revamp.md. */
-function history() {
-  return [
-    h('section', { class: 'group empty' }, [
-      h('h2', {}, 'Nothing here yet'),
-      h('p', { class: 'note' }, 'A list of your past transfers is coming in a later update.'),
+/** @type {Record<Entry['outcome'], string>} */
+const OUTCOMES = {
+  sent: 'Sent',
+  received: 'Received',
+  declined: 'Declined',
+  failed: 'Failed',
+  'too-large': 'Too large for a relay',
+  mismatch: 'Stopped: the symbols did not match',
+  cancelled: 'Cancelled',
+  beamed: 'Beamed',
+}
+
+/** @param {Entry['route']} route */
+function routeLabel(route) {
+  if (route === 'lan') return LAN_PATH.label
+  if (route === 'quic') return QUIC_PATH.label
+  if (route === 'beam') return 'Beam'
+  // No route says nothing rather than "Path unknown": a record without one
+  // ended before there was a route to classify.
+  return route ? pathDescription(/** @type {any} */ (route)).label : null
+}
+
+/** @param {string} date */
+function when(date) {
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+/**
+ * The folder, when the location is that folder and the name above it, so a
+ * long name is not printed twice. The whole location when the file was saved
+ * under another name, as when Android settles a duplicate on `report (1).pdf`:
+ * that is the name to look for.
+ *
+ * @param {Entry} entry
+ */
+function savedIn({ location, name }) {
+  if (!location || !name) return location
+  const suffix = `/${name}`
+  return location.endsWith(suffix) ? location.slice(0, -suffix.length) : location
+}
+
+/**
+ * One past transfer. The name is a text child, like every filename in this
+ * project: a peer chose it, and here it is read back from a file on disk,
+ * which is a second reason it must never become markup.
+ *
+ * @param {Entry} entry
+ */
+function historyEntry(entry) {
+  const ok = entry.outcome === 'sent' || entry.outcome === 'received' || entry.outcome === 'beamed'
+  const title = entry.kind === 'text' ? 'Message' : entry.name ?? 'Unknown file'
+  const facts = [
+    entry.direction === 'sent' ? 'Sent' : entry.direction === 'received' ? 'Received' : null,
+    entry.size === null ? null : bytes(entry.size),
+    routeLabel(entry.route),
+    when(entry.date),
+  ].filter(Boolean)
+  return h('li', { class: 'entry' }, [
+    h('span', { class: `entry-mark ${entry.direction ?? ''}`, 'aria-hidden': 'true' },
+      entry.direction === 'received' ? '↓' : '↑'),
+    h('div', { class: 'row-text' }, [
+      h('span', { class: entry.kind === 'text' ? 'entry-name message' : 'entry-name' }, title),
+      h('span', { class: 'row-value' }, facts.join(' · ')),
+      ok ? null : h('span', { class: `entry-outcome ${entry.outcome}` }, OUTCOMES[entry.outcome]),
+      entry.location ? h('span', { class: 'row-value' }, `Saved to ${savedIn(entry)}`) : null,
     ]),
+  ])
+}
+
+/** @param {ShellState} state */
+function history(state) {
+  const { enabled, entries, error } = state.history
+  if (error) {
+    return [h('section', { class: 'group empty' }, [
+      h('h2', {}, 'History could not be read'),
+      h('p', { class: 'note', role: 'alert' }, error),
+    ])]
+  }
+  if (!entries.length) {
+    return [h('section', { class: 'group empty' }, [
+      h('h2', {}, 'No transfers yet'),
+      h('p', { class: 'note' }, enabled
+        ? 'Files you send and receive are listed here, on this device only.'
+        : 'History is off. Turn it on in Settings to keep a list here.'),
+    ])]
+  }
+  return [
+    enabled ? null : h('p', { class: 'note' }, 'History is off, so new transfers are not being added.'),
+    h('ol', { class: 'group entries', 'aria-label': 'Past transfers, newest first' }, entries.map(historyEntry)),
   ]
 }
 
@@ -197,6 +343,6 @@ export function page(state, dispatch) {
   if (state.page === 'home') return []
   const body = state.page === 'settings' ? settings(state, dispatch)
     : state.page === 'about' ? about(state)
-      : history()
+      : history(state)
   return [h('div', { class: 'page-body', key: state.page }, body)]
 }

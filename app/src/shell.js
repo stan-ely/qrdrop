@@ -61,8 +61,11 @@ const ENTRY = { qrdropShell: true }
  * @param {HTMLElement} options.pageRoot
  * @param {() => Promise<string | null>} [options.changeFolder] Present on Android.
  * @param {(url: string) => unknown} options.openLink
+ * @param {typeof import('./history.js')} [options.history] The store, in the
+ *   app's Rust. Absent where there is no shell to keep one, and then History
+ *   says nothing has been recorded, which is true.
  */
-export function createShell({ el, barRoot, pageRoot, changeFolder, openLink }) {
+export function createShell({ el, barRoot, pageRoot, changeFolder, openLink, history: store }) {
   const { buildLabel = '', buildHref = '', buildTitle = '' } = document.documentElement.dataset
 
   /** @type {ShellState} */
@@ -76,6 +79,11 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink }) {
     saveError: null,
     how: readCopy('how'),
     protect: readCopy('protect'),
+    // On until the store says otherwise, which is its own default too. A
+    // transfer that ends before the first read lands is still refused by
+    // history.rs when the switch is off, so this guess cannot record past it.
+    history: { enabled: true, entries: [], error: null },
+    confirm: null,
   }
 
   /** @type {import('../../src/web/vdom.js').VNode[] | null} */
@@ -112,7 +120,7 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink }) {
   const open = page => {
     if (state.running) return
     history.pushState(ENTRY, '')
-    setState({ page, saveError: null })
+    setState({ page, saveError: null, confirm: null })
   }
 
   async function changeSaveFolder() {
@@ -126,6 +134,67 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink }) {
   }
 
   /**
+   * Every change to the store goes through here and comes back as the whole
+   * store, so what the page shows is what history.rs holds rather than a
+   * copy kept in step by hand.
+   *
+   * @param {() => Promise<import('./history.js').Store>} change
+   * @param {Partial<ShellState>} [also]
+   */
+  async function updateHistory(change, also = {}) {
+    try {
+      const { enabled, entries } = await change()
+      setState({ history: { enabled, entries, error: null }, ...also })
+    } catch (error) {
+      setState({ history: { ...state.history, error: error instanceof Error ? error.message : String(error) }, ...also })
+    }
+  }
+
+  /**
+   * Turning recording off stops the next record at once, and then asks about
+   * the ones already kept rather than deciding for the person: someone
+   * switching it off may want the past gone, or may only want no more.
+   *
+   * @param {boolean} enabled
+   */
+  async function setRecording(enabled) {
+    if (!store) return
+    await updateHistory(() => store.setEnabled(enabled), { confirm: null })
+    // A store that refused leaves the state where it was, so patch() sees no
+    // change and the box would go on showing the click that did not take.
+    const input = /** @type {HTMLInputElement | null} */ (document.getElementById('history-enabled'))
+    if (input) input.checked = state.history.enabled
+    if (!enabled && state.history.enabled === false && state.history.entries.length) ask('off')
+  }
+
+  /**
+   * Shows Settings' question and moves focus to its harmless answer. The row
+   * it replaces may be the button just pressed, and focus must not go down
+   * with it; and never to Clear, for the reason element.js never focuses
+   * Accept: one stray Enter would answer for the person.
+   *
+   * @param {'clear' | 'off'} question
+   */
+  function ask(question) {
+    setState({ confirm: question })
+    document.getElementById('history-keep')?.focus()
+  }
+
+  /**
+   * Closes the question, having cleared when `clearing` is the store doing
+   * it, and puts focus back on the row the question took the place of.
+   *
+   * @param {Promise<import('./history.js').Store>} [clearing]
+   */
+  async function answered(clearing) {
+    if (clearing) await updateHistory(() => clearing, { confirm: null })
+    else setState({ confirm: null })
+    const clear = /** @type {HTMLButtonElement | null} */ (document.getElementById('history-clear'))
+    const target = clear && !clear.disabled ? clear : document.getElementById('history-enabled')
+    target?.focus()
+  }
+
+  /**
    * @param {string} intent
    * @param {any} [payload]
    */
@@ -136,6 +205,11 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink }) {
       // and the system gesture are one path and the entry cannot be left behind.
       case 'nav:back': return history.back()
       case 'save:change-folder': return void changeSaveFolder()
+      case 'history:enabled': return void setRecording(Boolean(payload))
+      // Asked first, on the row, because it cannot be undone.
+      case 'history:clear': return ask('clear')
+      case 'history:clear-confirm': return void answered(store?.clear())
+      case 'history:keep': return void answered()
       default: throw new Error(`Unknown intent: ${intent}`)
     }
   }
@@ -158,6 +232,18 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink }) {
     setState({ running, page: running ? 'home' : state.page })
   })
 
+  // The record is built in src/web/events.js, which is tested to hold no code,
+  // key, digest or text; this only decides whether to keep it. After the
+  // append, the whole list again, so the cap and the order are history.rs's.
+  el.addEventListener('transferend', ev => {
+    if (!store || !state.history.enabled) return
+    const record = /** @type {CustomEvent<import('./history.js').Entry>} */ (ev).detail
+    void updateHistory(async () => {
+      await store.append(record)
+      return store.list()
+    })
+  })
+
   // A delegated handler, because the adopted copy holds links too. A plain
   // target="_blank" does nothing useful in a webview: Android navigates the app
   // itself to the page, and there is no address bar to come back from it.
@@ -169,6 +255,7 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink }) {
   })
 
   render()
+  if (store) void updateHistory(() => store.list())
   return { setState }
 }
 

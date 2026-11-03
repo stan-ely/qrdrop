@@ -721,6 +721,26 @@ hangs cannot stop Ctrl-C exiting; pressed by hand again, the sender
 reported the disconnect 89 ms after its last progress line. A new command that pairs a
 room must add it too.
 
+**History never stores a code, a key, a digest or the text of a message.** It is the one
+place qrdrop keeps anything about a transfer at rest, on the device and in the clear
+(`app/src-tauri/src/history.rs`, in the app data directory). There are two fences, one on
+each side of the IPC, and both are needed. `transferRecord` in `src/web/events.js` is an
+explicit list of fields, never a copy of the state with some removed, because the state
+holds the code, the digest and any received text, and a field added to it later must stay
+inside until someone decides otherwise. `history.rs`'s `Entry` is the same list with
+`deny_unknown_fields`, and closed enums for kind, direction, route and outcome, so a record
+that grew a field is refused at the IPC rather than written. A message is `kind: 'text'`
+with no name and no location; `sanitise` drops both again on the Rust side. The switch is
+enforced in Rust as well as in `shell.js`, so an append the page should not have made is
+still refused. A store that cannot be parsed is replaced by Clear **with recording off**:
+its last setting is unknown, and a person who switched it off must not find it on again.
+`test/app-view.test.mjs` runs every ending through the record with the secrets in the
+state, checks that the Rust struct's fields match the record's, and pins that
+`element.js`'s one dispatch goes through `transferRecord`; `app-native` searches the
+written file for codes, digests and both messages. On Android the app opts out of backup
+and device transfer (`gen/` table below), because "on this device only" is what Settings
+says.
+
 **No new runtime dependencies.** Four, plus one optional. The stated position
 (`src/cli.js` header) is that every dependency is one more thing between `npm install`
 and a working transfer. The one exception is the CLI's platform packages
@@ -896,11 +916,15 @@ draw the top bar, Settings, About and History around `<qr-drop shell="app">`, an
   because the host has to bring an inert component back before focus lands on it.
 
 **`element.js` dispatches two events on itself and knows nothing about the shell.**
-`screenchange` (`{ screen, running }`, from `RUNNING_SCREENS`) and `transferend`, on
-reaching done. The second has no listener yet: History is `docs/notes/app-ui-revamp.md`'s
-phase 4. Its record is built by `transferRecord` in `src/web/events.js`, as an explicit list
-of fields and away from `element.js` so a test can pin what it leaves out, which is the code,
-the digest and any text.
+`screenchange` (`{ screen, running }`, from `RUNNING_SCREENS`) and `transferend`, once per
+session that ended. That is reaching done, **and** leaving one of `SESSION_SCREENS` for
+choose (`_recordReset`): a receiver's Decline, Cancel, a second Back and a stopped beam all
+end there, and a History that heard only done screens left out every transfer someone turned
+down. Leaving `send` or `receive` before a pairing records nothing. The shell keeps the
+record as History (below). Its record is built by `transferRecord` in `src/web/events.js`,
+as an explicit list of fields and away from `element.js` so a test can pin what it leaves
+out. The done screen's state has cleared `file` on a failure and a mismatch, so the record
+also reads the state just before it.
 
 **About's copy is read from `site/index.html` at build time, and is not written in `app/`.**
 `infoCopy` in `build-site.mjs` lifts the two headings, the steps, the disclosure and the two
@@ -961,6 +985,7 @@ Paths are under `app/src-tauri/gen/android/app/src/main/`.
 | `AndroidManifest.xml` | The `ACTION_SEND` / `ACTION_SEND_MULTIPLE` intent-filter. The share sheet. |
 | `AndroidManifest.xml` | `<meta-data android:name="android.app.shortcuts">`. The launcher shortcuts stop appearing, and `res/xml/shortcuts.xml` is orphaned with no error anywhere. |
 | `AndroidManifest.xml` | The `QrdropTileService` `<service>`. The Quick Settings tile stops being offered; the class stays in the tree doing nothing. |
+| `AndroidManifest.xml` | `android:allowBackup="false"` and `android:dataExtractionRules` on `<application>`. History's filenames go into the person's Google backup and onto their next phone, and Settings' "on this device only" is false. |
 | `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. `clearNavigationBar`, without which the app's action bar sits behind the navigation bar, since the WebView reports `env(safe-area-inset-bottom)` as 0 there. `onWebViewCreate`'s Back callback, without which a second Back closes the app mid-transfer. |
 | `res/values/ic_launcher_background.xml` | The adaptive-icon background colour, which **`tauri icon` also** resets to white every time. |
 | `../../build.gradle.kts` (that is, `gen/android/app/`) | Three things. The version read from `src-tauri/Cargo.toml`: without it every release is versionCode 1 and none installs over another. The release signing config: without it a release APK is unsigned. The per-ABI `versionCode` block: without it the split APKs share one code and F-Droid cannot tell them apart. |
@@ -974,10 +999,11 @@ hand edit above, and losing that edit leaves the file inert:
 | `java/com/stan_ely/qrdrop/QrdropTileService.kt` | The Quick Settings tile. |
 | `java/com/stan_ely/qrdrop/StoragePlugin.kt` | The once-only save-folder grant and the documents created in it. Reached through `register_android_plugin` in `src-tauri/src/storage.rs` (via `lib.rs`), not a manifest entry; losing that call leaves every Android receive with nowhere to save. |
 | `res/xml/shortcuts.xml` | The two launcher shortcuts. |
+| `res/xml/data_extraction_rules.xml` | Excludes everything from cloud backup and device transfer. Needed on Android 12+, where `allowBackup="false"` stops only the cloud backup. |
 | `res/values/qrdrop_entry_points.xml` | Their labels, and the tile's. Deliberately **not** in the generated `strings.xml`. |
 | `res/drawable/ic_qrdrop_scan.xml`, `ic_qrdrop_send.xml` | Their icons. |
 
-The manifest's four entries and `MainActivity.kt` are one delta, not five: the
+The manifest's first four entries and `MainActivity.kt` are one delta, not five: the
 filter without the handler puts qrdrop in the share sheet and has it do
 nothing, which is worse than not being there, and the same is true of a
 shortcut that opens the app and forgets what it was for. See "**The Android

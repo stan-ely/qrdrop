@@ -35,6 +35,7 @@ import { secretFromDeepLink } from './deep-link.js'
 import { createTauriLan } from './lan.js'
 import { createNativeSession, onNativeDrop, stat } from './native.js'
 import { createShell } from './shell.js'
+import * as history from './history.js'
 
 const APP_LINK_ORIGIN = 'https://share.stan-ely.com/'
 
@@ -79,6 +80,7 @@ const shell = createShell({
   pageRoot: /** @type {HTMLElement} */ (document.getElementById('app-page')),
   changeFolder: mode === 'android' ? changeSaveLocation : undefined,
   openLink: url => openUrl(url).catch(error => console.warn('qrdrop: could not open a link', String(error))),
+  history,
 })
 
 // What check-layout.mjs drives the pages through, as it drives the component

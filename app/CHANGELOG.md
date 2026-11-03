@@ -21,7 +21,16 @@ with **History** and **Settings**, and the transfer screens fill the window. The
 away while a transfer is running. **Settings** shows where received files are saved, with
 **Change folder** on Android. **About**, reached from Settings, has How it works, What this
 does and does not protect, the version, and the Source and Feedback links, which now open
-in your browser. History is empty for now and will list your transfers in a later version.
+in your browser.
+
+**History lists your past transfers.** Each file you send or receive is listed, newest
+first, with its size, when, how it travelled, and where a received file was saved.
+Transfers that were declined, cancelled or failed are listed too, and say so. A typed
+message is listed as "Message", never with its text, and no pairing code is ever kept.
+History stays on this device. On Android it is not included in a backup or copied to a
+new phone, and nothing else the app keeps is either. It is on by default. Settings
+has a switch to stop it and **Clear history**, and turning it off asks whether to
+clear what is already there. It keeps the latest 200 transfers.
 
 **Send text and show received text on Linux.** "Send text" is now on the first screen on
 Linux too, and a message that arrives there is shown with **Copy** and **Save as file**
