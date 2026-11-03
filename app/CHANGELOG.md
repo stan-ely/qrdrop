@@ -13,6 +13,9 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+1.3.0 was tagged but never released, because its Android build failed, so its changes
+are in this release as well: from "Ready for codes that work without the internet" on.
+
 **The app behaves less like a web page.** Pressing or long-pressing a button no longer
 selects its label or flashes grey, and the pointer is an arrow, not a hand or a text
 cursor. The browser's right-click menu, with Back, Refresh and Print, is gone; text boxes
@@ -49,16 +52,8 @@ new phone, and nothing else the app keeps is either. It is on by default. Settin
 has a switch to stop it and **Clear history**, and turning it off asks whether to
 clear what is already there. It keeps the latest 200 transfers.
 
-**Send text and show received text on Linux.** "Send text" is now on the first screen on
-Linux too, and a message that arrives there is shown with **Copy** and **Save as file**
-instead of being saved as `message.txt`. As on other platforms, the text appears only
-after it has been checked, and it is not written to disk unless you choose **Save as
-file**. The same now applies wherever the app's native session is switched on.
-
 **The connection badge can show a direct QUIC connection.** The app does not use QUIC
 yet, so you will not see this until a later version turns it on.
-
-## 1.3.0 -- 2026-10-26
 
 **Ready for codes that work without the internet.** A pairing code may now carry a
 short suffix after its key: where the other device can be reached on the local network.
@@ -68,8 +63,9 @@ still pairs with it, over the internet as before.
 
 **Send text, not just files.** "Send text" on the first screen opens a box to type or
 paste into. The receiving device shows the text with **Copy** and **Save as file**
-rather than saving it. Not yet on Linux, where the app's transfers run on its native
-session, which sends files from disk.
+rather than saving it. The text appears only after it has been checked, and it is not
+written to disk unless you choose **Save as file**. This works on Linux too, where the
+app's transfers run on its native session.
 
 **Received files are saved straight away, with no save dialog.** Accept now saves the
 file, and the done screen says where it went. On a computer that is a `qrdrop` folder
