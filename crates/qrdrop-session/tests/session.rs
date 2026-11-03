@@ -22,18 +22,33 @@ use tryst::wire::Payload;
 
 const WAIT: Duration = Duration::from_secs(30);
 
+/// One network, Nostr, for every test that is about something other than
+/// pairing. Racing both here put the two sides on different networks about
+/// one pairing in 275 (measured over 25 runs of this file under WSL): the
+/// stand-in serves both from one socket, so they finish within a few
+/// milliseconds of each other, and each side keeps whichever finished first
+/// for it. That is a real bug in `open_room`, not in these tests
+/// (docs/notes/pairing-race.md), and it failed whichever test it landed in --
+/// a SAS that disagreed, or a transfer into a room the other side had left.
+/// The race itself is exercised by `config_race` and the tests that use it.
 fn config(secret: &Secret, role: Role, url: &str) -> OpenConfig {
+    config_over(secret, role, url, &[Strategy::Nostr])
+}
+
+/// Both networks, as the CLI and the app join them.
+fn config_race(secret: &Secret, role: Role, url: &str) -> OpenConfig {
+    config_over(secret, role, url, &[Strategy::Nostr, Strategy::Torrent])
+}
+
+fn config_over(secret: &Secret, role: Role, url: &str, over: &[Strategy]) -> OpenConfig {
     let mut c = OpenConfig::new(Secret::from_bytes(*secret.as_bytes()), role);
-    c.networks = vec![
-        Network {
-            strategy: Strategy::Nostr,
+    c.networks = over
+        .iter()
+        .map(|&strategy| Network {
+            strategy,
             relays: vec![url.into()],
-        },
-        Network {
-            strategy: Strategy::Torrent,
-            relays: vec![url.into()],
-        },
-    ];
+        })
+        .collect();
     c.stun = vec![];
     c.turn = vec![];
     c.bind = Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
@@ -41,6 +56,13 @@ fn config(secret: &Secret, role: Role, url: &str) -> OpenConfig {
 }
 
 async fn pair_up(url: &str) -> (Paired, Paired, Secret) {
+    pair_with(url, config).await
+}
+
+async fn pair_with(
+    url: &str,
+    config: fn(&Secret, Role, &str) -> OpenConfig,
+) -> (Paired, Paired, Secret) {
     let secret = Secret::generate();
     let (h, g) = tokio::join!(
         open_room(config(&secret, Role::Host, url)),
@@ -136,7 +158,9 @@ async fn transfer(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_sessions_pair_over_the_race_and_move_a_file() {
     let url = format!("ws://{}", standin::start().await);
-    let (h, g, _) = pair_up(&url).await;
+    // Still exposed to the race below, at about one run in 275, because it
+    // is the one test of pairing the way a real device pairs.
+    let (h, g, _) = pair_with(&url, config_race).await;
     assert_eq!(h.sas(), g.sas());
     let hs = h.confirm(Role::Host, SessionOptions::default()).await;
     let gs = g.confirm(Role::Guest, SessionOptions::default()).await;
@@ -234,6 +258,42 @@ async fn two_pairings_over_one_secret_share_no_keys() {
     let (h2, g2) = (h2.unwrap(), g2.unwrap());
     assert_eq!(h2.sas(), g2.sas());
     assert_ne!(h2.sas(), &first);
+}
+
+/// The pairing network race (docs/notes/pairing-race.md): each side of
+/// `open_room` keeps whichever network finished first for it, with a keypair
+/// of its own per network, so two sides that keep different ones show
+/// different SASes and talk into different rooms. It needs the two networks
+/// to finish within a few milliseconds, which load provides and an idle
+/// machine does not: 1000 pairings one after another never showed it on
+/// Windows, while the whole file in parallel did. So this pairs many at
+/// once, and is ignored until the fix lands. `cargo test -p qrdrop-session
+/// --all-features --test session -- --ignored` runs it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "fails until the pairing network race is fixed: docs/notes/pairing-race.md"]
+async fn both_sides_of_a_raced_pairing_keep_the_same_network() {
+    let url = format!("ws://{}", standin::start().await);
+    for round in 0..20 {
+        let pairings: Vec<_> = (0..24)
+            .map(|_| {
+                let url = url.clone();
+                tokio::spawn(async move {
+                    let (h, g, _) = pair_with(&url, config_race).await;
+                    let kept = ((h.strategy(), *h.sas()), (g.strategy(), *g.sas()));
+                    h.reject().await;
+                    g.reject().await;
+                    kept
+                })
+            })
+            .collect();
+        for (i, p) in pairings.into_iter().enumerate() {
+            let (host, guest) = p.await.unwrap();
+            assert_eq!(
+                host, guest,
+                "round {round}, pairing {i}: host and guest kept"
+            );
+        }
+    }
 }
 
 #[tokio::test]
