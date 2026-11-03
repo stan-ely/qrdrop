@@ -144,6 +144,23 @@ test('the sender verify screen names the mismatch, and keeps one primary', () =>
   assert.equal(primaries.length, 1, '#verify-status must hold exactly one .primary button')
 })
 
+test('the receiver verify screen has one way out once an offer arrives, and it tells the sender', () => {
+  const waiting = state({ screen: 'verify', role: 'receiver' })
+  assert.ok(intentsOn(waiting, 'verify').has('cancel'), 'waiting for an offer, Cancel is the way out')
+
+  // Decline ends the session and tells the sender (element.js's
+  // _onOfferDecline, on every session). A Cancel beside it said the same thing
+  // without telling anyone, and wrapped the bar onto three rows.
+  const offered = intentsOn(state({
+    screen: 'verify', role: 'receiver', offer: { name: 'report.pdf', size: 2_097_152 },
+  }), 'verify')
+  assert.ok(offered.has('offer:accept') && offered.has('offer:decline'))
+  assert.ok(!offered.has('cancel'), 'with an offer, Decline is the way out and Cancel is gone')
+
+  // The sender has no offer to decline, so it keeps Cancel beside "They don't match".
+  assert.ok(intentsOn(senderVerify(), 'verify').has('cancel'))
+})
+
 test('the mismatch outcome says what happened and what starting over means', () => {
   const tree = screenTree(state({
     screen: 'done', role: 'sender', outcome: 'mismatch', file: null, digest: '',
@@ -346,6 +363,9 @@ test('received text is shown as text, with Copy first and nothing that pairs', (
 
   const primaries = [...walk(tree)].filter(n => n.tag === 'button' && n.props?.class?.includes('primary'))
   assert.deepEqual(primaries.map(n => n.props.id), ['btn-copy-text'], 'Copy is the one primary')
+
+  assert.match(textOf(tree), /Receive something else/, 'after a message, not "another file"')
+  assert.doesNotMatch(textOf(tree), /Receive another file/)
 })
 
 test('a failed text receive shows no text, and a sent one shows none either', () => {

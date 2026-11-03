@@ -105,6 +105,7 @@ const QRCODE = path.join(ROOT, 'node_modules', 'qrcode-generator', 'dist', 'qrco
  * wide-and-short case that a design tuned on a phone forgets, and the one the
  * beam screen's two-column layout exists for.
  */
+/** @type {{ name: string, width: number, height: number, copyScroll?: number }[]} */
 const VIEWPORTS = [
   /*
    * 360x800 before 390x844, because 390 is not the narrow end and this file
@@ -157,17 +158,17 @@ const VIEWPORTS = [
    * So 844x390 has no budget, and a beam screen overflowing either viewport
    * again is a regression.
    *
-   * What the 28 here is, found by setting it to zero: the network path's send
-   * screen (27px, both engines, with or without its info sheet, and 28 on about
-   * half of Firefox's layouts of the same unchanged tree, so 28), verify (17)
-   * and the toast fixture, which sits over send (14). All three were already
-   * scrolling by those amounts before beam gave its budget back -- measured on
-   * the unchanged tree -- and beam's larger number had been hiding them. They
-   * scroll, nothing is clipped above the scroll origin, and the QR and SAS
-   * tiles stay whole; closing them is a layout job of its own for the send
-   * and verify screens, and until then this is their number, not beam's.
+   * The 28 that was left here belonged to the network path's send screen (27
+   * in both engines, 28 on some Firefox runs), verify (17) and the toast over
+   * send (14). The phase 3 redesign closed them: send's camera sentence lost
+   * its second half and its bar shares a line with the status, verify's note
+   * is two short sentences, and the flat branch's bar buttons take an 8rem
+   * basis so a long ghost no longer wraps the bar onto a second row. Measured
+   * with the budget at zero afterwards, every fixture fits 800x360 in both
+   * engines at both pointers, so neither landscape phone has a budget now and
+   * any overflow on either is a regression.
    */
-  { name: 'phone-narrow-landscape', width: 800, height: 360, copyScroll: 28 },
+  { name: 'phone-narrow-landscape', width: 800, height: 360 },
   { name: 'phone-landscape', width: 844, height: 390 },
   { name: 'tablet', width: 834, height: 1112 },
   { name: 'laptop', width: 1440, height: 900 },
@@ -439,10 +440,17 @@ for (const pointer of POINTERS) {
       // at the origin, which would read as "above the viewport" and fail every
       // screen that has a sheet it is not currently showing.
       const sheet = root.querySelector('dialog[open]')
+      //
+      // And only buttons that are drawn. The digest's Copy is inside a closed
+      // <details>, whose contents keep a laid-out box that is never painted:
+      // while the digest sat at the foot of a column that box happened to land
+      // on screen, and once it shared a row with the path badge it measured at
+      // y=805 on an 800px phone, failing a button nobody can see until they
+      // open the disclosure, which then lays it out where it is.
       const buttons = [
         ...(screen ? screen.querySelectorAll('button') : []),
         ...(sheet ? sheet.querySelectorAll('button') : []),
-      ]
+      ].filter(b => b.checkVisibility())
 
       // The card body's own scrollbar. This check did not exist at first, and
       // its absence produced a wrong conclusion: every combination passed, so

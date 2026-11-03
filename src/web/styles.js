@@ -325,7 +325,9 @@ ${tokensCSS(':host')}
 .card-body.hero-first { justify-content: center; }
 .card-body.hero-first > .card-media { flex: 0 1 auto; }
 .card-body.hero-first > .card-title { order: 1; text-align: center; }
-.card-body.hero-first > .card-copy { order: 2; }
+.card-body.hero-first > .card-copy { order: 2; align-items: center; text-align: center; }
+.card-body.hero-first .path-badge { align-self: center; }
+.card-body.hero-first .done-meta { justify-content: center; }
 
 /* The two halves of a card body. .card-media holds the screen's one visual
  * thing -- QR, camera, SAS tiles -- and .card-copy everything else. They stack
@@ -473,6 +475,17 @@ ${tokensCSS(':host')}
   gap: var(--sp-2);
 }
 
+/* send's indeterminate bar and the sentence it is the picture of, on one line.
+ * The sentence comes first and the bar takes the rest: it has no content width
+ * of its own, and stacked the two cost a row a landscape phone does not have. */
+.wait-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.wait-row > .status { flex: 0 1 auto; }
+.wait-row > .bar { flex: 1 1 3rem; }
+
 /* Every member of a stack is conditional somewhere -- the sender has no
  * \`offer\`, so its filename line is absent, and pathBadge() returns null until
  * classification resolves, which on the verify screen is both of them at once.
@@ -569,10 +582,22 @@ ${tokensCSS(':host')}
 }
 #verify-status .btn { flex: 1 1 12rem; }
 #verify-status .btn.ghost { flex: 0 1 auto; }
-/* Same as .ghost and for the same reason: the primary carries the filename,
- * so it is the one that deserves the row. Giving this a 12rem basis too wraps
- * the pair onto two rows at 390px and pushes Cancel off the action bar. */
-#verify-status .btn.danger { flex: 0 1 auto; }
+/*
+ * The sender's bar is three buttons, and they are two decisions: the primary
+ * alone on the first row, and the two ways of not sending -- "They don't
+ * match" and Cancel -- sharing the second. The primary names the file, so it
+ * is truncated on one line rather than wrapped into a block that pushes the
+ * refusals apart. Cancel lives inside #verify-status for exactly this, since
+ * a sibling of the group could not share a row with one of its children.
+ */
+#verify-status:has(> .btn.danger) > .btn.primary {
+  flex-basis: 100%;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#verify-status .btn.danger { flex: 1 1 auto; }
 
 /* The waiting branch: an indeterminate bar and the line explaining it, in the
  * same row the buttons will occupy once the offer lands. The bar has no
@@ -811,6 +836,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
  * needs no new token. */
 .btn.danger {
   border-color: var(--bad);
+  background: transparent;
   color: var(--bad);
 }
 .btn.danger:hover { background: var(--bad-soft); border-color: var(--bad); }
@@ -929,6 +955,25 @@ ${buttonCSS()}
 .dropzone:hover { border-color: var(--muted); color: var(--text); }
 .dropzone:active { background: var(--surface-raised); }
 .dropzone:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Filling the slot on every pointer, where it used to be the touch branch's
+ * alone. On a mouse it was a short dashed box adrift in the media slot's
+ * slack -- a target worth aiming at is the reason it is the media at all. The
+ * scan panel opts out for its square, as it does below. */
+.dropzone:not(.scan-panel) { flex: 1 1 auto; }
+
+/*
+ * The choose bar: the two verbs, then the quieter ways in.
+ *
+ * Send and Receive take 40% each so they share the first row and nothing else
+ * fits beside them; the ghosts -- Take a photo, Send text, No network? -- are
+ * ordered after them, since Send text comes before Receive in the tree, and
+ * wrap to the row under it and share that. On a phone the scan panel has taken
+ * Receive, so Send shares its row with the first ghost instead. A wrap and a
+ * basis, not a second container: check-layout.mjs holds the bar to buttons.
+ */
+#screen-choose .card-actions .btn:not(.ghost) { flex: 1 1 40%; }
+#screen-choose .card-actions .btn.ghost { flex: 1 1 auto; order: 1; }
 
 .dropzone.is-dragging {
   border-color: var(--accent);
@@ -1272,7 +1317,12 @@ ${buttonCSS()}
   inline-size: 100%;
   aspect-ratio: 1;
   min-block-size: 8rem;
-  max-block-size: 100%;
+  /* And never taller than wide. flex-grow settles the block axis before
+   * aspect-ratio gets to, so in a full-bleed window -- the app, a tall phone --
+   * the frame came out twice as tall as it is wide: a slab with brackets on it,
+   * not a viewfinder. 100cqi is the slot's width (.card-media is the size
+   * container); object-fit: cover crops the picture to whatever this leaves. */
+  max-block-size: min(100%, 100cqi);
 }
 
 .scanner {
@@ -1345,17 +1395,47 @@ ${buttonCSS()}
  * placeholder -- dashed edge, muted fill -- with its one line centred where the
  * picture would have been. It inherits the box (aspect-ratio, min-block-size,
  * margin) from .scanner-frame above; this rule only restyles the surface. */
+/*
+ * A short box, not a camera-sized one, and on the page's own surface.
+ *
+ * It was the frame's full square in --scan-bg with --muted text on it, which
+ * measured about 3:1 -- and a black square is the look of a camera that is
+ * about to show something, which this one never will. The receive screen's
+ * form under it is the only way through on such a device, and the square was
+ * taking its room. So it hugs its one line, and the slot hugs it (the :has()
+ * rule below), and --muted on --surface-sunken is 5.78:1 (8.52 in dark).
+ */
 .scanner-frame.is-empty {
   display: flex;
   align-items: center;
   justify-content: center;
+  aspect-ratio: auto;
+  flex: 0 0 auto;
+  min-block-size: 0;
   padding: var(--sp-4);
   border: 2px dashed var(--line-strong);
   border-radius: var(--r-sm);
-  background: var(--scan-bg);
+  background: var(--surface-sunken);
   text-align: center;
 }
 .scanner-frame.is-empty .note { margin: 0; }
+.card-media:has(> .scanner-frame.is-empty) { flex: 0 1 auto; min-block-size: 0; }
+
+/*
+ * The scanner's status, as the camera's caption, directly under the frame.
+ *
+ * Over the picture was the first try, in the unthemed scan colours, and it sat
+ * on top of the viewfinder's bottom corners on a phone, which are at 12% of a
+ * frame that is short there. Under it is where beam-send's hint already is, so
+ * the two camera-and-code screens caption their media the same way. flex: none
+ * for the hint's reason: the frame is what gives way.
+ */
+.scanner-caption {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-note);
+  text-align: center;
+}
 
 /* ---- SAS tiles: emoji above word, so the pair can be read aloud ---- */
 /*
@@ -1375,35 +1455,54 @@ ${buttonCSS()}
  * things a person reads aloud in pairs is if anything easier to keep your
  * place in than a row of four.
  */
+/*
+ * And the grid fills the media slot, up to a cap.
+ *
+ * The tiles were about 80x60 with 200px of white above them on a phone: the
+ * one check in the app that stands between a person and an attacker was the
+ * smallest thing on its screen. The rows are 1fr, so the tiles share whatever
+ * height the slot has, down to a floor where four of them still read; the cap
+ * keeps them from becoming slabs on a tablet. The emoji scales with the slot's
+ * width (cqi, off .card-media) between the two sizes it used to switch
+ * between at the narrow breakpoints, which is why those rules are gone.
+ */
 .sas-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: 1fr;
   gap: var(--sp-3);
+  flex: 1 1 auto;
+  inline-size: min(100%, 28rem);
+  max-block-size: 22rem;
+  min-block-size: 9rem;
+  margin-inline: auto;
 }
 
 .sas-tile {
-  flex: 1 1 6rem;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--sp-1);
-  padding: var(--sp-3);
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  min-block-size: 0;
   background: var(--surface-raised);
   border-radius: var(--r-md);
 }
 
 .sas-emoji {
-  font-size: var(--fs-3);
+  font-size: clamp(var(--fs-2), 11cqi, 3.25rem);
   line-height: 1;
   /* Emoji fonts vary; give the glyph room so it cannot be mistaken. */
 }
 
+/* --text, not --muted: the word is the content, the thing said aloud. */
 .sas-word {
-  font-size: var(--fs--1);
-  font-weight: 600;
-  color: var(--muted);
+  font-size: var(--fs-note);
+  font-weight: 700;
+  color: var(--text);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 
 /* ---- code block + copy button ---- */
@@ -1470,8 +1569,9 @@ ${buttonCSS()}
  * movement that reads as unfinished.
  */
 .transfer-pct {
-  font-size: var(--fs-3);
-  font-weight: 600;
+  font-size: var(--fs-4);
+  font-weight: 700;
+  letter-spacing: -0.03em;
   line-height: var(--lh-tight);
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -1489,6 +1589,8 @@ ${buttonCSS()}
   gap: var(--sp-3);
   align-self: stretch;
 }
+/* Twice the bar's height: this one is watched, the others are glanced at. */
+.transfer-meter > .bar { block-size: 0.75rem; }
 
 .bar-fill {
   height: 100%;
@@ -1510,20 +1612,65 @@ ${buttonCSS()}
   100% { transform: translateX(250%); }
 }
 
-/* ---- outcome banner: a failed transfer must not look like a success ---- */
+/* ---- outcome: a failed transfer must not look like a success ----
+ *
+ * A solid disc in the outcome's colour with the glyph on it, where it was a
+ * pale banner carrying the sentence. Solid because this is the one moment the
+ * flow uses green or red at all, so it can afford the full strength, and
+ * because a tint at 12% beside a heading in --text read as decoration. The
+ * glyph is --on-status, measured against all three colours in tokens.js. The
+ * colour is never the only signal: the glyph's shape and the heading say it
+ * too.
+ */
 .outcome {
   display: flex;
-  align-items: flex-start;
-  gap: var(--sp-3);
-  padding: var(--sp-4);
-  border-radius: var(--r-md);
+  justify-content: center;
 }
 
-.outcome .glyph { font-size: var(--fs-2); line-height: 1; flex: none; }
+.outcome .glyph,
+.title-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--r-full);
+  color: var(--on-status);
+  font-weight: 700;
+  line-height: 1;
+}
+.outcome .glyph { inline-size: 5.5rem; block-size: 5.5rem; font-size: 2.75rem; }
 
-.outcome.ok { background: var(--ok-soft); color: var(--ok); }
-.outcome.bad { background: var(--bad-soft); color: var(--bad); }
-.outcome.warn { background: var(--warn-soft); color: var(--warn); }
+.outcome.ok .glyph, .title-glyph.ok { background: var(--ok); }
+.outcome.bad .glyph, .title-glyph.bad { background: var(--bad); }
+.outcome.warn .glyph, .title-glyph.warn { background: var(--warn); }
+
+/* The same disc, small, beside a heading whose media is not an outcome --
+ * received text, where the message is the subject. */
+.card-title:has(> .title-glyph) { display: flex; align-items: center; gap: var(--sp-3); }
+.title-glyph { inline-size: 1.75rem; block-size: 1.75rem; font-size: var(--fs-0); }
+
+/* The outcome's sentence, directly under the heading it explains. */
+.outcome-message { color: var(--text); }
+
+/* A note and the one control that answers it, on a line. */
+.caption-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+/* The route and the digest, one quiet row. A <details> that opens wraps under
+ * the badge and takes the width it needs. */
+.done-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--sp-4);
+}
+.done-meta:empty { display: none; }
+.done-meta > details[open] { flex-basis: 100%; }
+.done-meta .path-info .note { display: none; }
 
 /* ---- network path: which route the bytes actually took ----
    A pill plus one explanatory line, sitting next to the SAS confirm and the
@@ -1670,7 +1817,6 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
   /* .sas-tile { flex: 1 1 40% } used to live here to force 2x2 on a phone.
    * The grid does that at every size now, so only the gap is worth trimming. */
   .sas-grid { gap: var(--sp-2); }
-  .sas-emoji { font-size: var(--fs-2); }
 
 }
 
@@ -1705,7 +1851,7 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
    * is where a viewfinder stops being aimable, and unlike a code there is
    * nothing here that has to resolve. */
   .scan-panel { block-size: min(12rem, 100%); inline-size: auto; }
-  .transfer-pct { font-size: var(--fs-2); }
+  .transfer-pct { font-size: var(--fs-3); }
 
   /* Callouts keep their colour, border and every word, and give up eight
    * pixels of padding each. It was written when the beam send screen carried
@@ -1781,6 +1927,9 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
   .card-body.has-media > .card-media { grid-area: 1 / 1 / 5 / 2; }
   .card-body.has-media > .card-title { grid-area: 2 / 2 / 3 / 3; padding-block-end: var(--sp-4); text-align: start; }
   .card-body.has-media > .card-copy { grid-area: 3 / 2 / 4 / 3; }
+  .card-body.hero-first > .card-copy { align-items: stretch; text-align: start; }
+  .card-body.hero-first .path-badge { align-self: flex-start; }
+  .card-body.hero-first .done-meta { justify-content: flex-start; }
   /* The floor is a stacked-layout concern only: in two columns the media
    * column already stretches to the row's height, so reserving a minimum
    * would be reserving space the layout has given it anyway. */
@@ -1855,9 +2004,6 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
  * millimetres without losing anything a person reads aloud.
  */
 @media (max-width: 26rem) {
-  .sas-tile { padding: var(--sp-2); }
-  .sas-emoji { font-size: var(--fs-1); }
-
   /*
    * h2 used to drop to --fs-0 here, and that inverted the type hierarchy on
    * the smallest screen in the app: the heading became the same size as body
@@ -2098,6 +2244,14 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
    * or a rotation leaves a control that can be focused and cannot be seen.
    */
   #btn-photo { display: none; }
+
+  /* An 8rem basis for the bar's buttons here, not the 12rem they take
+   * everywhere else. This bar is the third grid track, about 400px at
+   * 800x360, so 12rem beside a ghost wraps any pair whose ghost is long: Copy
+   * and Receive something else measured 192 + 12 + 203 against 398, and the
+   * second row cost the copy column beside it 63px. The primary still grows
+   * to fill what the row leaves. */
+  .card-actions .btn { flex-basis: 8rem; }
   /* A rule used to sit here giving the beam screens' filename order: 1, so
    * that in landscape the keep-it-on-screen callout was not the line pushed
    * below the fold. The filename now shares a line with the Not-encrypted tag
@@ -2146,15 +2300,13 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
 /* The inset was the card's corner radius, and there is no corner any more. */
 :host([shell="app"]) .rail { inset-inline: 0; }
 /* With no page chrome above it the media slot is taller than the window is wide,
- * so height stops being the scarce axis: .qr's and .beam-stage's block-size then
- * reach past max-inline-size, and aspect-ratio loses to that cap. check-layout
- * measured the stage 328x416 at 360x800, a white band under the code. So the
- * block size gets a cap of its own at the width the box can have. Not on the
- * enlarged code, which is fixed to the viewport and sizes itself. */
-:host([shell="app"]) .qr,
-:host([shell="app"]) .beam-stage:not([aria-pressed="true"]) {
-  max-block-size: calc(100vw - var(--sp-4) * 2);
-}
+ * so height stops being the scarce axis -- check-layout measured the stage
+ * 328x416 at 360x800, a white band under the code. That used to be answered here
+ * with a cap of 100vw less the gutters, and the 100cqi cap beside .qr's base rule
+ * now answers it at every layout, this one included. The app copy was more
+ * specific than that rule and so replaced it rather than joining it, and 100vw is
+ * no cap at all on a laptop: the beam stage came out 352x480 in the wide
+ * branch's 22rem column. */
 @media ${BREAKPOINT_FLAT} {
   /* 18rem being the media track of this branch, above. */
   :host([shell="app"]) .qr,

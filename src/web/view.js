@@ -175,7 +175,7 @@ const SUCCESS_OUTCOMES = new Set(['sent', 'received'])
 // palette). The functions are declarations, so referencing them from a
 // module-scope const above their definitions is safe -- they are hoisted and
 // initialised before this runs.
-/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { title: string, heroFirst?: boolean, media?: any, body: any[], controls?: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[], label?: string } | null }>} */
+/** @type {Record<typeof SCREENS[number], (state: State, dispatch: Dispatch) => { title: string | any[], heroFirst?: boolean, media?: any, body: any[], controls?: any[], actions: any[], info?: { title: string, content: import('./vdom.js').VNode[], label?: string } | null }>} */
 const builders = {
   choose, send, receive, verify, transfer, done,
   'beam-send': beamSend, 'beam-receive': beamReceive,
@@ -989,8 +989,13 @@ function send(state, dispatch) {
     // app knows how to open. Telling those users "any camera app will do"
     // would be advice that cannot work, which is worse than the silence this
     // replaces.
+    //
+    // Shorter than it was ("-- this code is a link that opens qrdrop, ready to
+    // receive"): the second half explained why the first is true, and the
+    // first is the only part that changes what someone does. The reason is in
+    // the Details sheet, where a person who doubts it will look.
     h('p', { class: 'note' }, state.qrIsLink
-      ? 'Any camera app will do — this code is a link that opens qrdrop, ready to receive.'
+      ? 'Any camera app will do.'
       : 'On the other device, open qrdrop, tap “Receive a file”, and point it at this code.'),
 
     // The code and the one sentence that qualifies it, grouped: at the copy
@@ -1007,10 +1012,10 @@ function send(state, dispatch) {
       ]),
       h('p', { class: 'note' }, 'Anyone who learns it can join.'),
     ]),
-    // The bar and the line that says what it is waiting for, as one block.
-    // Separated by the column gap they were a bar and, some distance below, a
-    // sentence; the sentence is the bar's label.
-    h('div', { class: 'stack' }, [
+    // The bar and the line that says what it is waiting for, on one line: the
+    // sentence is the bar's label, and stacked they cost a row this screen
+    // does not have on a landscape phone.
+    h('div', { class: 'wait-row' }, [
       state.pairing
         ? h('div', {
           class: 'bar indeterminate', role: 'progressbar', 'aria-label': 'Connecting', 'aria-valuetext': state.status,
@@ -1031,6 +1036,9 @@ function send(state, dispatch) {
     info: {
       title: 'About this code',
       content: [
+        ...(state.qrIsLink
+          ? [h('p', { class: 'note' }, 'The code is a link that opens qrdrop on the other device, ready to receive.')]
+          : []),
         h('p', { class: 'note' }, 'Read it out if scanning fails.'),
         h('p', { class: 'note' }, 'Treat it like a password.'),
       ],
@@ -1052,11 +1060,23 @@ function receive(state, dispatch) {
     // "no camera" line holds the slot at the size and shape the <video> would
     // have taken, and puts the message where a person is already looking for
     // the picture.
+    //
+    // With a camera, the status line is the frame's caption: "point the camera
+    // at the code" said once, under the picture it is about, rather than in the
+    // copy beside a heading saying the same. Always rendered, so the frame
+    // holding the <video> the stream is attached to keeps its position.
+    //
+    // Without one, the frame is a short box rather than a square: there is
+    // nothing to aim, and a camera-sized hole took the room from the form below,
+    // which is then the only way through.
     media: state.cameraAvailable
-      ? h('div', { class: 'scanner-frame' }, [
-        h('video', { id: 'scanner', key: 'scanner', class: 'scanner', muted: true, playsinline: '' }),
-        h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
-      ])
+      ? [
+        h('div', { class: 'scanner-frame' }, [
+          h('video', { id: 'scanner', key: 'scanner', class: 'scanner', muted: true, playsinline: '' }),
+          h('div', { class: 'viewfinder' }, [h('span', {}, [])]),
+        ]),
+        h('p', { class: 'scanner-caption', 'aria-live': 'polite' }, state.status),
+      ]
       : h('div', { class: 'scanner-frame is-empty' }, [
         h('p', { class: 'note' }, NO_CAMERA_SCAN),
       ]),
@@ -1119,7 +1139,11 @@ function receive(state, dispatch) {
         : null,
     ]),
 
-    h('p', { class: 'status', 'aria-live': 'polite' }, state.status),
+    // Said in the frame when there is a camera (see `media`). Without one the
+    // status is usually NO_CAMERA_SCAN again, and the frame has just said it.
+    !state.cameraAvailable && state.status && state.status !== NO_CAMERA_SCAN
+      ? h('p', { class: 'status', 'aria-live': 'polite' }, state.status)
+      : null,
     ],
     actions: [
       h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
@@ -1162,15 +1186,18 @@ function verify(state, dispatch) {
         h('span', { class: 'sas-emoji', 'aria-hidden': 'true' }, emoji[i] ?? ''),
         h('span', { class: 'sas-word' }, word),
       ]))),
-    title: 'Check both devices show the same symbols',
+    title: 'Do these match the other device?',
     body: [
       // The exact-string element the e2e suite and CLI interop depend on --
       // see SR_ONLY_STYLE's comment above for why this is separate from the
       // tile grid rather than being the tile grid's container.
       h('span', { id: 'sas', style: SR_ONLY_STYLE, 'aria-hidden': 'true' }, state.sas),
 
-      h('p', { class: 'note' },
-        'If these differ, someone is between you. Stop, and start over with a fresh code.'),
+      // Two short sentences where there were two long ones. "Start over with a
+      // fresh code" is what the mismatch outcome says, in full, on the screen
+      // that pressing They don't match leads to -- here it was the reason the
+      // note wrapped to three lines on a phone.
+      h('p', { class: 'note' }, 'If they differ, stop. Someone may be between you.'),
 
       // Filename, then badge, then -- down in the action bar -- the gesture.
       // That is the order the receiver reads them in, and the reason the
@@ -1197,9 +1224,15 @@ function verify(state, dispatch) {
       // region -- but it now holds only controls and the waiting-state
       // indeterminate bar. The filename and the path badge it used to carry
       // moved up into the body above.
+      //
+      // Cancel is inside it now, and only while it is the way out. Once an
+      // offer has arrived, Decline is: it ends the session and tells the sender,
+      // where Cancel beside it said the same thing a second way and wrapped the
+      // bar onto three rows. Inside, so the sender's "They don't match" and
+      // Cancel can share the row under the primary -- a sibling of this element
+      // could not.
       h('div', { id: 'verify-status', class: 'verify-actions', 'aria-live': 'polite' },
         verifyStatus(state, dispatch)),
-      h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel'),
     ],
   }
 }
@@ -1233,6 +1266,7 @@ function verifyStatus(state, dispatch) {
       // suite that needs two browsers and a relay to run.
       h('button', { class: 'btn danger', type: 'button', onclick: () => dispatch('verify:reject') },
         "They don't match"),
+      cancelButton(dispatch),
     ]
   }
 
@@ -1243,6 +1277,7 @@ function verifyStatus(state, dispatch) {
       h('div', { class: 'bar indeterminate', role: 'progressbar', 'aria-label': 'Waiting for an offer' },
         [h('div', { class: 'bar-fill' })]),
       h('p', { class: 'status' }, 'Waiting for the sender…'),
+      cancelButton(dispatch),
     ]
   }
 
@@ -1263,6 +1298,11 @@ function verifyStatus(state, dispatch) {
       onclick: () => dispatch('offer:decline'),
     }, 'Decline'),
   ]
+}
+
+/** @param {Dispatch} dispatch */
+function cancelButton(dispatch) {
+  return h('button', { class: 'btn ghost', type: 'button', onclick: () => dispatch('cancel') }, 'Cancel')
 }
 
 /**
@@ -1384,7 +1424,9 @@ function restartLabel(state) {
   // four emoji are 24 bits, which only holds at one attempt per secret, so
   // re-offering the same code hands an attacker a second roll at it.
   if (state.outcome === 'mismatch') return 'Start over with a fresh code'
-  if (state.role === 'receiver') return 'Receive another file'
+  // "Something else" after a message, as the sender's already said: a person
+  // who has just been handed a password has not been receiving files.
+  if (state.role === 'receiver') return state.isText ? 'Receive something else' : 'Receive another file'
   if (state.role === 'sender') return state.isText ? 'Send something else' : 'Send another file'
   return 'Start over'
 }
@@ -1420,27 +1462,39 @@ function done(state, dispatch) {
     //
     // Focusable so it can be scrolled from the keyboard -- a scrolling region
     // a keyboard cannot reach is text a keyboard user cannot finish reading.
+    //
+    // The outcome is a disc now, solid in its colour, and the sentence moved to
+    // the copy under the heading. As a pale banner it carried the sentence while
+    // the heading sat a hundred pixels below it, and one thought read as two.
+    // Green and red appear nowhere else in the flow, which is what lets a solid
+    // one mean something when it arrives.
     media: text !== null
       ? h('pre', { id: 'done-text', class: 'message-text', tabindex: '0', 'aria-label': 'Message' }, text)
       : h('div', { class: `outcome ${info.variant}` }, [
         h('span', { class: 'glyph', 'aria-hidden': 'true' }, info.glyph),
-        h('p', {}, outcomeMessage(state)),
       ]),
-    title: info.title,
+    // With text, the heading carries a small disc of its own, because the media
+    // that would hold the large one is the message.
+    title: text !== null
+      ? [h('span', { class: `title-glyph ${info.variant}`, 'aria-hidden': 'true' }, info.glyph), info.title]
+      : info.title,
     // The outcome is the answer and the heading its caption -- except for
     // received text, where the message is the subject and the heading says
     // what the box under it is before anyone reads it.
     heroFirst: text === null,
     body: [
-    text !== null ? h('p', { class: 'note' }, outcomeMessage(state)) : null,
+    // Received text answers "where is it?" with "nowhere", and Save as file is
+    // the answer to that, so they share a line. In the copy rather than a third
+    // button in the bar, which wrapped the bar onto a second row on a landscape
+    // phone. Saving is the occasional use; the bar keeps Copy, the reason
+    // someone sent text, and the way out.
+    text !== null
+      ? h('div', { class: 'caption-row' }, [
+        h('p', { class: 'note' }, outcomeMessage(state)),
+        h('button', { class: 'btn small', type: 'button', onclick: () => dispatch('text:save') }, 'Save as file'),
+      ])
+      : h('p', { class: 'outcome-message' }, outcomeMessage(state)),
     h('div', { class: 'stack' }, [
-      // Small and in the copy rather than a third button in the bar, which
-      // wrapped the bar onto a second row on a landscape phone. Saving is the
-      // occasional use; the bar keeps Copy, the reason someone sent text, and
-      // the way out.
-      text !== null
-        ? h('button', { class: 'btn small', type: 'button', onclick: () => dispatch('text:save') }, 'Save as file')
-        : null,
       state.file && SUCCESS_OUTCOMES.has(state.outcome ?? '') && !(state.isText && state.file.name === TEXT_NAME)
         ? h('p', { class: 'filename' }, state.file.name)
         : null,
@@ -1451,8 +1505,12 @@ function done(state, dispatch) {
       state.saveLocation && state.outcome === 'received'
         ? h('p', { class: 'note', id: 'done-location' }, `Saved to ${state.saveLocation}`)
         : null,
-      pathBadge(state),
     ]),
+    // The route and the digest are both facts about a transfer already over,
+    // and neither is what someone looks at this screen for, so they share one
+    // quiet row at the foot of the copy instead of a row each.
+    h('div', { class: 'done-meta' }, [
+    pathBadge(state),
     // Only when there is one. A failed or declined transfer never computes a
     // digest, and an outcome screen offering to reveal "Verification digest"
     // that opens onto nothing reads as a second, smaller failure.
@@ -1467,6 +1525,7 @@ function done(state, dispatch) {
       ]),
       h('p', { class: 'note' }, 'Both devices computed this independently from the file contents.'),
     ]) : null,
+    ]),
     ],
     actions: [
       // Copying is why someone sent text, so it is the primary action and the
