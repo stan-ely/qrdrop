@@ -29,6 +29,17 @@
 <title>qrdrop</title>
 <meta name="description" content="Send a file straight from one device to another. A QR code carries the key; the file goes over WebRTC; nothing in between ever holds a readable copy.">
 
+<!--
+  The project's Mastodon account. rel="me" is what lets that profile show this
+  site as verified: Mastodon fetches the page and looks for a link back to the
+  profile, and a <link> in the head counts as one without putting anything on a
+  screen that has no vertical slack to give. fediverse:creator puts the account
+  on every link preview Mastodon renders for this site, and is honoured only
+  because the profile names this domain under "Author attribution".
+-->
+<link rel="me" href="https://mastodon.social/@stanely">
+<meta name="fediverse:creator" content="@stanely@mastodon.social">
+
 <!-- Social preview. The rationale is below the tags, not above them; see there. -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="qrdrop">
