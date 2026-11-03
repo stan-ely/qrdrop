@@ -84,6 +84,15 @@ export const BREAKPOINT_FLAT = '(min-width: 48rem) and (max-height: 30rem)'
 export const THEME_COLOR = '#f7f6f3'
 
 /**
+ * The same ground in the dark palette. The web manifest has no use for it, for
+ * the reason above, but the Android app's window does: it is what shows under
+ * the splash, under the navigation bar and before the page has painted, and an
+ * Android theme can carry one colour per night mode. scripts/generate-tauri-config.mjs
+ * writes both into the app's resources.
+ */
+export const THEME_COLOR_DARK = '#16161a'
+
+/**
  * The design token set: every colour, space, radius, type, and shadow value
  * the UI uses, in one place.
  *
@@ -333,7 +342,7 @@ ${selector} {
      * --accent-text (now dark, #17171a, matching the old scheme of a dark
      * label on a light-ish accent chip) still clears 4.5:1 (6.61:1 measured).
      */
-    --bg: #16161a;
+    --bg: ${THEME_COLOR_DARK};
     --surface: #1f1f24;
     --surface-raised: #262630;
     /* Below --bg as well as below --surface. In light mode a sunken field can

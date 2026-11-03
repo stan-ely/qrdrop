@@ -12,7 +12,7 @@ change could break moves into CLAUDE.md, the way the LAN path's rules did.
 | 2. App shell, Home, Settings, About | built | 1 | Android recommended | see "Phase 2: as built" |
 | 3. Screen redesign, shared with the site | built | 2 | no | direction approved 2026-11-03; see "Phase 3: as built". Not yet seen on a phone |
 | 4. History | built | 2 | Android recommended | see "Phase 4: as built". Desktop verified end to end; not yet run on a phone |
-| 5. Platform polish | not started | 3, 4 | yes | |
+| 5. Platform polish | built | 3, 4 | yes | see "Phase 5: as built". Android on one phone; Windows; Linux under WSLg; macOS not run |
 | 6. Offline-pairing UI | blocked | 3 and offline pairing phase C | yes | phases B and C of `offline-pairing.md` are unbuilt, and this copy must not ship before the feature works |
 
 Phases 3 and 4 can run in either order. Each runs in a fresh session.
@@ -184,6 +184,67 @@ sliding up is off-screen then, so it waits for finite animations first, as
 
 **Phase 2's follow-ups taken here:** the disclosure's website-only wording, the `fastlane/`
 screenshots, and how the tall viewfinder looks.
+
+## Phase 5: as built
+
+Built 2026-11-03. CLAUDE.md now has the rules: nothing in the app is selectable unless a rule
+says so and the context menu follows the CSS, the Windows browser keys are off in release
+builds, the Back callback is on only while there is history, and five new rows in the `gen/`
+table. This section records what they do not say.
+
+**Measured on a Realme RMX3868, Android 16, gesture navigation, WebView 156.** In both themes a
+cold start shows `--bg` from the first frame, with no white between the splash and the page,
+and the status-bar icons are the right colour. Switching night mode with the app open updates
+the page and the icons in the same process. The strip under the gesture bar is `--bg`, which
+closes phase 2's follow-up. With the keyboard up, the compose sheet sits above it with Send in
+view. A long press on a button or a heading selects nothing, and a drag past the end of About
+draws no stretch. Back from Settings lands on Home; in a session the first press shows the
+toast and two presses a second apart cancel with the app still open.
+
+**Predictive back could not be seen on that phone.** ColorOS draws its own arrow bubble on
+every back gesture and no back-to-home preview, so whether the system preview now appears is
+unmeasured. What was measured: the page has `qrdropBack`, and at Home after a page it is at
+index 0, so the callback should be off there. A Pixel or an emulator on API 34 or later is the
+way to see it. Check the session guard on any device that tries: one press too few caught is
+the failure that matters.
+
+**A stale toast was a finding, not part of the plan.** `_reset` cleared the toast's timer and
+not the toast, so "Press back again to cancel." stayed after the cancel it announced, over
+Settings and About as well. It predates this phase. Fixed and seen gone on the phone.
+
+**The window is 900x640, minimum 360x640.** The two-column layout fits every fixture there
+(check-layout has it as `app-window`), and gives the SAS tiles and the beam code more room
+than the phone-shaped 480x720 did. 640 is tall enough for the short single column at any
+width, and short enough for a 1366x768 laptop under its taskbar.
+
+**Overscroll is under a finger only, because of a measurement.** The first version set
+`overscroll-behavior: none` everywhere, and Chromium gives a scroller that sets it greyscale
+text: the copy column lost its ClearType on Windows. That was also the only change the store
+screenshots showed, with an animation frame on send, so they were not regenerated.
+
+**Mica was tried and dropped.** See CLAUDE.md. The pictures are a grey Mica bar over an opaque
+`--bg` page.
+
+**Keyboard.** Tab order on Home is the bar, then the screen, then the action bar; on Settings,
+the switch, Clear history when it has something to clear, and About. Escape leaves a page, and
+over a pasted sheet it closes only the sheet. Tab passes through one dead stop on `<body>`
+before it wraps, as it would in a browser. Fixing that means finding tabbable elements across
+the shadow root and the inert subtree, and it was left.
+
+**Not run.** macOS, which has no machine here: the CSS it gets is the WebKit path, which reads
+`-webkit-user-select` and `-webkit-user-drag` and is why the context-menu check reads both
+names.
+
+**Linux** ran under WSLg (Ubuntu 24.04, WebKitGTK) as a debug build, which needed Rust 1.98
+beside the distro's 1.89. It opens at 900x640 with GTK's own decorations, Home lays out as it
+does on Windows, and a right-click on a button or on the heading opens no menu. A transfer from
+it was not run.
+
+**Follow-ups.**
+
+- A transfer from the Linux app, on a Linux machine rather than WSLg.
+- The Tab wrap above.
+- Predictive back on a device that draws the system preview.
 
 ## Phase 4: as built
 

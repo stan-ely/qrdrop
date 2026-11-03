@@ -882,7 +882,9 @@ env() terms, or it silently drops them — the narrow breakpoint did exactly tha
 **`THEME_COLOR` lives in `src/web/tokens.js`** and feeds `--bg`, the
 `theme-color` meta and the manifest. Drift there paints the wrong colour on the
 splash and in the task switcher, before any stylesheet has loaded — visible only
-on a cold start, which is the hardest moment to be looking.
+on a cold start, which is the hardest moment to be looking. `THEME_COLOR_DARK`
+beside it is the dark `--bg`, and the pair is the Android app's window colour in
+each theme, written into `gen/` by `generate-tauri-config.mjs` (table below).
 
 ## The Tauri app (`app/`)
 
@@ -940,6 +942,20 @@ nowhere to open `target="_blank"`, and Android navigates the app itself to the p
 `capabilities/default.json` lists the two URL patterns, narrower than `opener:default`'s
 every http and https URL, and `test/app-view.test.mjs` checks every About link against them.
 
+**In the app, nothing is selectable unless a rule says so, and the context menu follows the
+CSS.** `app/styles.css`'s `body` and `:host([shell="app"])` in `src/web/styles.js` (said
+twice because `:host` is `all: initial`) set `user-select: none`, the arrow cursor, no tap
+highlight and no overscroll; the code, the digest, a received message, the save location,
+the failure detail, About's copy and the fields opt back in. `app/src/main.js` refuses the
+webview's context menu, which is a browser's and offers Refresh mid-transfer, everywhere
+except a field, or selectable text with a selection (a long press on touch, which is how a
+selection starts). It reads `getComputedStyle().userSelect` rather than a list, so a new
+piece of copyable text is one CSS selector. On Windows a **release** build also turns off
+WebView2's browser keys (`windows_keys` in `src/lib.rs`: F5, Ctrl+R, Ctrl+P, Ctrl+F, F12);
+a debug build keeps them, since F12 is then the only way into devtools. Mica was tried and
+is not used: the pages over Home must be opaque (above), so every page drew a seam against
+the Mica bar, and the palette's contrast was measured on `--bg`, not on a wallpaper tint.
+
 **`app/` is not in the npm tarball, and `@tauri-apps/*` is not a root dependency.**
 The root `package.json` `files` array lists `src`, `types`, `site/dist` and nothing
 else; "no new runtime dependencies" (see `## Invariants`) is a root-package rule, so
@@ -986,7 +1002,10 @@ Paths are under `app/src-tauri/gen/android/app/src/main/`.
 | `AndroidManifest.xml` | `<meta-data android:name="android.app.shortcuts">`. The launcher shortcuts stop appearing, and `res/xml/shortcuts.xml` is orphaned with no error anywhere. |
 | `AndroidManifest.xml` | The `QrdropTileService` `<service>`. The Quick Settings tile stops being offered; the class stays in the tree doing nothing. |
 | `AndroidManifest.xml` | `android:allowBackup="false"` and `android:dataExtractionRules` on `<application>`. History's filenames go into the person's Google backup and onto their next phone, and Settings' "on this device only" is false. |
-| `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. `clearNavigationBar`, without which the app's action bar sits behind the navigation bar, since the WebView reports `env(safe-area-inset-bottom)` as 0 there. `onWebViewCreate`'s Back callback, without which a second Back closes the app mid-transfer. |
+| `AndroidManifest.xml` | `android:enableOnBackInvokedCallback="true"` on `<application>`. Android 13 to 15 never preview Back to the launcher (16 has it on at this targetSdk regardless). |
+| `AndroidManifest.xml` | `android:windowSoftInputMode="adjustResize"` on the activity. Below Android 11 the keyboard inset never reaches `keepClearOfBars`, and the keyboard covers the compose sheet's Send. |
+| `java/com/stan_ely/qrdrop/MainActivity.kt` | `stashSharedFile` and `stashLaunchAction`, the writing end of both handoffs. `keepClearOfBars`, without which the action bar sits behind the navigation bar (the WebView reports `env(safe-area-inset-bottom)` as 0 there) and the keyboard covers Send text. `onWebViewCreate`'s Back callback, without which a second Back closes the app mid-transfer, and `handleBackNavigation = false` with `watchHistory`, without which predictive back never previews. `onConfigurationChanged`, without which a theme switch leaves dark status-bar icons on a dark page. The WebView's transparent background, without which a dark start flashes white. |
+| `res/values/themes.xml`, `res/values-night/themes.xml` | `windowBackground` and `windowSplashScreenBackground`, both `@color/qrdrop_bg`. Without them the splash, the strip under the navigation bar and the moment before the page paints are white in either theme. |
 | `res/values/ic_launcher_background.xml` | The adaptive-icon background colour, which **`tauri icon` also** resets to white every time. |
 | `../../build.gradle.kts` (that is, `gen/android/app/`) | Three things. The version read from `src-tauri/Cargo.toml`: without it every release is versionCode 1 and none installs over another. The release signing config: without it a release APK is unsigned. The per-ABI `versionCode` block: without it the split APKs share one code and F-Droid cannot tell them apart. |
 
@@ -1001,6 +1020,7 @@ hand edit above, and losing that edit leaves the file inert:
 | `res/xml/shortcuts.xml` | The two launcher shortcuts. |
 | `res/xml/data_extraction_rules.xml` | Excludes everything from cloud backup and device transfer. Needed on Android 12+, where `allowBackup="false"` stops only the cloud backup. |
 | `res/values/qrdrop_entry_points.xml` | Their labels, and the tile's. Deliberately **not** in the generated `strings.xml`. |
+| `res/values/qrdrop_colors.xml`, `res/values-night/qrdrop_colors.xml` | `qrdrop_bg`, the window's ground in each theme. **Generated** by `scripts/generate-tauri-config.mjs` from `THEME_COLOR` and `THEME_COLOR_DARK`, never edited; `test/build-site.test.mjs` fails on a stale one. Reached through the themes above and `onConfigurationChanged`. |
 | `res/drawable/ic_qrdrop_scan.xml`, `ic_qrdrop_send.xml` | Their icons. |
 
 The manifest's first four entries and `MainActivity.kt` are one delta, not five: the
@@ -1528,6 +1548,16 @@ did not help. **A test driving this over CDP cannot see it**: Playwright's `eval
 carries a user gesture, so reading the page between two presses clears the very thing
 under test. Script the presses with nothing in between. How a browser's own Back button
 treats the second press on the site has not been measured.
+
+**That callback is enabled only while the page has history, which is what predictive back
+needs.** The system previews leaving the app only when no callback is enabled as the
+gesture starts, and WryActivity's, which was always on, is not registered
+(`handleBackNavigation = false`). `app/src/main.js` wraps `pushState` and posts to
+`MainActivity.watchHistory` over an origin-scoped web message listener. A push enables the
+callback at once and nothing disables it without reading the back/forward list, because
+the two errors are not equal: one too many enabled costs a preview, one too few closes the
+app mid-transfer. A WebView without the listener keeps the callback on, which is the old
+behaviour.
 
 **Screens are not history
 entries and back must never move between them.** The entry exists only to be

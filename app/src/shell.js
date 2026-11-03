@@ -226,6 +226,18 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink, his
   }
   window.addEventListener('popstate', onPopState)
 
+  // Escape leaves a page as the arrow does, which is what it does in a desktop
+  // app's settings. Not while running, when every page is down and Escape
+  // belongs to the component's sheets and beam's enlarged code. Nor when focus is
+  // in the component over a page: it is inert there, so that is a sheet opened
+  // by a paste, and Escape is the sheet's to close.
+  document.addEventListener('keydown', ev => {
+    if (ev.key !== 'Escape' || ev.defaultPrevented || state.running || state.page === 'home') return
+    if (document.activeElement === el) return
+    if (state.confirm) return answered()
+    history.back()
+  })
+
   el.addEventListener('screenchange', ev => {
     const { running } = /** @type {CustomEvent<{ running: boolean }>} */ (ev).detail
     if (running && state.page !== 'home') stale = state.page === 'about' ? 2 : 1

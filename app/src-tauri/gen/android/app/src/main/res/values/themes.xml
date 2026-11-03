@@ -1,6 +1,15 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.qrdrop" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <!--
+          A HAND EDIT in a file Tauri generates; see CLAUDE.md's gen/ table. The
+          window is the page's ground before the page paints, under the splash
+          on Android 12 and later, and in the strip under the navigation bar,
+          which MainActivity pads rather than letting the page draw there.
+          Without it all three are the theme's white, on a dark page too.
+          qrdrop_bg is generated from src/web/tokens.js, one file per night mode.
+        -->
+        <item name="android:windowBackground">@color/qrdrop_bg</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/qrdrop_bg</item>
     </style>
 </resources>

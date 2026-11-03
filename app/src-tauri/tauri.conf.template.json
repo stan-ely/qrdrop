@@ -10,8 +10,10 @@
       {
         "label": "main",
         "title": "qrdrop",
-        "width": 480,
-        "height": 720
+        "width": 900,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 640
       }
     ],
     "security": {

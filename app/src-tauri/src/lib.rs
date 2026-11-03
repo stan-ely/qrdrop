@@ -131,6 +131,8 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {
                 windows_camera::allow(&window);
+                #[cfg(not(debug_assertions))]
+                windows_keys::disable(&window);
             }
 
             Ok(())
@@ -238,6 +240,45 @@ mod windows_camera {
         });
         if let Err(e) = reached {
             eprintln!("qrdrop: could not reach the platform webview for camera permission: {e}");
+        }
+    }
+}
+
+/// WebView2's browser keys: F5 and Ctrl+R reload, Ctrl+P prints, Ctrl+F finds,
+/// F12 and Ctrl+Shift+I open devtools, and Alt+Left goes back. A reload is the
+/// one that matters, because it ends a transfer with nothing on screen to say
+/// why, and the rest only say that this is a browser. Editing keys, Tab and
+/// Escape are not browser keys and still reach the page.
+///
+/// Release builds only. A debug build has no context menu left to reach
+/// devtools from (app/src/main.js), so F12 is how a developer gets in.
+///
+/// Tauri has no setting for it, which is why this goes through the controller
+/// as the camera grant does. Best effort: an older runtime without
+/// `ICoreWebView2Settings3` (before 1.0.864) keeps the keys, logged.
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+mod windows_keys {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows::core::Interface;
+
+    pub fn disable(window: &tauri::WebviewWindow) {
+        let reached = window.with_webview(|webview| unsafe {
+            let settings = webview
+                .controller()
+                .CoreWebView2()
+                .and_then(|core| core.Settings())
+                .and_then(|s| s.cast::<ICoreWebView2Settings3>());
+            match settings {
+                Ok(settings) => {
+                    if let Err(e) = settings.SetAreBrowserAcceleratorKeysEnabled(false.into()) {
+                        eprintln!("qrdrop: could not turn off the browser keys: {e}");
+                    }
+                }
+                Err(e) => eprintln!("qrdrop: no ICoreWebView2Settings3 for the browser keys: {e}"),
+            }
+        });
+        if let Err(e) = reached {
+            eprintln!("qrdrop: could not reach the platform webview for the browser keys: {e}");
         }
     }
 }

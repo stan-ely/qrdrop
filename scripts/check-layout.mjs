@@ -177,6 +177,11 @@ const VIEWPORTS = [
   // is the shape that made the width-only media query the page used to have
   // report success while Accept sat off the bottom of the screen.
   { name: 'laptop-short', width: 1280, height: 620 },
+  // The desktop app's first window (tauri.conf.template.json), so the size a
+  // person sees first is measured as itself rather than inferred from its
+  // neighbours: wide enough for two columns, at the narrow end of that branch.
+  // Its minimum, 360x640, is phone-short above.
+  { name: 'app-window', width: 900, height: 640 },
 ]
 
 /*

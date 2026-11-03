@@ -2498,6 +2498,43 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
 }
 /* The inset was the card's corner radius, and there is no corner any more. */
 :host([shell="app"]) .rail { inset-inline: 0; }
+
+/*
+ * What gives a web page away under a finger or a mouse, said here as well as on
+ * the app's body in app/styles.css because :host is \`all: initial\` and inherits
+ * none of it: a long press selecting a button's label, the tap highlight, an
+ * I-beam over a heading, a hand over every button where a desktop app shows the
+ * arrow, and the stretch at the end of a scroll. Not on the site, where a page
+ * that behaves like a page is right.
+ *
+ * overscroll-behavior is not inherited, hence the universal rule below; nothing
+ * else in this file sets it. The beam stage keeps its zoom cursors, which say
+ * what a click will do.
+ */
+:host([shell="app"]) {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Under a finger only. Measured in Chromium: a scroller with a non-auto value
+ * loses subpixel text, so the same rule everywhere turned the copy column's
+ * text from ClearType to greyscale on a Windows desktop, where a mouse draws no
+ * stretch for it to stop. A phone draws its text greyscale regardless. */
+@media (pointer: coarse) {
+  :host([shell="app"]) * { overscroll-behavior: none; }
+}
+:host([shell="app"]) :is(.btn, .dropzone, .segment, summary) { cursor: default; }
+/* Text worth copying opts back in: the code and the digest (each has a Copy
+ * button, and a person may want part of one), a received message, where it was
+ * saved, and the failure text kept for a bug report. app/src/main.js offers the
+ * context menu on exactly what this leaves selectable. */
+:host([shell="app"]) :is(.code, .message-text, #done-location, .path-debug, .error-detail > p, input:not([type="radio"]), textarea) {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+:host([shell="app"]) :is(a, img, svg) { -webkit-user-drag: none; }
 /* With no page chrome above it the media slot is taller than the window is wide,
  * so height stops being the scarce axis -- check-layout measured the stage
  * 328x416 at 360x800, a white band under the code. That used to be answered here

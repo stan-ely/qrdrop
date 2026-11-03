@@ -1514,6 +1514,10 @@ export class QRDropElement extends HTMLElement {
       mode: 'p2p', beamNode: null, beam: null, busy: false, manualError: null,
       path: null, lan: false, quic: false, pathDebug: null, saveLocation: null, canChangeFolder: false,
       isText: false, text: null, draftError: null,
+      // With the timer above, or a toast standing when the session ended stays
+      // for good: measured on a phone, "Press back again to cancel." outlived
+      // the cancel it announced and lay over Settings and About from then on.
+      toast: null,
       // Last key wins over the `error: null` _setState injects for any
       // update carrying a screen change, which is what lets this one reset
       // set an error while every other one still clears the stale one. The

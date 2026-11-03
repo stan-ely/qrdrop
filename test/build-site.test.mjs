@@ -110,6 +110,19 @@ test('the committed tauri.conf.json allows the Tauri IPC origin', async () => {
   assert.ok(connect.includes('ipc:'), 'connect-src is missing the ipc: scheme')
 })
 
+// The Android window's ground is --bg in each theme, and the files that say so
+// are committed under gen/ and written by the generator. A token changed
+// without regenerating would show only on a cold start, as a splash and a
+// navigation-bar strip of the old colour.
+test('the committed Android window colours are the tokens', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { ANDROID_COLOR_FILES } = await import('../scripts/generate-tauri-config.mjs')
+  assert.equal(ANDROID_COLOR_FILES.length, 2)
+  for (const { file, xml } of ANDROID_COLOR_FILES) {
+    assert.equal(await readFile(file, 'utf8'), xml, `${file} is stale: run node scripts/generate-tauri-config.mjs`)
+  }
+})
+
 test('the non-connect directives are the locked-down set', () => {
   const csp = buildCSP([])
   for (const directive of [

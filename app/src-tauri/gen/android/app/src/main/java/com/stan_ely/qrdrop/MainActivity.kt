@@ -1,6 +1,9 @@
 package com.stan_ely.qrdrop
 
 import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,8 +16,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import org.json.JSONObject
 import java.io.File
+import kotlin.math.max
 
 /**
  * The app shell, plus the writing end of the share-sheet handoff.
@@ -94,11 +100,27 @@ class MainActivity : TauriActivity() {
    * still closed. The list's index is the test because it is the one reading
    * that stayed right when canGoBack was wrong.
    *
-   * This is added after WryActivity's callback, so it runs first, and it stands
-   * aside at the bottom of the stack so that Back still leaves the app from Home.
+   * WryActivity's callback is not registered at all (handleBackNavigation), so
+   * this is the only one, and it stands aside at the bottom of the stack so that
+   * Back still leaves the app from Home.
+   *
+   * PREDICTIVE BACK. The system shows its back-to-home preview only when no
+   * callback is enabled as the gesture starts, so a callback that is always on,
+   * as both of these used to be, means the gesture never previews anything. So
+   * this one is on exactly when the page has an entry to go back to, which the
+   * page reports (watchHistory). Where it cannot, an old WebView, it stays on and
+   * Back behaves as it always did, without the preview.
    */
+  override val handleBackNavigation: Boolean = false
+
   override fun onWebViewCreate(webView: WebView) {
-    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+    // Transparent until the page paints its own --bg, so the window background
+    // below shows through rather than the WebView's white. Without it a phone in
+    // night mode went from the dark splash to a white flash to the page.
+    webView.setBackgroundColor(Color.TRANSPARENT)
+
+    val watched = watchHistory(webView)
+    val callback = object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
         if (webView.copyBackForwardList().currentIndex > 0) {
           webView.evaluateJavascript("history.back()", null)
@@ -106,22 +128,78 @@ class MainActivity : TauriActivity() {
         }
         isEnabled = false
         onBackPressedDispatcher.onBackPressed()
-        isEnabled = true
+        isEnabled = !watched
       }
-    })
+    }
+    backCallback = callback
+    onBackPressedDispatcher.addCallback(this, callback)
+  }
+
+  private var backCallback: OnBackPressedCallback? = null
+
+  /**
+   * Keeps the Back callback on exactly while the page has history, as far as
+   * the page can say so.
+   *
+   * app/src/main.js posts "push" after every pushState and "moved" on every
+   * popstate and hashchange. A push turns the callback on at once, because a
+   * push always leaves something to go back to, and a Back press in the moment
+   * before the list caught up must still be caught: that is the press that
+   * would otherwise leave the app mid-transfer. Everything is then read again
+   * from the list a beat later, since a push made by the page reaches the list
+   * on another channel from this message. Erring towards on costs only the
+   * preview. Erring towards off costs the session, so nothing here turns the
+   * callback off on the strength of a message alone.
+   *
+   * addWebMessageListener rather than addJavascriptInterface, because it is
+   * restricted to the app's own origin and carries a string and nothing else.
+   *
+   * @return whether the page can report, so the callback knows to stay on if not.
+   */
+  private fun watchHistory(webView: WebView): Boolean {
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return false
+    val read = Runnable {
+      backCallback?.isEnabled = webView.copyBackForwardList().currentIndex > 0
+    }
+    WebViewCompat.addWebMessageListener(
+      webView, "qrdropBack", setOf("http://tauri.localhost", "https://tauri.localhost"),
+    ) { _, message, _, _, _ ->
+      if (message.data == "push") backCallback?.isEnabled = true
+      else read.run()
+      webView.removeCallbacks(read)
+      webView.postDelayed(read, 150)
+    }
+    return true
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    clearNavigationBar()
+    keepClearOfBars()
     // A share to an app that was not running lands here.
     stashSharedFile(intent)
     stashLaunchAction(intent)
   }
 
   /**
-   * Keeps the page out from under the navigation bar, which CSS cannot do.
+   * The theme changed while the app was open.
+   *
+   * The manifest lists uiMode in configChanges, so a switch to or from night
+   * mode does not recreate this activity, and nothing decided in onCreate is
+   * decided again: the status bar's icons would stay dark on a page that had
+   * just gone dark, and the strip under the navigation bar would keep the old
+   * --bg. enableEdgeToEdge reads the night mode each time it is called, and the
+   * resources already answer for the new configuration here.
+   */
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    enableEdgeToEdge()
+    window.setBackgroundDrawable(ColorDrawable(getColor(R.color.qrdrop_bg)))
+  }
+
+  /**
+   * Keeps the page out from under the navigation bar and the keyboard, which
+   * CSS cannot do.
    *
    * Edge to edge, the WebView lays out behind the system bars, and it reports
    * the status bar to the page and not the navigation bar: measured on API 29
@@ -131,16 +209,25 @@ class MainActivity : TauriActivity() {
    * behind the Back button. Dropping enableEdgeToEdge() is not an alternative,
    * because Android 15 enforces it at this targetSdk.
    *
-   * The inset is consumed here so that a WebView that does report it cannot
-   * clear the same bar twice.
+   * The keyboard is the same problem. Edge to edge, adjustResize no longer
+   * shrinks the window for it, so the compose sheet's box and its Send button
+   * sat under the keyboard they were typed with. Padding the bottom by the
+   * taller of the two shrinks the WebView, and the page's dvh with it, so the
+   * sheet rises above the keys. The two are not added: the keyboard covers the
+   * navigation bar's area rather than sitting on top of it.
+   *
+   * Both insets are consumed so that a WebView that does report them cannot
+   * clear the same space twice.
    */
-  private fun clearNavigationBar() {
+  private fun keepClearOfBars() {
     val content = findViewById<View>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val bar = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-      view.setPadding(bar.left, 0, bar.right, bar.bottom)
+      val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+      view.setPadding(bar.left, 0, bar.right, max(bar.bottom, keyboard.bottom))
       WindowInsetsCompat.Builder(insets)
         .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
+        .setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE)
         .build()
     }
   }

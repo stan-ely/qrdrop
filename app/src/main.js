@@ -83,6 +83,53 @@ const shell = createShell({
   history,
 })
 
+// The webview's own context menu is a browser's: Back, Refresh, Save as, Print,
+// and in a debug build Inspect. A Refresh from it ends a transfer. So it is
+// offered only where it has something to say about the text under it: in a
+// field, which needs Paste, and over selectable text once something is selected,
+// which needs Copy. "Selectable" is read from the computed style rather than a
+// list here, so the CSS that opts text back in (app/styles.css and the
+// shell="app" rules in src/web/styles.js) is the one place that decides.
+//
+// On a touch screen the menu is not required to wait for a selection, because a
+// long press is how one starts there, and refusing its contextmenu refused the
+// selection with it.
+document.addEventListener('contextmenu', ev => {
+  const target = /** @type {Element} */ (ev.composedPath()[0])
+  if (!(target instanceof Element)) return ev.preventDefault()
+  if (target.matches('input:not([type="radio"]), textarea, [contenteditable]')) return
+  // WebKit, which is macOS and Linux here, may know only the prefixed name.
+  const style = getComputedStyle(target)
+  if ((style.userSelect || style.webkitUserSelect) === 'none') return ev.preventDefault()
+  if (/** @type {PointerEvent} */ (ev).pointerType === 'touch') return
+  // A selection inside the component is only visible from its own root in
+  // Chromium; document.getSelection() collapses it onto the host.
+  const root = /** @type {Document & { getSelection?: () => Selection | null }} */ (target.getRootNode())
+  const selection = root.getSelection?.() ?? document.getSelection()
+  if (!selection || selection.isCollapsed) ev.preventDefault()
+})
+
+// Android's Back callback is on only while there is history to go back to, so
+// that the system can preview leaving the app from Home (predictive back), and
+// this is how MainActivity.watchHistory hears that it changed. The object exists
+// only in the Android app's WebView. pushState is wrapped rather than each caller
+// telling Android itself, because the callers are shell.js and element.js, and
+// the component must not learn about a platform; a hash written by a deep link
+// moves the history too.
+const androidBack = /** @type {{ postMessage(message: string): void } | undefined} */ (
+  /** @type {any} */ (window).qrdropBack)
+if (androidBack) {
+  // window.history by name: `history` in this module is the History store.
+  const pushState = window.history.pushState
+  window.history.pushState = function (...args) {
+    pushState.apply(this, args)
+    androidBack.postMessage('push')
+  }
+  for (const type of ['popstate', 'hashchange']) {
+    window.addEventListener(type, () => androidBack.postMessage('moved'))
+  }
+}
+
 // What check-layout.mjs drives the pages through, as it drives the component
 // through _setState. A browser has no shell to ask for the rest of this.
 Object.assign(window, { qrdropShell: shell })

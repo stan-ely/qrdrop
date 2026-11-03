@@ -19,7 +19,31 @@ body {
   block-size: 100vh;
   block-size: 100dvh;
   overflow: hidden;
+  /* What says "a web page" under a finger or a mouse, and none of it is ours to
+   * keep: a long press selecting the label of the button it meant to press, a
+   * grey flash over whatever was tapped (each control has an :active state
+   * instead), the stretch past the end of a list, an I-beam over a heading.
+   * The text a person might want to copy opts back in below and in
+   * src/web/styles.js, and app/src/main.js offers the context menu only there. */
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
 }
+
+/* Text worth copying: the save folder, and the copy About shares with the
+ * site, which is the disclosure and is quoted. */
+#save-location,
+.about-copy {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.about-copy a { cursor: pointer; }
+
+/* A link or an image dragged out of a desktop app leaves a ghost of a web page
+ * behind the pointer. Nothing in the app is meant to be dragged out of it. */
+a, img, svg { -webkit-user-drag: none; }
 
 /* Every safe-area term in the app is here, so everything inside clears the
  * notch and the gesture bar with nothing to remember. The bar and the component
@@ -66,6 +90,14 @@ qr-drop:not(:defined) { display: block; }
   background: var(--bg);
 }
 #app-page[hidden] { display: none; }
+
+/* none rather than contain under a finger: contain stops the chaining and still
+ * draws the glow, or on Android 12+ the stretch, at each end. Not under a
+ * mouse, which draws neither, because Chromium gives up subpixel text on a
+ * scroller that sets it (src/web/styles.js has the measurement). */
+@media (pointer: coarse) {
+  body, #app-page { overscroll-behavior: none; }
+}
 
 .page-body {
   max-inline-size: 40rem;
@@ -117,10 +149,10 @@ qr-drop:not(:defined) { display: block; }
   border-radius: var(--r-full);
   background: none;
   color: var(--muted);
-  cursor: pointer;
   transition: color var(--dur-base), background var(--dur-base);
 }
 .icon-btn:hover { background: var(--surface-raised); color: var(--text); }
+.icon-btn:active { background: var(--surface-tonal); color: var(--text); }
 .icon-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 .icon {
@@ -150,24 +182,26 @@ qr-drop:not(:defined) { display: block; }
   font-weight: 600;
 }
 
+/* The row reaches var(--sp-2) past the column on each side and pads it back,
+ * so its text lines up with the headings while its focus ring and its press
+ * have room around the text. Flush, the ring sat on the first letter. */
 .row,
 .row-details > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  inline-size: 100%;
+  inline-size: calc(100% + 2 * var(--sp-2));
   min-block-size: 3rem;
-  padding: var(--sp-2) 0;
+  margin-inline: calc(var(--sp-2) * -1);
+  padding: var(--sp-2);
   border: none;
   background: none;
   color: var(--text);
   font: inherit;
   text-align: start;
   text-decoration: none;
-  cursor: pointer;
 }
-.row.static { cursor: default; }
 .row:focus-visible,
 .row-details > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-sm); }
 
@@ -189,14 +223,20 @@ qr-drop:not(:defined) { display: block; }
   color: var(--accent);
   font: inherit;
   font-weight: 600;
-  cursor: pointer;
 }
 .text-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* The press, now that the tap highlight is gone. */
+:is(a.row, button.row, label.row, .row-details > summary):active:not(:disabled),
+.text-btn:active {
+  border-radius: var(--r-sm);
+  background: var(--surface-raised);
+}
 
 .text-btn.quiet { color: var(--text); font-weight: 400; }
 .text-btn.danger { color: var(--bad); }
 
-.row:disabled { color: var(--muted); cursor: default; }
+.row:disabled { color: var(--muted); }
 
 /* ---- the History switch, and the question under it ---- */
 
@@ -214,7 +254,6 @@ qr-drop:not(:defined) { display: block; }
   margin: 0;
   border-radius: var(--r-full);
   background: var(--line-strong);
-  cursor: pointer;
   transition: background var(--dur-base);
 }
 .switch::before {

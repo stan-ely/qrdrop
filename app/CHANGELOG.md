@@ -13,6 +13,23 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**The app behaves less like a web page.** Pressing or long-pressing a button no longer
+selects its label or flashes grey, and the pointer is an arrow, not a hand or a text
+cursor. The browser's right-click menu, with Back, Refresh and Print, is gone; text boxes
+still have Cut, Copy and Paste, and so does text you can select, such as the pairing code,
+the verification digest, a received message and where a file was saved. On Windows, F5,
+Ctrl+R, Ctrl+P and Ctrl+F no longer reload, print or search the window, so a stray key can
+no longer end a transfer. **Escape** closes Settings, About and History.
+
+**A wider window on a computer.** The app now opens at 900 by 640, with the screen's
+picture beside its words, and can be made as narrow as a phone.
+
+**On Android, the keyboard no longer covers the message box.** Send text's box and its
+Send button now sit above the keyboard. In dark mode the start-up screen and the strip
+under the navigation buttons are dark instead of white, and switching dark mode on or off
+with the app open now updates the status bar too. On Android 13 and later, the back
+gesture from the first screen previews going back to the home screen.
+
 **Pressing Back twice during a transfer now cancels it, as the message says.** Pressed
 quickly, the second press could close the app instead.
 
