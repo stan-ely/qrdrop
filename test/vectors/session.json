@@ -1,5 +1,5 @@
 {
-  "about": "P-256 ECDH, raw uncompressed public keys (65 bytes; base64url without padding on the wire). shared = the 32-byte X coordinate; transcript = SHA-256(lo || hi) of the two public keys sorted bytewise; each value is HKDF-SHA-256(ikm = shared, salt = the QR secret, info = UTF-8(label) || transcript) for labels host->guest and guest->host (32 bytes, AES-256-GCM) and sas (4 bytes). The host (the QR side) sends with host_to_guest. SAS symbol i is sas_table[sas_bytes[i] & 0x3f].",
+  "about": "P-256 ECDH, raw uncompressed public keys (65 bytes; base64url without padding on the wire). shared = the 32-byte X coordinate; transcript = SHA-256(lo || hi) of the two public keys sorted bytewise; each value is HKDF-SHA-256(ikm = shared, salt = the QR secret, info = UTF-8(label) || transcript) for labels host->guest and guest->host (32 bytes, AES-256-GCM), sas (4 bytes) and pick (16 bytes, sent base64url on the pick action by the host). The host (the QR side) sends with host_to_guest. SAS symbol i is sas_table[sas_bytes[i] & 0x3f].",
   "cases": [
     {
       "secret": "73815823edcb7f2c144c653094497b2ecb384034c866ff431ea1396624e38dff",
@@ -14,6 +14,8 @@
       "host_to_guest": "14f04ad73009bec294ec4b0c2931b59969d16b763a44bf0fd7369dbf19c55b48",
       "guest_to_host": "b887121f5947ce505005a89db61c05fa160e5e35d1195a54532bf29e9f4f430a",
       "sas_bytes": "0843ce0f",
+      "pick": "36c643ba95c6b60ffef4933ff35a8f08",
+      "pick_b64url": "NsZDupXGtg_-9JM_81qPCA",
       "sas": "🧊 🐬 🌴 👑",
       "sas_words": [
         "ice",
@@ -36,6 +38,8 @@
       "host_to_guest": "bb6253926481da6a1599bc1393ac068ef37e605aafb0add8e910cd8227bb8243",
       "guest_to_host": "38fd3c07f305a2b9471f5cb58f07f5122a4feed9668121ef8abee5409ee32841",
       "sas_bytes": "c4650a8e",
+      "pick": "2c64f1613d31ee49e484bc0ed3ebab86",
+      "pick_b64url": "LGTxYT0x7knkhLwO0-urhg",
       "sas": "🐘 💀 🍋 🌴",
       "sas_words": [
         "elephant",

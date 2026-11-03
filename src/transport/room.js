@@ -928,6 +928,20 @@ export async function openRoom({
 
   const { session, peerId, room, frameAction, setFrameHandler, deliver } = winner
 
+  // The host says which network it kept, because nothing else does. Each side
+  // keeps its own first winner, so when two networks finish within a few
+  // milliseconds the host can keep one and the guest the other: two SASes
+  // that disagree with no attacker anywhere, and frames sent into a room the
+  // other side has left (docs/notes/pairing-race.md). A guest that has a pick
+  // to follow can keep every network that finishes until one arrives. Sent
+  // here, before the caller shows the SAS, and never by a guest, so the two
+  // ends cannot pick at each other. An older guest has no handler for it and
+  // Trystero keeps it unread, which is today's behaviour; a send that fails is
+  // the same as no pick, so it is not awaited and not an error.
+  if (role === 'host') {
+    room.makeAction('pick').send(session.pick, { target: peerId }).catch(() => {})
+  }
+
   /**
    * Memoised: classifyPath polls for up to three seconds, and there are now
    * several callers (the cap check, the badge, the metered warning) where there

@@ -21,6 +21,11 @@ use crate::transfer::Session;
 /// A raw uncompressed P-256 point: `0x04 || X || Y`.
 pub const PUBLIC_KEY_BYTES: usize = 65;
 
+/// [`Pairing::pick`] before encoding. 128 bits, because unlike the SAS it is
+/// compared by a machine, and a value an attacker could guess would let them
+/// steer a guest without holding the session.
+pub const PICK_BYTES: usize = 16;
+
 /// Which end of the pairing this is. The host made the QR code and sends with
 /// `host->guest`; the guest scanned it and sends with `guest->host`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +131,7 @@ impl Keypair {
             send,
             recv,
             sas: Sas(values.sas),
+            pick: values.pick,
         })
     }
 
@@ -159,10 +165,11 @@ fn transcript(a: &[u8], b: &[u8]) -> [u8; 32] {
         .into()
 }
 
-struct Derived {
-    host_to_guest: [u8; 32],
-    guest_to_host: [u8; 32],
-    sas: [u8; 4],
+pub(crate) struct Derived {
+    pub(crate) host_to_guest: [u8; 32],
+    pub(crate) guest_to_host: [u8; 32],
+    pub(crate) sas: [u8; 4],
+    pub(crate) pick: [u8; PICK_BYTES],
 }
 
 impl Derived {
@@ -176,10 +183,12 @@ impl Derived {
             host_to_guest: [0; 32],
             guest_to_host: [0; 32],
             sas: [0; 4],
+            pick: [0; PICK_BYTES],
         };
         expand("host->guest", &mut d.host_to_guest);
         expand("guest->host", &mut d.guest_to_host);
         expand("sas", &mut d.sas);
+        expand("pick", &mut d.pick);
         d
     }
 }
@@ -196,6 +205,7 @@ pub struct Pairing {
     send: FrameKey,
     recv: FrameKey,
     sas: Sas,
+    pick: [u8; PICK_BYTES],
 }
 
 impl fmt::Debug for Pairing {
@@ -209,6 +219,17 @@ impl fmt::Debug for Pairing {
 impl Pairing {
     pub fn sas(&self) -> &Sas {
         &self.sas
+    }
+
+    /// The host's word for "this is the network I kept", as base64url: what
+    /// it sends on the `pick` action of the room it paired in, before either
+    /// side shows its SAS (docs/notes/pairing-race.md). Both sides derive it,
+    /// and only a holder of this session can, so a guest comparing it with
+    /// its own follows the host and never a stranger holding the code. It is
+    /// a key-confirmation value under its own HKDF label, so it says nothing
+    /// about the frame keys or the SAS.
+    pub fn pick(&self) -> String {
+        to_base64url(&self.pick)
     }
 
     /// The person confirmed the SAS. Never call this on their behalf: `--yes`
@@ -310,6 +331,7 @@ pub(crate) mod tests {
     fn both_peers_derive_matching_directional_keys_and_the_same_sas() {
         let (host, guest) = pair(&Secret::generate());
         assert_eq!(host.sas(), guest.sas());
+        assert_eq!(host.pick(), guest.pick());
         assert!(crosses(&host.send, &guest.recv));
         assert!(crosses(&guest.send, &host.recv));
         // The two directions are distinct keys, so they never share a nonce space.
@@ -335,6 +357,7 @@ pub(crate) mod tests {
         let (a, _) = pair(&secret);
         let (_, b) = pair(&secret);
         assert!(!crosses(&a.send, &b.recv));
+        assert_ne!(a.pick(), b.pick());
     }
 
     #[test]
@@ -377,10 +400,9 @@ pub(crate) mod tests {
         host_private: &[u8],
         guest_public: &[u8],
         secret: &Secret,
-    ) -> ([u8; 32], [u8; 32], [u8; 32], [u8; 4]) {
+    ) -> ([u8; 32], Derived) {
         let host = Keypair::from_private(host_private);
         let t = transcript(host.public_key(), guest_public);
-        let d = host.derive(guest_public, secret).unwrap();
-        (t, d.host_to_guest, d.guest_to_host, d.sas)
+        (t, host.derive(guest_public, secret).unwrap())
     }
 }

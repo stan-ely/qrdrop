@@ -116,15 +116,16 @@ fn session() {
         );
         assert_eq!(hex(shared.raw_secret_bytes()), c["shared"]);
 
-        let (transcript, h2g, g2h, sas) = derived(
+        let (transcript, d) = derived(
             &unhex(c["host_private"].as_str().unwrap()),
             guest.public_key(),
             &secret,
         );
         assert_eq!(hex(&transcript), c["transcript"]);
-        assert_eq!(hex(&h2g), c["host_to_guest"]);
-        assert_eq!(hex(&g2h), c["guest_to_host"]);
-        assert_eq!(hex(&sas), c["sas_bytes"]);
+        assert_eq!(hex(&d.host_to_guest), c["host_to_guest"]);
+        assert_eq!(hex(&d.guest_to_host), c["guest_to_host"]);
+        assert_eq!(hex(&d.sas), c["sas_bytes"]);
+        assert_eq!(hex(&d.pick), c["pick"]);
 
         // And through the public path: both sides see the vector's SAS.
         let gp = guest.public_key_b64url();
@@ -133,6 +134,7 @@ fn session() {
         let g = guest.establish_b64url(&hp, &secret, Role::Guest).unwrap();
         for p in [&h, &g] {
             assert_eq!(p.sas().emoji(), c["sas"]);
+            assert_eq!(p.pick(), c["pick_b64url"]);
             assert_eq!(p.sas().cli_line(), c["cli_line"]);
             assert_eq!(Value::from(p.sas().words().to_vec()), c["sas_words"]);
         }

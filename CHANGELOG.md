@@ -3,6 +3,15 @@
 Notable changes, newest first. Dates are the release date; the commit history
 is the finer-grained record.
 
+## Unreleased
+
+**Getting ready to fix a false code mismatch.** Pairing looks for the other device on
+two networks at once, and each device used to keep whichever answered first for it. Very
+occasionally the two devices kept different ones, and then the four symbols did not match
+even though nothing was wrong. The device showing the code now tells the other which
+network it kept. Nothing acts on that yet: a later version will follow it, and this
+release makes sure the devices people already have are telling it.
+
 ## 0.7.0 — 2026-11-03
 
 **Ready for codes that work without the internet.** A pairing code may now carry a

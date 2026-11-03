@@ -9,8 +9,9 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use qrdrop_protocol::{LanListen, NetworkPath, Role, Secret};
+use qrdrop_protocol::{Keypair, LanListen, NetworkPath, Role, Secret};
 use qrdrop_session::io::{FileSink, FileSource};
+use qrdrop_session::pair::{KEY_ACTION, PICK_ACTION};
 use qrdrop_session::{
     LanConfig, Network, OpenConfig, OpenError, Paired, SessionEvent, SessionEvents, SessionHandle,
     SessionOptions, open_room,
@@ -294,6 +295,65 @@ async fn both_sides_of_a_raced_pairing_keep_the_same_network() {
             );
         }
     }
+}
+
+/// The host's half of the fix for the race above: once it has kept a network
+/// it sends a pick there, and only there, carrying a value the guest derives
+/// from its own session. The guest here is a bare tryst room doing the key
+/// exchange by hand, because a `Paired` drops every action but frames.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_host_says_which_network_it_kept() {
+    let url = format!("ws://{}", standin::start().await);
+    let secret = Secret::generate();
+    let host = open_room(config(&secret, Role::Host, &url));
+    let guest = async {
+        let mut jc = JoinConfig::new(
+            Strategy::Nostr,
+            "qrdrop",
+            &secret.topic(),
+            &secret.password(),
+            &[&url],
+        );
+        jc.bind = Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let mut room = join(jc).await.unwrap();
+        let mut keypair = Some(Keypair::generate());
+        let public = keypair.as_ref().unwrap().public_key_b64url();
+        let mut pairing = None;
+        timeout(WAIT, async {
+            loop {
+                match room.next_event().await.expect("the room closed") {
+                    RoomEvent::Joined(peer) => {
+                        let _ = room
+                            .send(KEY_ACTION, Payload::Text(public.clone()), None, Some(&peer))
+                            .await;
+                    }
+                    RoomEvent::Message { message, .. } if message.action == KEY_ACTION => {
+                        let (Some(kp), Payload::Text(theirs)) = (keypair.take(), message.payload)
+                        else {
+                            continue;
+                        };
+                        pairing = Some(kp.establish_b64url(&theirs, &secret, Role::Guest).unwrap());
+                    }
+                    RoomEvent::Message { message, .. } if message.action == PICK_ACTION => {
+                        let Payload::Text(pick) = message.payload else {
+                            panic!("a pick that is not text");
+                        };
+                        let ours = pairing.as_ref().expect("a pick before the key exchange");
+                        return (pick, ours.pick(), *ours.sas(), room);
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("no pick arrived")
+    };
+    let (h, (pick, ours, sas, room)) = tokio::join!(host, guest);
+    let h = h.unwrap();
+    assert_eq!(pick, ours);
+    assert_eq!(h.sas(), &sas);
+    h.reject().await;
+    room.leave().await;
 }
 
 #[tokio::test]

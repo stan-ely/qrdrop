@@ -19,7 +19,16 @@
  * or deanonymise signalling, but it could not read a single file byte.
  */
 
+import { toBase64url } from './secret.js'
+
 const enc = new TextEncoder()
+
+/**
+ * The pick's length before encoding: 128 bits, because unlike the SAS it is
+ * compared by a machine, and a value an attacker could guess would let them
+ * steer a guest without holding the session.
+ */
+export const PICK_BYTES = 16
 
 /**
  * @returns {Promise<CryptoKeyPair>}
@@ -99,6 +108,7 @@ function compare(a, b) {
  * @param {string} label
  * @param {Bytes} transcript
  * @param {'bits'} usage
+ * @param {number} bytes
  * @returns {Promise<Bytes>}
  */
 /**
@@ -116,16 +126,17 @@ function compare(a, b) {
  * @param {string} label
  * @param {Bytes} transcript
  * @param {'bits' | 'key'} usage
+ * @param {number} [bytes] How many, for 'bits'.
  * @returns {Promise<Bytes | CryptoKey>}
  */
-async function derive(sharedBits, secret, label, transcript, usage) {
+async function derive(sharedBits, secret, label, transcript, usage, bytes = 0) {
   const ikm = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveBits', 'deriveKey'])
   const info = new Uint8Array(enc.encode(label).length + transcript.length)
   info.set(enc.encode(label), 0)
   info.set(transcript, enc.encode(label).length)
   const params = { name: 'HKDF', hash: 'SHA-256', salt: secret, info }
   return usage === 'bits'
-    ? new Uint8Array(await crypto.subtle.deriveBits(params, ikm, 32))
+    ? new Uint8Array(await crypto.subtle.deriveBits(params, ikm, bytes * 8))
     : crypto.subtle.deriveKey(params, ikm, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
 }
 
@@ -160,14 +171,21 @@ export async function establishSession({ keypair, peerPublicRaw, secret, role })
 
   const hostKey = await derive(shared, secret, 'host->guest', transcript, 'key')
   const guestKey = await derive(shared, secret, 'guest->host', transcript, 'key')
-  const sasBytes = await derive(shared, secret, 'sas', transcript, 'bits')
+  const sasBytes = await derive(shared, secret, 'sas', transcript, 'bits', 4)
   const { sas, sasWords } = renderSAS(sasBytes)
+  // The host's word for "this is the network I kept", sent on the room it
+  // paired in before either side shows its SAS (docs/notes/pairing-race.md).
+  // Only a holder of this session can derive it, so a guest comparing it with
+  // its own follows the host and never a stranger holding the code; under its
+  // own label, it says nothing about the frame keys or the SAS.
+  const pick = toBase64url(await derive(shared, secret, 'pick', transcript, 'bits', PICK_BYTES))
 
   return {
     sendKey: role === 'host' ? hostKey : guestKey,
     recvKey: role === 'host' ? guestKey : hostKey,
     sas,
     sasWords,
+    pick,
   }
 }
 

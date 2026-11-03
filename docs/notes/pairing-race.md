@@ -11,7 +11,7 @@ was found.
 |---|---|---|
 | Stopgap: session tests on one network | done | `config` in `crates/qrdrop-session/tests/session.rs` pins Nostr; `config_race` keeps one test on both |
 | Reproduction | done | `both_sides_of_a_raced_pairing_keep_the_same_network`, ignored; fails in its first round |
-| 1. Hosts send a pick | not started | harmless to every older guest |
+| 1. Hosts send a pick | built, awaiting release | `HKDF(ECDH, salt=secret, "pick")`, 16 bytes, base64url text on the `pick` action to the paired peer; `Pairing::pick` / `session.pick`, in `test/vectors/session.json`. New senders passed interop against the 0.7.0 Node and Rust receivers, all four pairings, over the public relays |
 | 2. Guests follow the pick | not started | a release after 1, for the reason under **Compatibility** |
 | 3. Unpin the tests, docs | not started | |
 

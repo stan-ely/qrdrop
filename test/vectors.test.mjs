@@ -70,6 +70,8 @@ test('the re-derived session keys are the keys establishSession really uses', as
     assert.equal(hostSession.sas, c.sas)
     assert.deepEqual(hostSession.sasWords, c.sas_words)
     assert.equal(guestSession.sas, c.sas)
+    assert.equal(hostSession.pick, c.pick_b64url)
+    assert.equal(guestSession.pick, c.pick_b64url)
 
     // The real keys are non-extractable, so the only way to compare them with
     // the vector's bytes is to make both seal the same frame. AES-GCM with a

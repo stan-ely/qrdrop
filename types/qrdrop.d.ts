@@ -126,6 +126,12 @@ interface SessionKeys {
    * people read the SAS aloud over a phone call instead of describing emoji.
    */
   sasWords: string[]
+  /**
+   * base64url of HKDF(ECDH, salt=secret, "pick"), 16 bytes: what the host
+   * sends on the `pick` action of the room it kept, so a guest that paired on
+   * more than one network can follow it. Equal on both sides of one session.
+   */
+  pick: string
 }
 
 /**

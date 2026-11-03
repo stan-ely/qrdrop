@@ -29,6 +29,17 @@ The QR carries 32 bytes of CSPRNG output. Everything else derives from it:
 | `HKDF(ECDH, salt=secret, "host->guest")` | file bytes, sender to receiver |
 | `HKDF(ECDH, salt=secret, "guest->host")` | file bytes, the other way |
 | `HKDF(ECDH, salt=secret, "sas")` | the four emoji shown on both screens |
+| `HKDF(ECDH, salt=secret, "pick")` | 16 bytes the host sends on the `pick` action, saying which network it kept |
+
+Pairing joins every signalling network at once, and each side keeps the first
+one to finish its key exchange. Nothing used to make the two sides agree, so
+when two networks finished within a few milliseconds the host could keep one
+and the guest the other, and they would show SASes that disagree with no
+attacker anywhere. The host now sends the pick on the room it kept, before
+either side shows its SAS. Only a holder of that session can derive it, so a
+guest can follow it without being steered by a stranger holding the code.
+Guests do not act on it yet; [the design note](notes/pairing-race.md) has the
+order this ships in and why.
 
 The room ID is derived rather than being the secret itself. Using the secret as
 the room name is the obvious shortcut, works perfectly in testing, and silently

@@ -45,6 +45,8 @@ pub const EARLY_FRAME_LIMIT: usize = 16;
 pub const KEY_ACTION: &str = "ecdh";
 /// The action every sealed frame travels on.
 pub const FRAME_ACTION: &str = "frame";
+/// The action the host's [`qrdrop_protocol::Pairing::pick`] travels on.
+pub const PICK_ACTION: &str = "pick";
 
 /// A sink for the status lines [`open_room`] reports.
 pub type StatusFn = Arc<dyn Fn(&str) + Send + Sync>;
@@ -297,6 +299,25 @@ pub async fn open_room(cfg: OpenConfig) -> Result<Paired, OpenError> {
         });
     };
     cfg.status(&format!("Paired over {}", strategy_name(w.network)));
+    // The host says which network it kept, because nothing else does: each
+    // side keeps its own first winner, so when two finish within a few
+    // milliseconds of each other the sides can keep different ones and show
+    // SASes that disagree with no attacker anywhere (docs/notes/pairing-race.md).
+    // Sent before the caller shows the SAS, and never by a guest, so the two
+    // ends cannot pick at each other. An older guest drops an action it does
+    // not know, which is today's behaviour, so a send that fails is the same
+    // as no pick and not an error.
+    if cfg.role == Role::Host {
+        let _ = w
+            .room
+            .send(
+                PICK_ACTION,
+                Payload::Text(w.pairing.pick()),
+                None,
+                Some(&w.peer),
+            )
+            .await;
+    }
     Ok(Paired {
         pairing: w.pairing,
         strategy: w.network,

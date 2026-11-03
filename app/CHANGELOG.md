@@ -11,6 +11,15 @@ with the version and the date at the moment the version is decided, and stops
 if there is no such heading — the notes are written before the tag, never
 generated from commit subjects afterwards.
 
+## Unreleased
+
+**Getting ready to fix a false code mismatch.** Pairing looks for the other device on
+two networks at once, and each device used to keep whichever answered first for it. Very
+occasionally the two devices kept different ones, and then the four symbols did not match
+even though nothing was wrong. The device showing the code now tells the other which
+network it kept. Nothing acts on that yet: a later version will follow it, and this
+release makes sure the devices people already have are telling it.
+
 ## 1.4.0 -- 2026-11-03
 
 1.3.0 was tagged but never released, because its Android build failed, so its changes

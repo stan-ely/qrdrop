@@ -38,7 +38,9 @@ pub use frame::{
     CHUNK_SIZE, CONTROL_SEQ, Expect, FrameError, FrameKey, HEADER_BYTES, Header, MAX_FRAME_BYTES,
     MIN_FRAME_BYTES, Opened, TAG_BYTES, TYPE_CHUNK, TYPE_CONTROL, open, seal,
 };
-pub use pairing::{BadPublicKey, Keypair, PUBLIC_KEY_BYTES, Pairing, Role, SAS_TABLE, Sas};
+pub use pairing::{
+    BadPublicKey, Keypair, PICK_BYTES, PUBLIC_KEY_BYTES, Pairing, Role, SAS_TABLE, Sas,
+};
 pub use transfer::{
     ChunkRequest, Error, Event, FileOffer, PAUSE_AT, PAUSE_TIMEOUT, RESUME_AT, Session, UsageError,
     chunk_count,

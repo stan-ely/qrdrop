@@ -111,6 +111,27 @@ test('a second pairing on the same secret cannot open the first one', async () =
   )
 })
 
+test('the host says which network it kept, with a pick only that session can make', async () => {
+  // Each side keeps its own first winner, so two networks finishing together
+  // can leave the sides on different ones (docs/notes/pairing-race.md). The
+  // pick is what a guest will follow; this pins that the host sends exactly
+  // one, the guest none, and that it is the value the guest derives itself.
+  const secret = generateSecret()
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  const { strategy, sent } = fakeNetwork()
+  const { host, guest } = await pair(strategy, { topic, password, secret })
+  try {
+    const picks = sent.filter(s => s.namespace === 'pick')
+    assert.equal(picks.length, 1, 'the host picks once and the guest never does')
+    assert.equal(picks[0].data, guest.session.pick)
+    assert.equal(host.session.pick, guest.session.pick)
+    assert.equal(typeof picks[0].target, 'string', 'sent to the paired peer, not the room')
+  } finally {
+    host.close()
+    guest.close()
+  }
+})
+
 test('close() settles only once the peer has been told', async () => {
   // Trystero's leave() sends a leave message and waits 99 ms for it to go out.
   // close() used to drop that promise, and the CLI's Ctrl-C handler exited

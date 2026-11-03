@@ -244,6 +244,7 @@ async function rederive(privateKey, myRaw, peerRaw, secret) {
     hostToGuest: await hkdf('host->guest', 32),
     guestToHost: await hkdf('guest->host', 32),
     sasBytes: await hkdf('sas', 4),
+    pick: await hkdf('pick', 16),
   }
 }
 
@@ -277,6 +278,8 @@ async function sessionVectors() {
     const keys = await rederive(host.keypair.privateKey, host.raw, guest.raw, secret)
     const rendered = renderSas(keys.sasBytes)
     if (rendered.sas !== hostSession.sas) throw new Error('re-derived SAS does not match establishSession')
+    if (hostSession.pick !== guestSession.pick) throw new Error('the two sides disagree on the pick')
+    if (toBase64url(keys.pick) !== hostSession.pick) throw new Error('re-derived pick does not match establishSession')
 
     cases.push({
       secret: hex(secret),
@@ -291,6 +294,8 @@ async function sessionVectors() {
       host_to_guest: hex(keys.hostToGuest),
       guest_to_host: hex(keys.guestToHost),
       sas_bytes: hex(keys.sasBytes),
+      pick: hex(keys.pick),
+      pick_b64url: hostSession.pick,
       ...rendered,
     })
     if (n === 1) { first = hostSession; firstKeys = keys }
@@ -302,7 +307,7 @@ async function sessionVectors() {
 
   return {
     vectors: {
-      about: 'P-256 ECDH, raw uncompressed public keys (65 bytes; base64url without padding on the wire). shared = the 32-byte X coordinate; transcript = SHA-256(lo || hi) of the two public keys sorted bytewise; each value is HKDF-SHA-256(ikm = shared, salt = the QR secret, info = UTF-8(label) || transcript) for labels host->guest and guest->host (32 bytes, AES-256-GCM) and sas (4 bytes). The host (the QR side) sends with host_to_guest. SAS symbol i is sas_table[sas_bytes[i] & 0x3f].',
+      about: 'P-256 ECDH, raw uncompressed public keys (65 bytes; base64url without padding on the wire). shared = the 32-byte X coordinate; transcript = SHA-256(lo || hi) of the two public keys sorted bytewise; each value is HKDF-SHA-256(ikm = shared, salt = the QR secret, info = UTF-8(label) || transcript) for labels host->guest and guest->host (32 bytes, AES-256-GCM), sas (4 bytes) and pick (16 bytes, sent base64url on the pick action by the host). The host (the QR side) sends with host_to_guest. SAS symbol i is sas_table[sas_bytes[i] & 0x3f].',
       cases,
       render,
       sas_table: SAS_EMOJI,
