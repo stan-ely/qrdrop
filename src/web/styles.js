@@ -105,9 +105,10 @@ export function buttonCSS() {
 .btn.ghost {
   border-color: transparent;
   background: none;
-  color: var(--muted);
+  color: var(--text);
+  font-weight: 500;
 }
-.btn.ghost:hover { background: var(--surface-raised); color: var(--text); }
+.btn.ghost:hover { background: var(--surface-tonal); color: var(--text); }
 `
 }
 
@@ -222,8 +223,12 @@ ${tokensCSS(':host')}
  * canvas survives -- would show a full step rail for a mode that has no steps. */
 .rail[hidden] { display: none; }
 
-.rail-seg.is-active { background: var(--accent); }
-.rail-seg.is-done { background: var(--ok); }
+/* Accent up to and including the current step, --line for the steps to come:
+ * how far along, which is one of the two things the accent means. Done steps
+ * used to be --ok beside an --accent current one, and green and terracotta side
+ * by side on a card read as a status light -- a green that meant nothing yet,
+ * on the screen before the one where green means the file arrived. */
+.rail-seg.is-active, .rail-seg.is-done { background: var(--accent); }
 
 /*
  * The live screen. Exactly one .card is ever laid out -- screen() renders all
@@ -580,9 +585,10 @@ ${sheetCSS()}
 
 .sheet-title {
   margin: 0;
-  font-size: var(--fs-1);
-  line-height: var(--lh-tight);
-  font-weight: 600;
+  font-size: var(--fs-2);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.012em;
 }
 /* No ring, for the reason already written above h2:focus -- a rounded box
  * around a line of text is the universal look of an editable field, and users
@@ -602,7 +608,7 @@ ${sheetCSS()}
   flex-direction: column;
   gap: var(--sp-3);
 }
-.sheet-body p { margin: 0; color: var(--muted); font-size: var(--fs--1); }
+.sheet-body p { margin: 0; color: var(--muted); font-size: var(--fs-note); }
 .sheet-body .filename { color: var(--text); font-size: var(--fs-0); }
 
 /* The raw failure text, for a bug report. Closed by default and deliberately
@@ -612,7 +618,7 @@ ${sheetCSS()}
 .error-detail > summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: var(--fs--1);
+  font-size: var(--fs-note);
 }
 .error-detail > p {
   margin-block-start: var(--sp-2);
@@ -681,11 +687,20 @@ ${sheetCSS()}
   to { opacity: 1; transform: none; }
 }
 
+/*
+ * The screen's question, and the first thing read on it. 22px at 700 and
+ * tightened, where it was 18px at 600: at that size it was the weakest line on
+ * most screens, below a 16px filename at 600 and beside 30px emoji, so the
+ * screen's hierarchy started from its second item. It holds this on a phone
+ * too -- see the 26rem block for the rule it replaces there.
+ */
 h2 {
   margin: 0;
-  font-size: var(--fs-1);
-  line-height: var(--lh-tight);
-  font-weight: 600;
+  font-size: var(--fs-2);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
 }
 
 /* The screen's <h2> takes focus on every transition (see element.js's
@@ -703,9 +718,21 @@ h2 {
 h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
 
 /* ---- buttons ---- */
+/*
+ * Three weights, and every button in the component is one of them: .primary,
+ * filled in the accent, one per screen; plain .btn, a tonal fill for a second
+ * choice that is still a real choice; and .ghost, the way out. .danger is the
+ * one outlined exception, on the verify screen.
+ *
+ * The plain .btn was an outline in --line-strong on --surface, and with the
+ * ghost a muted label on nothing, the screen had one button and two pieces of
+ * text: "Take a photo" and "No network?" were read as captions. A fill is
+ * what makes the secondary read as pressable without competing with the
+ * primary, which is the one thing still filled in colour.
+ */
 .btn {
   font: inherit;
-  font-weight: 500;
+  font-weight: 600;
   font-size: var(--fs-0);
   padding: var(--sp-3) var(--sp-4);
   /* Belt and braces with the padding above, which already computes to ~50px
@@ -714,8 +741,8 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
    * which is the opposite of what they asked for. */
   min-block-size: var(--tap);
   border-radius: var(--r-sm);
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
+  border: 1px solid transparent;
+  background: var(--surface-tonal);
   color: var(--text);
   cursor: pointer;
   /* box-shadow joins the list so .primary's rest/hover/press elevation below
@@ -724,7 +751,7 @@ h2:focus, h2:focus-visible { outline: none; box-shadow: none; }
     box-shadow var(--dur-base), transform var(--dur-fast);
 }
 
-.btn:hover { border-color: var(--muted); background: var(--surface-raised); }
+.btn:hover { background: color-mix(in srgb, var(--surface-tonal), var(--text) 7%); }
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .btn:disabled { opacity: 0.5; cursor: default; transform: none; }
@@ -786,19 +813,12 @@ ${buttonCSS()}
  * choose screen. Those buttons moved into the info sheet several commits ago
  * and the wrapper went with them; the rule stayed, matching nothing. */
 .choices.secondary { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
-/* Bordered, unlike every other .ghost in the component. Ghost means "the way
- * out" elsewhere -- Cancel, Decline -- and a borderless control is legible
- * enough when the user already knows they want it. These two are the opposite:
- * an entry point into a mode nobody is looking for yet, and without an edge
- * they read as centred body text rather than as something clickable, which is
- * how they first rendered. Subordinate by size and colour, not by being
- * invisible. */
-.choices.secondary .btn {
-  flex: 1 1 12rem;
-  font-size: var(--fs--1);
-  border-color: var(--line);
-}
-.choices.secondary .btn:hover { border-color: var(--line-strong); }
+/* The two beam entries in the No network? sheet. They were bordered ghosts,
+ * the one exception to ghost meaning "the way out": entry points into a mode
+ * nobody is looking for yet, which without an edge read as centred body text.
+ * They are plain tonal buttons now, which is what that exception was reaching
+ * for, and the sheet's Close is the ghost. */
+.choices.secondary .btn { flex: 1 1 12rem; }
 
 /* ---- callout boxes: warn and danger ----
  *
@@ -823,7 +843,7 @@ ${buttonCSS()}
   padding: var(--sp-3) var(--sp-4);
   border-radius: var(--r-sm);
   font-weight: 500;
-  font-size: var(--fs--1);
+  font-size: var(--fs-note);
 }
 
 .callout.warn {
@@ -1056,7 +1076,7 @@ ${buttonCSS()}
 .beam-hint {
   flex: none;
   color: var(--muted);
-  font-size: var(--fs--1);
+  font-size: var(--fs-note);
   text-align: center;
 }
 
@@ -1516,8 +1536,8 @@ ${buttonCSS()}
 }
 
 
-.status { color: var(--muted); font-size: var(--fs--1); }
-.note { color: var(--muted); font-size: var(--fs--1); }
+.status { color: var(--muted); font-size: var(--fs-note); }
+.note { color: var(--muted); font-size: var(--fs-note); }
 .filename { font-weight: 600; word-break: break-all; }
 
 /* The only <summary> left in the component is the done screen's verification
@@ -1546,16 +1566,20 @@ summary {
 
 .manual-label {
   color: var(--muted);
-  font-size: var(--fs--1);
+  font-size: var(--fs-note);
   font-weight: 500;
 }
 
 #manual-form { display: flex; gap: var(--sp-2); }
 
+/* --fs-0, where these were --fs--1. A field is where a person reads what they
+ * typed back character by character -- a pasted code, a message -- and it is
+ * the one place 13px was smaller than the text it was about. On iOS a field
+ * under 16px also makes Safari zoom the page on focus. */
 input[type="text"], .text-input {
   flex: 1;
   font: inherit;
-  font-size: var(--fs--1);
+  font-size: var(--fs-0);
   padding: var(--sp-2) var(--sp-3);
   /* ~36px before this, and it is the fallback every user without a working
    * camera has to hit. */
@@ -1777,7 +1801,7 @@ input[type="text"]:focus-visible, .text-input:focus-visible { outline: none; box
    * screen was the name of the file, and the sentence saying what to do with
    * it was not.
    *
-   * The heading keeps --fs-1. The pixels it costs come from the tiles above
+   * The heading keeps its size. The pixels it costs come from the tiles above
    * and from the copy column's line height instead, neither of which is
    * carrying the screen's meaning.
    */

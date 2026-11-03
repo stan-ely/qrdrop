@@ -943,9 +943,9 @@ function choose(state, dispatch) {
         // the sheet, so they have no network. What the buttons have to say is
         // which of the two ends of a beam this device is.
         h('div', { class: 'choices secondary' }, [
-          h('button', { id: 'btn-beam', class: 'btn ghost', onclick: () => dispatch('beam:pick') },
+          h('button', { id: 'btn-beam', class: 'btn', onclick: () => dispatch('beam:pick') },
             'Show it as a QR code'),
-          h('button', { id: 'btn-beam-receive', class: 'btn ghost', onclick: () => dispatch('beam:scan') },
+          h('button', { id: 'btn-beam-receive', class: 'btn', onclick: () => dispatch('beam:scan') },
             'Scan a beamed file'),
         ]),
       ],

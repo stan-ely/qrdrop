@@ -196,10 +196,19 @@ ${selector} {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --fs--1: 0.8125rem;
+  /* The component's notes, status lines and callouts, one step above --fs--1.
+   * A token of its own rather than a bump to --fs--1, because the site's page
+   * chrome and the app's rows are set in --fs--1 too, and the masthead row is
+   * where the landscape layout has no slack: a 13px build stamp growing to 14
+   * is the line that wraps. Inside the card 13px was the size of everything
+   * secondary, which is most of what is on a screen, and read as fine print. */
+  --fs-note: 0.875rem;
   --fs-0: 1rem;
   --fs-1: 1.125rem;
   --fs-2: 1.375rem;
   --fs-3: 1.875rem;
+  /* A number that is the whole screen: transfer's percentage, and beam's. */
+  --fs-4: 2.75rem;
   --lh-tight: 1.25;
   --lh-body: 1.55;
 
@@ -220,7 +229,9 @@ ${selector} {
    * (measured 5.87:1) -- the old value sat closer to 4:1 and failed for small
    * button labels. The same #a8462d against --surface is 5.87:1, past the
    * 3:1 floor for the large-text/UI-border uses (the step rail's active
-   * segment, the SAS "these differ" note's accent underline).
+   * segment, the SAS "these differ" note's accent underline). The rail fills
+   * every step up to the current one in it now, beside --line segments for the
+   * steps to come, and that pair is 4.49:1 here and 4.63:1 in dark.
    */
   --bg: ${THEME_COLOR};
   --surface: #ffffff;
@@ -234,6 +245,13 @@ ${selector} {
    * 6.0:1 here and --text 16.7:1, so nothing is bought at the cost of the
    * contrast budget the rest of this block is written to. */
   --surface-sunken: #f2f0ea;
+  /* A secondary button's fill: the second weight between the filled primary
+   * and the bare ghost. It has to read as a shape on --surface (the site's
+   * card) and on --bg (the app, which has no card), so it is darker than both
+   * rather than another step of --surface-raised, which is 1.04:1 against
+   * --bg and vanished on the app's ground. --text on it is 13.8:1. The shape is
+   * a fill, not a 3:1 boundary: the label is what identifies the control. */
+  --surface-tonal: #e8e5dd;
   --text: #1a1a19;
   --muted: #5f5d57;
   --line: #e3e1db;
@@ -249,6 +267,9 @@ ${selector} {
   --bad-soft: rgba(163, 51, 40, 0.12);
   --warn: #8a5a00;
   --warn-soft: rgba(138, 90, 0, 0.12);
+  /* The glyph on a solid outcome disc, which is --ok, --bad or --warn at full
+   * strength. White on each: 6.22, 6.86 and 5.93:1. */
+  --on-status: #ffffff;
 
   /* ---- camera and QR surfaces: deliberately NOT themed ----
    *
@@ -320,6 +341,8 @@ ${selector} {
      * thing on screen, so an inset field has to go past it or it reads as
      * raised. --muted holds 8.7:1 on this. */
     --surface-sunken: #131317;
+    /* --text on it is 11.6:1, --muted 6.4:1. */
+    --surface-tonal: #2c2c35;
     --text: #ecebe8;
     --muted: #b1b0aa;
     --line: #33333a;
@@ -335,6 +358,9 @@ ${selector} {
     --bad-soft: rgba(240, 150, 138, 0.16);
     --warn: #e3b34d;
     --warn-soft: rgba(227, 179, 77, 0.16);
+    /* Dark, because the three status colours lighten here: 8.75, 8.11 and
+     * 9.30:1 on --ok, --bad and --warn. */
+    --on-status: #16161a;
 
     /*
      * Black shadows read as mud on a dark surface -- there is no darker tone
