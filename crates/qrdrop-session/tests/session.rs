@@ -280,7 +280,7 @@ async fn both_sides_of_a_raced_pairing_keep_the_same_network() {
                 let url = url.clone();
                 tokio::spawn(async move {
                     let (h, g, _) = pair_with(&url, config_race).await;
-                    let kept = ((h.strategy(), *h.sas()), (g.strategy(), *g.sas()));
+                    let kept = ((h.via(), *h.sas()), (g.via(), *g.sas()));
                     h.reject().await;
                     g.reject().await;
                     kept
@@ -422,6 +422,61 @@ async fn the_file_crosses_the_lan_when_the_receiver_listens() {
     over_lan(LanListen::Prompt, LanListen::Quiet, "lan-receiver").await;
 }
 
+/// The offline pairing end to end, with no room anywhere: the host listens
+/// at the address its locator names, the guest dials it, both show the same
+/// SAS, and the whole session -- path verdicts, manifest, Accept, every
+/// chunk and the digest -- rides the one socket. No LAN or QUIC upgrade is
+/// offered on top of it: the options ask for the LAN and are overridden.
+#[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_offline_pairing_carries_the_whole_session_on_its_socket() {
+    use qrdrop_session::Via;
+    use qrdrop_session::rendezvous::{OfflineListener, dial};
+
+    if private_address().is_none() {
+        eprintln!("skipped: no private IPv4 address on this machine");
+        return;
+    }
+    let secret = Secret::generate();
+    let listener = OfflineListener::bind().await.unwrap();
+    let locator = listener
+        .locator()
+        .expect("a private address to offer")
+        .clone();
+    // What a scanner reads: the code and the locator through the decoder.
+    let (scanned, read) = Secret::decode_pairing(&secret.code_with(&locator)).unwrap();
+    assert_eq!(read.as_ref(), Some(&locator));
+
+    let s = Secret::from_bytes(*secret.as_bytes());
+    let host = tokio::spawn(async move { listener.accept(&s).await });
+    let g = timeout(WAIT, dial(&locator, &scanned))
+        .await
+        .unwrap()
+        .expect("the dial pairs");
+    let h = timeout(WAIT, host)
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("the listener pairs");
+    assert_eq!(h.sas(), g.sas());
+    assert_eq!((h.via(), g.via()), (Via::Local, Via::Local));
+
+    let lan = || SessionOptions {
+        lan: Some(LanConfig {
+            listen: LanListen::Quiet,
+        }),
+        quic: None,
+    };
+    let hs = h.confirm(Role::Host, lan()).await;
+    let gs = g.confirm(Role::Guest, lan()).await;
+    assert_eq!(hs.0.path().await, NetworkPath::Local);
+    let (host_seen, guest_seen) = transfer("offline", 2 * 1024 * 1024, hs, gs).await;
+    assert!(
+        !host_seen.contains(&SessionEvent::Lan) && !guest_seen.contains(&SessionEvent::Lan),
+        "an upgrade was offered on a session already direct"
+    );
+}
+
 #[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_file_crosses_the_lan_when_the_sender_listens() {
@@ -466,7 +521,7 @@ async fn live_two_sessions_pair_over_the_public_networks() {
         ))
     );
     let (h, g) = (h.unwrap(), g.unwrap());
-    eprintln!("paired over {:?}", h.strategy());
+    eprintln!("paired over {:?}", h.via());
     let hs = h.confirm(Role::Host, SessionOptions::default()).await;
     let gs = g.confirm(Role::Guest, SessionOptions::default()).await;
     eprintln!("path: {:?}", hs.0.path().await);

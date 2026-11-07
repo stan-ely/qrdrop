@@ -204,7 +204,7 @@ mod socket {
 
     /// The first binary message, skipping pings and text; `None` if the
     /// socket ends first.
-    async fn first_binary(rx: &mut WsRx) -> Option<Vec<u8>> {
+    pub(crate) async fn first_binary(rx: &mut WsRx) -> Option<Vec<u8>> {
         while let Some(m) = rx.next().await {
             match m.ok()? {
                 Message::Binary(b) => return Some(b.to_vec()),
@@ -361,7 +361,7 @@ mod socket {
     /// end demands. Every interface and not only the default route's,
     /// because on a phone running a VPN the default route is the tunnel.
     #[cfg(feature = "lan-listen")]
-    fn offered_addresses() -> Vec<String> {
+    pub(crate) fn offered_addresses() -> Vec<String> {
         let primary = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
             .and_then(|s| {
                 s.connect((Ipv4Addr::new(192, 0, 2, 1), 9))

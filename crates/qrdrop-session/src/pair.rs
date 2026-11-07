@@ -126,7 +126,7 @@ impl std::error::Error for OpenError {}
 /// every frame it sends, starts at [`Paired::confirm`].
 pub struct Paired {
     pub(crate) pairing: Pairing,
-    pub(crate) strategy: Strategy,
+    pub(crate) via: Via,
     pub(crate) peer: String,
     pub(crate) hold: Hold,
 }
@@ -134,7 +134,7 @@ pub struct Paired {
 impl fmt::Debug for Paired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Paired")
-            .field("strategy", &self.strategy)
+            .field("via", &self.via)
             .field("peer", &self.peer)
             .finish_non_exhaustive()
     }
@@ -146,9 +146,10 @@ impl Paired {
         self.pairing.sas()
     }
 
-    /// Which network won the race.
-    pub fn strategy(&self) -> Strategy {
-        self.strategy
+    /// How the two devices met: which signalling network won the race, or
+    /// the local network with no relay at all.
+    pub fn via(&self) -> Via {
+        self.via
     }
 
     pub fn peer_id(&self) -> &str {
@@ -164,6 +165,29 @@ impl Paired {
     pub async fn reject(self) {
         let (carrier, ..) = self.hold.release().await;
         carrier.leave(crate::session::LEAVE_TIMEOUT).await;
+    }
+}
+
+/// How a pairing was made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Via {
+    /// Over a room on this signalling network.
+    Network(Strategy),
+    /// Over a socket to the address in the QR, with no relay involved
+    /// (`rendezvous.rs`). The whole session rides that socket.
+    Local,
+}
+
+#[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+impl Paired {
+    /// A pairing the offline rendezvous made, held exactly as a room's is.
+    pub(crate) fn local(met: crate::rendezvous::Met) -> Paired {
+        Paired {
+            pairing: met.pairing,
+            via: Via::Local,
+            hold: Hold::start(Carrier::socket(met.socket)),
+            peer: met.peer,
+        }
     }
 }
 
@@ -319,7 +343,7 @@ pub async fn open_room(cfg: OpenConfig) -> Result<Paired, OpenError> {
     }
     Ok(Paired {
         pairing: w.pairing,
-        strategy: w.network,
+        via: Via::Network(w.network),
         hold: Hold::start(Carrier::room(w.room, w.peer.clone())),
         peer: w.peer,
     })

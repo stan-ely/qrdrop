@@ -23,12 +23,20 @@
 //! written later could have forgotten one, which is the `room.js` bug the
 //! invariant in CLAUDE.md is about.
 
+#[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+use futures_util::{SinkExt, StreamExt};
 use qrdrop_protocol::NetworkPath;
+#[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+use tokio_tungstenite::tungstenite::Message;
 use tryst::join::{RoomEvent, RoomHandle, RoomSender};
 use tryst::wire::Payload;
 
+#[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+use crate::lan::{LanSocket, WsRx, WsTx};
 use crate::pair::FRAME_ACTION;
 use crate::path;
 
@@ -49,12 +57,44 @@ pub(crate) enum Arrival {
 
 /// The receiving half, and the owner: leaving consumes it.
 pub(crate) enum Carrier {
-    Room { room: RoomHandle, peer: String },
+    Room {
+        room: RoomHandle,
+        peer: String,
+    },
+    /// The offline rendezvous's socket, which nobody but the paired peer is
+    /// on: the handshake proved the code before it was handed over, so
+    /// there is no stranger to filter. One sealed frame per binary message,
+    /// as on the LAN fast path.
+    #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+    Socket {
+        rx: WsRx,
+        tx: Arc<tokio::sync::Mutex<WsTx>>,
+    },
 }
 
 impl Carrier {
     pub(crate) fn room(room: RoomHandle, peer: String) -> Carrier {
         Carrier::Room { room, peer }
+    }
+
+    #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+    pub(crate) fn socket(s: LanSocket) -> Carrier {
+        Carrier::Socket {
+            rx: s.rx,
+            tx: Arc::new(tokio::sync::Mutex::new(s.tx)),
+        }
+    }
+
+    /// Whether this is already the direct link. A session on one offers no
+    /// LAN or QUIC upgrade: it is on the fastest link either would find,
+    /// and an upgrade moved at Accept onto a second socket to the same
+    /// device would buy nothing and add a way to fail.
+    pub(crate) fn is_direct(&self) -> bool {
+        match self {
+            Carrier::Room { .. } => false,
+            #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+            Carrier::Socket { .. } => true,
+        }
     }
 
     /// The next thing the paired peer did, or `None` once the carrier is
@@ -76,6 +116,17 @@ impl Carrier {
                     _ => {}
                 }
             },
+            // A close, an error and the end of the stream all mean the peer
+            // is gone, which is `None`: there is no one else to have left.
+            #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+            Carrier::Socket { rx, .. } => loop {
+                match rx.next().await?.ok()? {
+                    Message::Binary(b) => return Some(Arrival::Frame(b.to_vec())),
+                    Message::Text(_) => return Some(Arrival::Runt),
+                    Message::Close(_) => return None,
+                    _ => {}
+                }
+            },
         }
     }
 
@@ -87,6 +138,8 @@ impl Carrier {
                 sender: room.sender(),
                 peer: peer.clone(),
             },
+            #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+            Carrier::Socket { tx, .. } => CarrierTx::Socket(tx.clone()),
         }
     }
 
@@ -97,6 +150,11 @@ impl Carrier {
             Carrier::Room { room, .. } => {
                 let _ = tokio::time::timeout(bound, room.leave()).await;
             }
+            // A WebSocket close is the leave, and its arrival the peer's.
+            #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+            Carrier::Socket { tx, .. } => {
+                let _ = tokio::time::timeout(bound, async { tx.lock().await.close().await }).await;
+            }
         }
     }
 }
@@ -105,7 +163,12 @@ impl Carrier {
 /// [`Carrier::leave`], whatever senders remain.
 #[derive(Clone)]
 pub(crate) enum CarrierTx {
-    Room { sender: RoomSender, peer: String },
+    Room {
+        sender: RoomSender,
+        peer: String,
+    },
+    #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+    Socket(Arc<tokio::sync::Mutex<WsTx>>),
 }
 
 impl CarrierTx {
@@ -119,6 +182,10 @@ impl CarrierTx {
                     .send(FRAME_ACTION, Payload::Binary(frame), None, Some(peer))
                     .await;
             }
+            #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+            CarrierTx::Socket(tx) => {
+                let _ = tx.lock().await.send(Message::Binary(frame.into())).await;
+            }
         }
     }
 
@@ -130,6 +197,9 @@ impl CarrierTx {
             CarrierTx::Room { sender, peer } => {
                 sender.selected_pair(peer).await.map(|p| path::classify(&p))
             }
+            // Only private addresses are dialled, so the socket is local.
+            #[cfg(any(feature = "lan-dial", feature = "lan-listen"))]
+            CarrierTx::Socket(_) => Some(NetworkPath::Local),
         }
     }
 }

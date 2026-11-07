@@ -223,6 +223,17 @@ impl Paired {
     pub async fn confirm(self, role: Role, opts: SessionOptions) -> (SessionHandle, SessionEvents) {
         let Paired { pairing, hold, .. } = self;
         let (carrier, early) = hold.release().await;
+        // A session already on the direct link sends no hello and answers
+        // none, exactly as --no-lan; since the receiver only ever replies,
+        // the peer needs to know nothing about it.
+        let opts = if carrier.is_direct() {
+            SessionOptions {
+                lan: None,
+                quic: None,
+            }
+        } else {
+            opts
+        };
         let session = pairing.confirm();
         let (link_tx, link_rx) = inbox();
         for f in early.frames {
