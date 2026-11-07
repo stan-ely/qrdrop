@@ -3348,6 +3348,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "hkdf",
+ "hmac",
  "p256",
  "rand_core 0.6.4",
  "serde",

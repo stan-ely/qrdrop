@@ -156,6 +156,16 @@ impl Secret {
         to_base64url(&out)
     }
 
+    /// The key an offline pairing proves the code with, before either side
+    /// latches (`rendezvous.rs`). A label of its own rather than the signal
+    /// password reused: that one is handed to Trystero to hash its own way,
+    /// and a value two protocols consume is only as strong as the weaker.
+    pub fn rendezvous_key(&self) -> crate::RendezvousKey {
+        let mut out = [0u8; 32];
+        self.hkdf("lan-rendezvous", &mut out);
+        crate::RendezvousKey::from_bytes(out)
+    }
+
     /// The bare form, `qrdrop:` and 43 characters. The CLI emits only this,
     /// and every decoder must accept it forever.
     pub fn code(&self) -> String {

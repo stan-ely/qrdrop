@@ -42,8 +42,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
 import {
-  decodePairing, deriveTopic, derivePassword, encodeSecret, encodeSecretURL, toBase64url,
+  decodePairing, deriveRendezvousKey, deriveTopic, derivePassword, encodeSecret, encodeSecretURL, toBase64url,
 } from '../src/core/secret.js'
+import { rendezvousKey, sealDial, sealListen, sealOk } from '../src/core/rendezvous.js'
 import { establishSession, SAS_EMOJI } from '../src/core/session.js'
 import {
   CHUNK_SIZE, HEADER_BYTES, MAX_FRAME_BYTES, TAG_BYTES, TYPE_CHUNK, TYPE_CONTROL,
@@ -314,6 +315,40 @@ async function sessionVectors() {
     },
     first: /** @type {NonNullable<typeof first>} */ (first),
     firstKeys: /** @type {NonNullable<typeof firstKeys>} */ (firstKeys),
+  }
+}
+
+// --- the offline rendezvous -----------------------------------------------
+
+/**
+ * The four handshake messages for each session case's keys, the host
+ * listening and the guest dialling, as an offline pairing uses them. The keys
+ * are session.json's on purpose: what follows the handshake is
+ * establishSession over exactly those two public keys, so that file already
+ * pins the session this one leads into.
+ */
+async function rendezvousVectors() {
+  const cases = []
+  for (const n of [1, 2]) {
+    const secret = await labelled(`session ${n} secret`)
+    const listener = await fixedKeypair(await labelled(`session ${n} host key`))
+    const dialler = await fixedKeypair(await labelled(`session ${n} guest key`))
+    const nonce = (await labelled(`rendezvous ${n} nonce`)).slice(0, 16)
+    const key = await rendezvousKey(secret)
+    cases.push({
+      secret: hex(secret),
+      rendezvous_key: hex(await deriveRendezvousKey(secret)),
+      listen_public: hex(listener.raw),
+      dial_public: hex(dialler.raw),
+      hello: hex(nonce),
+      dial: hex(await sealDial(key, nonce, dialler.raw)),
+      listen: hex(await sealListen(key, nonce, dialler.raw, listener.raw)),
+      ok: hex(await sealOk(key, nonce, dialler.raw, listener.raw)),
+    })
+  }
+  return {
+    about: 'The offline rendezvous (src/core/rendezvous.js). rendezvous_key = HKDF-SHA-256(ikm = the QR secret, salt "qrdrop/v1", info "lan-rendezvous"), 32 bytes. Four WebSocket binary messages: hello = a 16-byte nonce n (listener); dial = D || HMAC-SHA-256(key, "dial" || n || D) (dialler); listen = L || HMAC(key, "listen" || n || D || L) (listener); ok = HMAC(key, "ok" || n || D || L) (dialler). D and L are raw uncompressed P-256 public keys, 65 bytes; labels are ASCII. The keys are the session.json cases, the listener as host, and establishSession over them follows the ok.',
+    cases,
   }
 }
 
@@ -643,6 +678,7 @@ export async function buildVectors() {
     'session.json': session.vectors,
     'frames.json': await frameVectors(session.first, session.firstKeys),
     'digest.json': await digestVectors(),
+    'rendezvous.json': await rendezvousVectors(),
     'trystero.json': await trysteroVectors(first.topic, first.password),
   }
 }

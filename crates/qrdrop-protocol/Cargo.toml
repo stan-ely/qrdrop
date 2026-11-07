@@ -22,6 +22,7 @@ publish = false
 aes-gcm = "0.10.3"
 base64 = "0.22.1"
 hkdf = "0.12.4"
+hmac = "0.12.1"
 p256 = { version = "0.13.2", default-features = false, features = ["arithmetic", "ecdh", "std"] }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 serde = { version = "1.0.228", features = ["derive"] }

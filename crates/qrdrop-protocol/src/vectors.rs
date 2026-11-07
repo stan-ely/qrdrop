@@ -96,6 +96,29 @@ fn secret() {
 }
 
 #[test]
+fn rendezvous() {
+    let v = load(include_str!("../../../test/vectors/rendezvous.json"));
+    for c in v["cases"].as_array().unwrap() {
+        let key = Secret::from_bytes(arr(&c["secret"])).rendezvous_key();
+        assert_eq!(
+            key.as_bytes().as_slice(),
+            unhex(c["rendezvous_key"].as_str().unwrap())
+        );
+        let n: crate::Nonce = arr(&c["hello"]);
+        let d: crate::PublicKey = arr(&c["dial_public"]);
+        let l: crate::PublicKey = arr(&c["listen_public"]);
+        let want = |k: &str| unhex(c[k].as_str().unwrap());
+        // What the JS sealed, the Rust seals byte for byte, and opens.
+        assert_eq!(key.seal_dial(&n, &d).as_slice(), want("dial"));
+        assert_eq!(key.seal_listen(&n, &d, &l).as_slice(), want("listen"));
+        assert_eq!(key.seal_ok(&n, &d, &l).as_slice(), want("ok"));
+        assert_eq!(key.open_dial(&n, &want("dial")), Some(d));
+        assert_eq!(key.open_listen(&n, &d, &want("listen")), Some(l));
+        assert!(key.open_ok(&n, &d, &l, &want("ok")));
+    }
+}
+
+#[test]
 fn session() {
     let v = load(include_str!("../../../test/vectors/session.json"));
     for c in v["cases"].as_array().unwrap() {

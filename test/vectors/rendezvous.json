@@ -1,0 +1,25 @@
+{
+  "about": "The offline rendezvous (src/core/rendezvous.js). rendezvous_key = HKDF-SHA-256(ikm = the QR secret, salt \"qrdrop/v1\", info \"lan-rendezvous\"), 32 bytes. Four WebSocket binary messages: hello = a 16-byte nonce n (listener); dial = D || HMAC-SHA-256(key, \"dial\" || n || D) (dialler); listen = L || HMAC(key, \"listen\" || n || D || L) (listener); ok = HMAC(key, \"ok\" || n || D || L) (dialler). D and L are raw uncompressed P-256 public keys, 65 bytes; labels are ASCII. The keys are the session.json cases, the listener as host, and establishSession over them follows the ok.",
+  "cases": [
+    {
+      "secret": "73815823edcb7f2c144c653094497b2ecb384034c866ff431ea1396624e38dff",
+      "rendezvous_key": "99bece04e3504f9b198130c99366bce5834b8d1db9ccf5ba580febe9eb58bea1",
+      "listen_public": "04ba69973f618e20b0030fe0708b6ba98f0c3ae75dfdb3604cae7d8c0e5aff987c2eaf5f06fe9a1fb4d0aaf119c0ec0440bd57f8362708804db259994289767b40",
+      "dial_public": "04cf324feb61c6d5819d72c0c15d79aef374acaf27c66d8fae39d3b62e0156ed5e8819e773a3d06bb719b83f67b4fed62d96731e8a0284a2aaa1ea52903e5cb129",
+      "hello": "781828382d46323fc23903218cdc1c4c",
+      "dial": "04cf324feb61c6d5819d72c0c15d79aef374acaf27c66d8fae39d3b62e0156ed5e8819e773a3d06bb719b83f67b4fed62d96731e8a0284a2aaa1ea52903e5cb129be7ea79c71a581895e047753cd0fbc45beb23e373efa15f98108819a99c5ce7f",
+      "listen": "04ba69973f618e20b0030fe0708b6ba98f0c3ae75dfdb3604cae7d8c0e5aff987c2eaf5f06fe9a1fb4d0aaf119c0ec0440bd57f8362708804db259994289767b40dcf10643344ce3d2e3f9212a958537cb00b3295b250da0b760f4f65360361cf0",
+      "ok": "f1d015b5c3baa36f2ae63817888b1e875b86970b9a4bbd31ed33ab35530666bf"
+    },
+    {
+      "secret": "0bd11a55d04d69320c29c096016d9bc45f58ca891c404453752f49c2d6557e13",
+      "rendezvous_key": "0d3f0359913e46a0efcfda2f935d554344e90c60f525a01da697749aef9b19b4",
+      "listen_public": "045e2942180b57d006e2ab9ef38286897f57187af251c9931d520624cd33a841d72f1ba3b673c5dba4b3b33ca435fb1370470095acd9681d126d11fe63aa5ef804",
+      "dial_public": "0488308658909fcc4726b379343861310bb0b061769bf45b74c77acc398e9afb75b38bc3727c2fee9e3bf5b6a92a51b396a0ee8e812c23743fa959ebe119f535b9",
+      "hello": "08c42a7a0405b0a7a4d2e6bd3603dcb9",
+      "dial": "0488308658909fcc4726b379343861310bb0b061769bf45b74c77acc398e9afb75b38bc3727c2fee9e3bf5b6a92a51b396a0ee8e812c23743fa959ebe119f535b9ba049b689b346df27bfabdff66414236d80aed216809ae5eb697187121b56d0e",
+      "listen": "045e2942180b57d006e2ab9ef38286897f57187af251c9931d520624cd33a841d72f1ba3b673c5dba4b3b33ca435fb1370470095acd9681d126d11fe63aa5ef804a5c5c391b49c056268452b9a1ef02ad24b2d4ab4d03edad3d6eb5dce4a6803db",
+      "ok": "630955b3cc3454e21dc6d105d565244c5d1189af11c3952ee074b3c70655515d"
+    }
+  ]
+}

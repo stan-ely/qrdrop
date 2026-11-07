@@ -94,6 +94,24 @@ export async function derivePassword(secret) {
 }
 
 /**
+ * The key an offline pairing proves the code with, before either side
+ * latches (src/core/rendezvous.js, docs/notes/offline-pairing.md).
+ *
+ * A label of its own and not the signal password reused, although both
+ * answer "does the other end hold the code": the password is handed to
+ * Trystero, which hashes it into a key it uses its own way, and a value two
+ * protocols both consume is one whose strength depends on the weaker of
+ * them. Bytes rather than a CryptoKey so the vectors can show it;
+ * rendezvous.js imports it non-extractable at once.
+ *
+ * @param {Bytes} secret
+ * @returns {Promise<Bytes>}
+ */
+export async function deriveRendezvousKey(secret) {
+  return hkdf(secret, 'lan-rendezvous', 32)
+}
+
+/**
  * @param {Bytes} bytes
  * @returns {string}
  */

@@ -27,6 +27,7 @@ mod control;
 mod digest;
 mod frame;
 mod pairing;
+mod rendezvous;
 mod transfer;
 #[cfg(test)]
 mod vectors;
@@ -41,6 +42,7 @@ pub use frame::{
 pub use pairing::{
     BadPublicKey, Keypair, PICK_BYTES, PUBLIC_KEY_BYTES, Pairing, Role, SAS_TABLE, Sas,
 };
+pub use rendezvous::{KEYED_BYTES, MAC_BYTES, NONCE_BYTES, Nonce, PublicKey, RendezvousKey, nonce};
 pub use transfer::{
     ChunkRequest, Error, Event, FileOffer, PAUSE_AT, PAUSE_TIMEOUT, RESUME_AT, Session, UsageError,
     chunk_count,
