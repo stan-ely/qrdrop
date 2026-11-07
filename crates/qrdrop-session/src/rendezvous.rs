@@ -36,7 +36,9 @@ use std::time::Duration;
 
 use futures_util::SinkExt;
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use qrdrop_protocol::{Keypair, Locator, Nonce, Pairing, Role, Secret};
+#[cfg(feature = "lan-dial")]
+use qrdrop_protocol::Nonce;
+use qrdrop_protocol::{Keypair, Locator, Pairing, Role, Secret};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::lan::{LanSocket, first_binary, split, ws_config};

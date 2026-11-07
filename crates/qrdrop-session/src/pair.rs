@@ -67,6 +67,18 @@ pub struct OpenConfig {
     /// device (nostr, torrent)…", "Found the other device via nostr, agreeing
     /// keys…", "Paired over nostr".
     pub on_status: Option<StatusFn>,
+    /// The host's offline listener, whose locator went in the QR
+    /// (`rendezvous.rs`). Raced against the rooms from the start, and kept
+    /// waiting when every room has failed, since no route to the relays is
+    /// exactly the case it is for. The first pairing on either wins.
+    #[cfg(feature = "lan-listen")]
+    pub listener: Option<crate::rendezvous::OfflineListener>,
+    /// The guest's scanned locator. Dialled first, for at most
+    /// [`crate::rendezvous::DIAL_TIMEOUT`], and the rooms joined only if the
+    /// dial fails -- which it can only do before a SAS exists, so the
+    /// fallback never gives the secret a second roll.
+    #[cfg(feature = "lan-dial")]
+    pub locator: Option<qrdrop_protocol::Locator>,
 }
 
 impl OpenConfig {
@@ -81,7 +93,26 @@ impl OpenConfig {
             bind: None,
             timeout: PAIR_TIMEOUT,
             on_status: None,
+            #[cfg(feature = "lan-listen")]
+            listener: None,
+            #[cfg(feature = "lan-dial")]
+            locator: None,
         }
+    }
+
+    /// Whether this pairing has a local-network way in.
+    fn offline(&self) -> bool {
+        #[allow(unused_mut)]
+        let mut any = false;
+        #[cfg(feature = "lan-listen")]
+        {
+            any |= self.listener.is_some();
+        }
+        #[cfg(feature = "lan-dial")]
+        {
+            any |= self.locator.is_some();
+        }
+        any
     }
 
     fn status(&self, text: &str) {
@@ -97,6 +128,7 @@ impl fmt::Debug for OpenConfig {
             .field("role", &self.role)
             .field("networks", &self.networks)
             .field("timeout", &self.timeout)
+            .field("offline", &self.offline())
             .finish_non_exhaustive()
     }
 }
@@ -250,6 +282,32 @@ impl Hold {
     }
 }
 
+/// What won the wait: a room, or the host's listener.
+enum Winner {
+    Room(Won),
+    #[cfg(feature = "lan-listen")]
+    Local(crate::rendezvous::Met),
+}
+
+/// The host's listener as one future, so the wait can select on it whether
+/// or not this build can listen.
+#[cfg(feature = "lan-listen")]
+fn local_wait(cfg: &mut OpenConfig) -> (bool, impl Future<Output = Option<Winner>> + use<>) {
+    let listener = cfg.listener.take();
+    let secret = Secret::from_bytes(*cfg.secret.as_bytes());
+    (listener.is_some(), async move {
+        match listener {
+            Some(l) => l.accept_met(&secret).await.map(Winner::Local),
+            None => std::future::pending().await,
+        }
+    })
+}
+
+#[cfg(not(feature = "lan-listen"))]
+fn local_wait(_: &mut OpenConfig) -> (bool, impl Future<Output = Option<Winner>> + use<>) {
+    (false, std::future::pending())
+}
+
 struct Won {
     network: Strategy,
     room: RoomHandle,
@@ -258,8 +316,21 @@ struct Won {
 }
 
 /// Join every network in `cfg`, pair on the first to complete the key
-/// exchange, and leave the rest.
-pub async fn open_room(cfg: OpenConfig) -> Result<Paired, OpenError> {
+/// exchange, and leave the rest. With a locator, a guest dials it first; with
+/// a listener, a host waits on it beside the rooms.
+pub async fn open_room(#[allow(unused_mut)] mut cfg: OpenConfig) -> Result<Paired, OpenError> {
+    #[cfg(feature = "lan-dial")]
+    if let Some(locator) = cfg.locator.take() {
+        cfg.status("Trying the other device on the local network\u{2026}");
+        if let Some(p) = crate::rendezvous::dial(&locator, &cfg.secret).await {
+            cfg.status("Paired over the local network");
+            return Ok(p);
+        }
+        // Said rather than fallen back on quietly: on a network with no route
+        // out, this line is the reason nothing else is about to happen.
+        cfg.status("Couldn\u{2019}t reach the other device directly, trying the internet\u{2026}");
+    }
+
     let topic = cfg.secret.topic();
     let password = cfg.secret.password();
     let names: Vec<&str> = cfg.networks.iter().map(Network::name).collect();
@@ -290,17 +361,32 @@ pub async fn open_room(cfg: OpenConfig) -> Result<Paired, OpenError> {
         attempts.spawn(ctx.run());
     }
 
+    let (mut local_live, local) = local_wait(&mut cfg);
+    tokio::pin!(local);
     let deadline = tokio::time::sleep(cfg.timeout);
     tokio::pin!(deadline);
     let mut failures = vec![];
+    let mut rooms_live = true;
     let won = loop {
+        if !rooms_live && !local_live {
+            break None;
+        }
         tokio::select! {
             _ = &mut deadline => break None,
-            r = attempts.join_next() => match r {
-                None => break None,
-                Some(Ok(Ok(w))) => break Some(w),
+            r = attempts.join_next(), if rooms_live => match r {
+                None => {
+                    rooms_live = false;
+                    if local_live {
+                        cfg.status("No signalling network answered; still waiting on the local network\u{2026}");
+                    }
+                }
+                Some(Ok(Ok(w))) => break Some(Winner::Room(w)),
                 Some(Ok(Err(f))) => failures.push(f),
                 Some(Err(e)) => std::panic::resume_unwind(e.into_panic()),
+            },
+            m = &mut local, if local_live => match m {
+                Some(w) => break Some(w),
+                None => local_live = false,
             },
         }
     };
@@ -314,12 +400,23 @@ pub async fn open_room(cfg: OpenConfig) -> Result<Paired, OpenError> {
             }
         }
     });
-    let Some(w) = won else {
-        return Err(if failures.len() == cfg.networks.len() {
-            OpenError::NoNetwork(failures)
-        } else {
-            OpenError::Timeout
-        });
+    let w = match won {
+        Some(Winner::Room(w)) => w,
+        #[cfg(feature = "lan-listen")]
+        Some(Winner::Local(met)) => {
+            cfg.status("Paired over the local network");
+            // No pick: there was one connection and nothing to race.
+            return Ok(Paired::local(met));
+        }
+        // A listener still waiting at the deadline is a timeout, whatever the
+        // rooms did: the other device may simply not have scanned yet.
+        None => {
+            return Err(if failures.len() == cfg.networks.len() && !local_live {
+                OpenError::NoNetwork(failures)
+            } else {
+                OpenError::Timeout
+            });
+        }
     };
     cfg.status(&format!("Paired over {}", strategy_name(w.network)));
     // The host says which network it kept, because nothing else does: each

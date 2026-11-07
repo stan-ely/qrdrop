@@ -477,6 +477,157 @@ async fn an_offline_pairing_carries_the_whole_session_on_its_socket() {
     );
 }
 
+/// `open_room` with both ways in. Each returns the two sides' pairings and
+/// the status lines each side reported.
+#[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
+async fn open_offline(
+    host: OpenConfig,
+    guest: OpenConfig,
+) -> (
+    Result<Paired, OpenError>,
+    Result<Paired, OpenError>,
+    Vec<String>,
+    Vec<String>,
+) {
+    use std::sync::{Arc, Mutex};
+    let said = |mut c: OpenConfig| {
+        let lines = Arc::new(Mutex::new(vec![]));
+        let l = lines.clone();
+        c.on_status = Some(Arc::new(move |t: &str| {
+            l.lock().unwrap().push(t.to_owned())
+        }));
+        (c, lines)
+    };
+    let ((h, hl), (g, gl)) = (said(host), said(guest));
+    let (h, g) = tokio::join!(open_room(h), open_room(g));
+    let take = |l: Arc<Mutex<Vec<String>>>| std::mem::take(&mut *l.lock().unwrap());
+    (h, g, take(hl), take(gl))
+}
+
+/// The usual case once locators are emitted: both devices could pair over
+/// the relays too, and the scanner's dial gets there first because it tries
+/// before it joins anything. The host's rooms are left behind it.
+#[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scanner_with_a_locator_pairs_locally_beside_working_rooms() {
+    use qrdrop_session::Via;
+    use qrdrop_session::rendezvous::OfflineListener;
+
+    if private_address().is_none() {
+        eprintln!("skipped: no private IPv4 address on this machine");
+        return;
+    }
+    let url = format!("ws://{}", standin::start().await);
+    let secret = Secret::generate();
+    let mut host = config(&secret, Role::Host, &url);
+    let listener = OfflineListener::bind().await.unwrap();
+    let mut guest = config(&secret, Role::Guest, &url);
+    guest.locator = listener.locator().cloned();
+    host.listener = Some(listener);
+    let (h, g, _, said) = open_offline(host, guest).await;
+    let (h, g) = (h.unwrap(), g.unwrap());
+    assert_eq!((h.via(), g.via()), (Via::Local, Via::Local));
+    assert_eq!(h.sas(), g.sas());
+    assert_eq!(
+        said.last().map(String::as_str),
+        Some("Paired over the local network")
+    );
+}
+
+/// A locator nobody answers at -- a copied code, or a network that keeps
+/// the two apart -- costs the dial and nothing else: the scanner says so and
+/// pairs over the room as it always has.
+#[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_locator_nobody_answers_at_falls_back_to_the_room() {
+    use qrdrop_protocol::Locator;
+    use qrdrop_session::Via;
+
+    let Some(ip) = private_address() else {
+        eprintln!("skipped: no private IPv4 address on this machine");
+        return;
+    };
+    let free = std::net::TcpListener::bind((ip, 0)).unwrap();
+    let port = free.local_addr().unwrap().port();
+    drop(free);
+    let url = format!("ws://{}", standin::start().await);
+    let secret = Secret::generate();
+    let mut guest = config(&secret, Role::Guest, &url);
+    guest.locator = Some(Locator {
+        port,
+        addresses: vec![ip],
+    });
+    let (h, g, _, said) = open_offline(config(&secret, Role::Host, &url), guest).await;
+    let (h, g) = (h.unwrap(), g.unwrap());
+    assert_eq!(
+        (h.via(), g.via()),
+        (Via::Network(Strategy::Nostr), Via::Network(Strategy::Nostr))
+    );
+    assert_eq!(h.sas(), g.sas());
+    assert!(
+        said.iter()
+            .any(|l| l.starts_with("Couldn\u{2019}t reach the other device directly")),
+        "{said:?}"
+    );
+}
+
+/// No route to any relay, which is what the listener exists for. Every room
+/// gives up at tryst's JOIN_TIMEOUT, and before the listener existed that
+/// was `NoNetwork` and the end of the pairing; the host must instead say it
+/// is still waiting on the local network and pair with a scanner who comes
+/// after that -- and, with nobody coming, report a timeout rather than "no
+/// network", since the network it is waiting on is fine. Slow by nature: the
+/// rooms take JOIN_TIMEOUT to fail, and the two halves run side by side.
+#[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn with_every_relay_unreachable_the_listener_still_pairs() {
+    use qrdrop_session::Via;
+    use qrdrop_session::rendezvous::{OfflineListener, dial};
+
+    if private_address().is_none() {
+        eprintln!("skipped: no private IPv4 address on this machine");
+        return;
+    }
+    let dead = {
+        let l = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        format!("ws://{}", l.local_addr().unwrap())
+    };
+    let after_the_rooms = tryst::join::JOIN_TIMEOUT + Duration::from_secs(1);
+
+    let secret = Secret::generate();
+    let mut host = config(&secret, Role::Host, &dead);
+    host.timeout = after_the_rooms + Duration::from_secs(10);
+    let listener = OfflineListener::bind().await.unwrap();
+    let locator = listener.locator().cloned().unwrap();
+    host.listener = Some(listener);
+    let said = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let l = said.clone();
+    host.on_status = Some(std::sync::Arc::new(move |t: &str| {
+        l.lock().unwrap().push(t.to_owned())
+    }));
+    let late_scanner = async {
+        tokio::time::sleep(after_the_rooms).await;
+        dial(&locator, &secret).await
+    };
+
+    let mut alone = config(&Secret::generate(), Role::Host, &dead);
+    alone.listener = Some(OfflineListener::bind().await.unwrap());
+    alone.timeout = after_the_rooms;
+
+    let (h, g, e) = tokio::join!(open_room(host), late_scanner, open_room(alone));
+    let (h, g) = (h.unwrap(), g.expect("the late scanner pairs"));
+    assert_eq!((h.via(), g.via()), (Via::Local, Via::Local));
+    assert_eq!(h.sas(), g.sas());
+    let said = said.lock().unwrap().clone();
+    assert!(
+        said.iter()
+            .any(|l| l.starts_with("No signalling network answered")),
+        "{said:?}"
+    );
+    let e = e.unwrap_err();
+    assert!(matches!(e, OpenError::Timeout), "{e:?}");
+}
+
 #[cfg(all(feature = "lan-listen", feature = "lan-dial"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_file_crosses_the_lan_when_the_sender_listens() {
