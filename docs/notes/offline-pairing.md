@@ -1,17 +1,17 @@
 # Pairing without the internet
 
-Designed 2026-10-26. Nothing here is built yet. This file is the design and its tracking
-document: a session that works on it starts by reading **Status** and ends by updating it. When
-it ships, the parts that describe behaviour move into `docs/protocol.md` and
-`docs/threat-model.md`, and the invariants into CLAUDE.md, the way the LAN path's did.
+Designed 2026-10-26. This file is the design and its tracking document: a session that works on
+it starts by reading **Status** and ends by updating it. When it ships, the parts that describe
+behaviour move into `docs/protocol.md` and `docs/threat-model.md`, and the invariants into
+CLAUDE.md, the way the LAN path's did.
 
 ## Status
 
 | Phase | State | Notes |
 |---|---|---|
-| A. Decoders tolerate a locator | built, awaiting release | `decodePairing` / `Secret::decode_pairing`; ships in the next npm and app releases, and B waits a cycle after them |
-| B. Rust: the session over a socket, and the rendezvous | not started | Rust CLI to Rust CLI, offline |
-| C. Node CLI and the app | not started | the JS `PairedRoom` over a socket |
+| A. Decoders tolerate a locator | released | npm 0.7.0 and app-v1.4.0, both 2026-11-03 |
+| B. Rust: the session over a socket, and the rendezvous | built 2026-11-07, unreleased | `160824c`..; the gate is `crates/qrdrop-session/examples/offline.sh`. Emitting is opt-in (`QRDROP_OFFLINE=1` on the Rust CLI's `send`) until a release cycle after A has passed; see "As built" under B |
+| C. Node CLI and the app | not started | the JS `PairedRoom` over a socket. `src/core/rendezvous.js` (the four messages) is already in, since the vectors are written from it |
 | D. Docs, threat model, CLAUDE.md | not started | at the end of C |
 
 ## The problem
@@ -200,6 +200,33 @@ This is most of the work, and it is the part the plan before this note underesti
     namespaces and the route removed. They must pair, verify and move a file.
   - **Also run:** the interop matrix, unchanged, to show a code without a locator behaves exactly
     as before.
+  - **As built:**
+    - **The carrier** is `carrier.rs`, landed first and alone (`160824c`) with the matrix green
+      on all twelve legs. It holds the peer filter too, both halves, where `pair.rs` and
+      `session.rs` used to match the peer ID each for itself.
+    - **The four messages** are `src/core/rendezvous.js`, ported to `qrdrop-protocol`'s
+      `rendezvous.rs` and pinned by `test/vectors/rendezvous.json` (`2b82ae1`). Each message is
+      one fixed-length binary WebSocket message: hello 16 bytes, dial and listen 97, ok 32. The
+      labels are ASCII `dial`, `listen` and `ok`.
+    - **The dialler races only the hello and keys one connection**, which this note did not
+      say and has to. Keying every address that answered gives each connection its own
+      keypair, and a listener reachable at two addresses could finish on one while the dialler
+      kept the other: a false SAS mismatch, the pairing race again
+      (`docs/notes/pairing-race.md`). The ok is sent outside the dial timeout, so a timeout
+      cannot cut it half-sent while the listener latches on the whole of it.
+    - **The listener generates its keypair only after a dial verifies**, so a stranger costs a
+      handshake slot and never a key.
+    - **`open_room` keeps waiting on the listener when every room has failed.** With no route
+      out, every room gives up at tryst's `JOIN_TIMEOUT` (15 s), and `NoNetwork` there would
+      have taken the listener down on exactly the network it is for. A listener still up at
+      the deadline is a `Timeout`. `with_every_relay_unreachable_the_listener_still_pairs` takes
+      16 s on purpose: a shorter version passed without reaching the branch.
+    - **The dial fallback is said** ("Couldn't reach the other device directly, trying the
+      internet…"), as the open question below recommended.
+    - **`Paired::strategy` became `Paired::via`** (`Via::Network(Strategy)` or `Via::Local`).
+    - **`QRDROP_OFFLINE=1` on `send`, not `--offline`.** `text.rs` holds the Rust CLI's usage
+      to `cli.js`'s, so the flag has to arrive in both CLIs at once, in phase C. `receive` needs
+      no switch: it dials any locator it reads, unless `--no-lan`.
 - **C.**
   - The Node CLI (dial and listen through `node/lan-server.js`'s pieces) and the app, through
     `src-tauri/src/lan.rs`.

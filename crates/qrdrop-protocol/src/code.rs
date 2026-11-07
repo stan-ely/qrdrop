@@ -172,9 +172,10 @@ impl Secret {
         format!("qrdrop:{}", to_base64url(&self.0))
     }
 
-    /// The bare form with a locator after it. Nothing calls this outside the
-    /// tests yet: every decoder in a release has to accept a locator before
-    /// anything emits one (docs/notes/offline-pairing.md, phase A).
+    /// The bare form with a locator after it. Emitted only on request until
+    /// a release cycle has passed since every decoder learned to accept one
+    /// (docs/notes/offline-pairing.md, phase A): an older decoder answers it
+    /// with "Not a qrdrop code".
     pub fn code_with(&self, locator: &Locator) -> String {
         format!("{}.{}", self.code(), locator.encode())
     }
@@ -187,6 +188,18 @@ impl Secret {
     pub fn url(&self, base: &str) -> Result<String, CodeError> {
         let url = Url::parse(base).ok_or(CodeError::BadBaseUrl)?;
         Ok(format!("{}#{}", url.serialize_without_query(), self.code()))
+    }
+
+    /// [`Secret::url`] with a locator after the code, still in the fragment:
+    /// the address is not secret, but splitting the two would mean reading
+    /// half a code from somewhere the fragment-only rule does not cover.
+    pub fn url_with(&self, base: &str, locator: &Locator) -> Result<String, CodeError> {
+        let url = Url::parse(base).ok_or(CodeError::BadBaseUrl)?;
+        Ok(format!(
+            "{}#{}",
+            url.serialize_without_query(),
+            self.code_with(locator)
+        ))
     }
 
     /// Reads a code from untrusted text: whatever a camera decoded, or a
@@ -480,6 +493,23 @@ fn valid_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_url_with_a_locator_keeps_both_in_the_fragment() {
+        let secret = Secret::generate();
+        let locator = Locator {
+            port: 52000,
+            addresses: vec![Ipv4Addr::new(192, 168, 1, 20)],
+        };
+        let url = secret
+            .url_with("https://share.stan-ely.com/?from=x#old", &locator)
+            .unwrap();
+        assert!(
+            url.starts_with("https://share.stan-ely.com/#qrdrop:"),
+            "{url}"
+        );
+        assert_eq!(Secret::decode_pairing(&url), Ok((secret, Some(locator))));
+    }
 
     #[test]
     fn bare_form_round_trips() {

@@ -19,10 +19,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use qrdrop_protocol::{CodeError, LanListen, NetworkPath, PEER_DISCONNECTED, Role, Secret};
+use qrdrop_protocol::{
+    CodeError, LanListen, Locator, NetworkPath, PEER_DISCONNECTED, Role, Secret,
+};
 use qrdrop_session::io::{FileSink, FileSource};
 use qrdrop_session::networks::STUN_SERVERS;
 use qrdrop_session::path::{RELAYED_MAX_BYTES, combine};
+use qrdrop_session::rendezvous::OfflineListener;
 use qrdrop_session::{
     LanConfig, Network, OpenConfig, OpenError, Paired, QuicConfig, SessionEvent, SessionEvents,
     SessionHandle, SessionOptions, Source, Strategy, lan, open_room,
@@ -204,11 +207,32 @@ fn session_options(use_lan: bool) -> SessionOptions {
 /// `establish`: pair, then the SAS. The one gate that is never conditional
 /// on `--yes`, because it is the whole defence against a third party in the
 /// room instead of the intended peer.
+/// The local-network way into a pairing, if this one has one.
+enum Offline {
+    None,
+    /// The sender's listener, whose locator is in the printed code.
+    Listen(OfflineListener),
+    /// The locator read from the code the receiver was given.
+    Dial(Locator),
+}
+
+/// Whether `send` puts a locator in its code: only when `QRDROP_OFFLINE=1`
+/// asks for it, for now. Two reasons, and both are temporary. A decoder
+/// older than npm 0.7.0 and app 1.4.0 refuses a code with a locator, and
+/// docs/notes/offline-pairing.md waits a release cycle after those before
+/// anything emits one by default. And the flag this will become, `--offline`,
+/// has to arrive in both CLIs at once, since their usage text is one
+/// contract (`text.rs` holds this one to cli.js's).
+fn offline_requested() -> bool {
+    std::env::var("QRDROP_OFFLINE").as_deref() == Ok("1")
+}
+
 async fn establish(
     secret: Secret,
     role: Role,
     relays: &Option<Vec<String>>,
     strategy: &Option<String>,
+    offline: Offline,
     prompter: &Prompter,
 ) -> Result<Paired, Error> {
     // The question goes to stdout, so its colour is stdout's.
@@ -217,6 +241,11 @@ async fn establish(
     let mut cfg = OpenConfig::new(secret, role);
     if let Some(n) = networks(relays, strategy)? {
         cfg.networks = n;
+    }
+    match offline {
+        Offline::None => {}
+        Offline::Listen(l) => cfg.listener = Some(l),
+        Offline::Dial(l) => cfg.locator = Some(l),
     }
     cfg.on_status = Some(Arc::new(|text: &str| eprintln!("{text}")));
     let paired = open_room(cfg).await?;
@@ -324,14 +353,30 @@ pub async fn send(a: SendArgs, hooks: Hooks) -> Result<i32, Error> {
     let prompter = Prompter::new();
     let style = Style::stdout();
     let secret = Secret::generate();
-    let code = secret.code();
+    // Bound before the code is printed, so the code can say where it is. A
+    // machine with no private address to offer sends the bare code, and
+    // the listener is not kept: nobody could be told how to reach it.
+    let listener = if a.lan && offline_requested() {
+        OfflineListener::bind()
+            .await
+            .ok()
+            .filter(|l| l.locator().is_some())
+    } else {
+        None
+    };
+    let locator = listener.as_ref().and_then(|l| l.locator().cloned());
+    let code = match &locator {
+        Some(l) => secret.code_with(l),
+        None => secret.code(),
+    };
 
-    // --qr-url changes what the QR encodes and nothing else: the bare code is
+    // --qr-url changes what the QR encodes and nothing else: the code is
     // printed either way, and everything that types a code in by hand, the
     // interop suite included, reads it from that line.
-    let qr_text = match &a.qr_url {
-        Some(base) => secret.url(base)?,
-        None => code.clone(),
+    let qr_text = match (&a.qr_url, &locator) {
+        (Some(base), Some(l)) => secret.url_with(base, l)?,
+        (Some(base), None) => secret.url(base)?,
+        (None, _) => code.clone(),
     };
     if a.show_qr
         && let Some(qr) = render_qr(&qr_text)
@@ -343,7 +388,16 @@ pub async fn send(a: SendArgs, hooks: Hooks) -> Result<i32, Error> {
     }
     println!("Transfer code: {}", style.accent(&code));
 
-    let paired = establish(secret, Role::Host, &a.relays, &a.strategy, &prompter).await?;
+    let offline = listener.map_or(Offline::None, Offline::Listen);
+    let paired = establish(
+        secret,
+        Role::Host,
+        &a.relays,
+        &a.strategy,
+        offline,
+        &prompter,
+    )
+    .await?;
     let (handle, mut events) = paired.confirm(Role::Host, session_options(a.lan)).await;
     hooks.set(handle.clone());
     let result = send_on(&handle, &mut events, source).await;
@@ -419,12 +473,26 @@ pub async fn receive(a: ReceiveArgs, hooks: Hooks) -> Result<i32, Error> {
         Some(c) => c,
         None => prompter.ask("Code (or paste a shared link): ").await,
     };
-    let secret = Secret::decode(&raw)?;
+    let (secret, locator) = Secret::decode_pairing(&raw)?;
+    // --no-lan keeps everything on WebRTC, and dialling the sender directly
+    // would be the one exception to it.
+    let offline = match locator {
+        Some(l) if a.lan => Offline::Dial(l),
+        _ => Offline::None,
+    };
     // Said before the wait rather than after the file has landed, so where
     // it goes is a question answerable in advance.
     let out_dir = std::path::absolute(&a.out_dir)?;
 
-    let paired = establish(secret, Role::Guest, &a.relays, &a.strategy, &prompter).await?;
+    let paired = establish(
+        secret,
+        Role::Guest,
+        &a.relays,
+        &a.strategy,
+        offline,
+        &prompter,
+    )
+    .await?;
     let (handle, mut events) = paired.confirm(Role::Guest, session_options(a.lan)).await;
     hooks.set(handle.clone());
     println!("\nSaving into {}", out_dir.display());
