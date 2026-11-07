@@ -22,6 +22,7 @@ use tryst::join::{JoinConfig, RoomEvent, RoomHandle, TurnServer, join};
 use tryst::signal::Strategy;
 use tryst::wire::Payload;
 
+use crate::carrier::{Arrival, Carrier};
 use crate::networks::{Network, STUN_SERVERS};
 
 /// The app ID every qrdrop room is joined under.
@@ -161,8 +162,8 @@ impl Paired {
     /// there must not be one: four symbols are 24 bits only if an attacker
     /// gets a single roll at them.
     pub async fn reject(self) {
-        let (room, ..) = self.hold.release().await;
-        crate::session::leave_bounded(room).await;
+        let (carrier, ..) = self.hold.release().await;
+        carrier.leave(crate::session::LEAVE_TIMEOUT).await;
     }
 }
 
@@ -172,17 +173,17 @@ pub(crate) struct Early {
     pub left: bool,
 }
 
-/// The room, read by a task until the person confirms, so the room's event
-/// queue cannot grow without bound while a prompt waits: the paired peer's
-/// frames are kept up to [`EARLY_FRAME_LIMIT`], a stranger's are dropped,
-/// and a leave is remembered.
+/// The carrier, read by a task until the person confirms, so the room's
+/// event queue cannot grow without bound while a prompt waits: the paired
+/// peer's frames are kept up to [`EARLY_FRAME_LIMIT`], a stranger's are
+/// dropped (by [`Carrier::next`]), and a leave is remembered.
 pub(crate) struct Hold {
     stop: Option<oneshot::Sender<()>>,
-    task: tokio::task::JoinHandle<(RoomHandle, Early)>,
+    task: tokio::task::JoinHandle<(Carrier, Early)>,
 }
 
 impl Hold {
-    fn start(mut room: RoomHandle, peer: String) -> Hold {
+    fn start(mut carrier: Carrier) -> Hold {
         let (stop, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
             let mut early = Early {
@@ -193,24 +194,22 @@ impl Hold {
                 tokio::select! {
                     biased;
                     _ = &mut stopped => break,
-                    e = room.next_event() => match e {
+                    a = carrier.next() => match a {
                         None => {
                             early.left = true;
                             break;
                         }
-                        Some(RoomEvent::Left(p)) if p == peer => early.left = true,
-                        Some(RoomEvent::Message { peer: p, message }) if p == peer && message.action == FRAME_ACTION => {
-                            if let Payload::Binary(b) = message.payload
-                                && early.frames.len() < EARLY_FRAME_LIMIT
-                            {
+                        Some(Arrival::Left) => early.left = true,
+                        Some(Arrival::Frame(b)) => {
+                            if early.frames.len() < EARLY_FRAME_LIMIT {
                                 early.frames.push(b);
                             }
                         }
-                        Some(_) => {}
+                        Some(Arrival::Runt) => {}
                     },
                 }
             }
-            (room, early)
+            (carrier, early)
         });
         Hold {
             stop: Some(stop),
@@ -218,8 +217,8 @@ impl Hold {
         }
     }
 
-    /// Stop reading and hand back the room and what was held, in order.
-    pub(crate) async fn release(mut self) -> (RoomHandle, Early) {
+    /// Stop reading and hand back the carrier and what was held, in order.
+    pub(crate) async fn release(mut self) -> (Carrier, Early) {
         if let Some(s) = self.stop.take() {
             let _ = s.send(());
         }
@@ -321,7 +320,7 @@ pub async fn open_room(cfg: OpenConfig) -> Result<Paired, OpenError> {
     Ok(Paired {
         pairing: w.pairing,
         strategy: w.network,
-        hold: Hold::start(w.room, w.peer.clone()),
+        hold: Hold::start(Carrier::room(w.room, w.peer.clone())),
         peer: w.peer,
     })
 }

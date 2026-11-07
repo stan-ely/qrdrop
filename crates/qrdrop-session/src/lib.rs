@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+mod carrier;
 pub mod io;
 pub mod lan;
 pub mod messages;

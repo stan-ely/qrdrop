@@ -33,12 +33,11 @@ use qrdrop_protocol::{
     CHUNK_SIZE, Event, FileOffer, LAN_CLOSED, LanListen, Manifest, NetworkPath, Role, Session,
 };
 use tokio::sync::{Notify, mpsc, oneshot, watch};
-use tryst::join::{RoomEvent, RoomHandle, RoomSender};
-use tryst::wire::Payload;
 
+use crate::carrier::{Arrival, Carrier, CarrierTx};
 use crate::io::{Sink, Source};
 use crate::lan;
-use crate::pair::{FRAME_ACTION, Paired};
+use crate::pair::Paired;
 use crate::path;
 use crate::quic;
 
@@ -69,11 +68,6 @@ pub(crate) const OUT_HIGH: usize = 1024 * 1024;
 /// stalls the channel and memory stays at two blocks, the bound
 /// `src/web/source.js` chose its read-ahead against.
 pub(crate) const READ_AHEAD: usize = 128;
-
-/// Leave `room`, waiting at most [`LEAVE_TIMEOUT`] for the leave to go.
-pub(crate) async fn leave_bounded(room: RoomHandle) {
-    let _ = tokio::time::timeout(LEAVE_TIMEOUT, room.leave()).await;
-}
 
 /// The local-network fast path's part in one session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,13 +221,8 @@ impl Paired {
     /// the frames the peer sent while the SAS was on screen are handled now,
     /// first, in order.
     pub async fn confirm(self, role: Role, opts: SessionOptions) -> (SessionHandle, SessionEvents) {
-        let Paired {
-            pairing,
-            peer,
-            hold,
-            ..
-        } = self;
-        let (room, early) = hold.release().await;
+        let Paired { pairing, hold, .. } = self;
+        let (carrier, early) = hold.release().await;
         let session = pairing.confirm();
         let (link_tx, link_rx) = inbox();
         for f in early.frames {
@@ -242,18 +231,14 @@ impl Paired {
         if early.left {
             let _ = link_tx.send(LinkIn::Left);
         }
-        let sender = room.sender();
+        let tx = carrier.sender();
         let (leave_tx, leave_rx) = oneshot::channel();
-        tokio::spawn(read_room(room, peer.clone(), link_tx.clone(), leave_rx));
+        tokio::spawn(read_carrier(carrier, link_tx.clone(), leave_rx));
         let link = Link {
-            route: Route::Room {
-                sender: sender.clone(),
-                peer: peer.clone(),
-            },
-            ctl: Ctl::Room {
+            route: Route::Carrier(tx.clone()),
+            ctl: Ctl::Carrier {
                 leave: Some(leave_tx),
-                sender,
-                peer,
+                tx,
             },
             link_tx,
             link_rx,
@@ -263,11 +248,11 @@ impl Paired {
 }
 
 /// The paired peer's frames and its leave, onto the session's one inbound
-/// channel. A stranger's frames are dropped here, never held: the send side
-/// has always been targeted at the paired peer, and both halves or neither.
-async fn read_room(
-    mut room: RoomHandle,
-    peer: String,
+/// channel. A stranger's frames never reach here: [`Carrier::next`] drops
+/// them, as the send side has always been targeted at the paired peer, and
+/// both halves or neither.
+async fn read_carrier(
+    mut carrier: Carrier,
     link: Inbox,
     leave: oneshot::Receiver<oneshot::Sender<()>>,
 ) {
@@ -275,30 +260,28 @@ async fn read_room(
     loop {
         tokio::select! {
             ack = &mut leave => {
-                leave_bounded(room).await;
+                carrier.leave(LEAVE_TIMEOUT).await;
                 if let Ok(ack) = ack {
                     let _ = ack.send(());
                 }
                 return;
             }
-            e = room.next_event() => match e {
+            a = carrier.next() => match a {
                 None => {
                     let _ = link.send(LinkIn::Left);
                     return;
                 }
-                Some(RoomEvent::Left(p)) if p == peer => {
+                Some(Arrival::Left) => {
                     let _ = link.send(LinkIn::Left);
                 }
-                Some(RoomEvent::Message { peer: p, message }) if p == peer && message.action == FRAME_ACTION => {
-                    // A frame that is not binary is a runt one layer down,
-                    // which is a clean failure rather than garbage decrypted.
-                    let bytes = match message.payload {
-                        Payload::Binary(b) => b,
-                        _ => vec![],
-                    };
-                    let _ = link.send(LinkIn::Frame(bytes));
+                Some(Arrival::Frame(b)) => {
+                    let _ = link.send(LinkIn::Frame(b));
                 }
-                Some(_) => {}
+                // A runt one layer down, which is a clean failure rather than
+                // garbage decrypted.
+                Some(Arrival::Runt) => {
+                    let _ = link.send(LinkIn::Frame(vec![]));
+                }
             },
         }
     }
@@ -401,10 +384,7 @@ pub(crate) fn inbox() -> (Inbox, mpsc::UnboundedReceiver<LinkIn>) {
 
 /// Where the writer sends frames.
 pub(crate) enum Route {
-    Room {
-        sender: RoomSender,
-        peer: String,
-    },
+    Carrier(CarrierTx),
     /// The other session's inbound channel, for tests.
     #[allow(dead_code)]
     Memory(Inbox),
@@ -412,10 +392,9 @@ pub(crate) enum Route {
 
 /// How the loop leaves, and asks for the selected pair.
 pub(crate) enum Ctl {
-    Room {
+    Carrier {
         leave: Option<oneshot::Sender<oneshot::Sender<()>>>,
-        sender: RoomSender,
-        peer: String,
+        tx: CarrierTx,
     },
     #[allow(dead_code)]
     Memory(Inbox),
@@ -492,12 +471,7 @@ async fn write(
                 }
                 if !lost {
                     match &route {
-                        // An error here is the peer gone; its leave says so.
-                        Route::Room { sender, peer } => {
-                            let _ = sender
-                                .send(FRAME_ACTION, Payload::Binary(f), None, Some(peer))
-                                .await;
-                        }
+                        Route::Carrier(tx) => tx.send_frame(f).await,
                         Route::Memory(tx) => {
                             tx.wait_for_room(MEMORY_WINDOW).await;
                             let _ = tx.send(LinkIn::Frame(f));
@@ -801,16 +775,16 @@ impl Driver {
     fn classify(&self) -> oneshot::Receiver<NetworkPath> {
         let (tx, rx) = oneshot::channel();
         let query = match &self.ctl {
-            Ctl::Room { sender, peer, .. } => Some((sender.clone(), peer.clone())),
+            Ctl::Carrier { tx, .. } => Some(tx.clone()),
             Ctl::Memory(_) => None,
         };
         tokio::spawn(async move {
             let verdict = async {
-                let (sender, peer) = query?;
+                let tx = query?;
                 let deadline = tokio::time::Instant::now() + PATH_WAIT;
                 loop {
-                    if let Some(p) = sender.selected_pair(&peer).await {
-                        return Some(path::classify(&p));
+                    if let Some(p) = tx.path().await {
+                        return Some(p);
                     }
                     if tokio::time::Instant::now() >= deadline {
                         return None;
@@ -1604,7 +1578,7 @@ impl Driver {
             }
         }
         match &mut self.ctl {
-            Ctl::Room { leave, .. } => {
+            Ctl::Carrier { leave, .. } => {
                 if let Some(tx) = leave.take() {
                     let (ack, done) = oneshot::channel();
                     if tx.send(ack).is_ok() {
