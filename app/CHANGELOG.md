@@ -13,6 +13,22 @@ generated from commit subjects afterwards.
 
 ## Unreleased
 
+**Pair with no internet.** Settings has a new switch, **Pair without internet**. With it
+on, the code you show carries this device's address on the local network, and a device
+on the same Wi-Fi with the qrdrop app or command line pairs with you directly, with no
+internet at all: on a phone hotspot with no data, a plane, or a network that blocks the
+relays. Scanning works the other way round whatever the switch says: a code made by
+`qrdrop send --offline`, or by another app with the switch on, is tried at its address
+first. You still check the same four symbols, and the file goes over that one
+connection, still encrypted end to end. Only a device holding the code can complete the
+connection, so another device on the Wi-Fi that finds it gets nowhere.
+
+The switch is off to begin with. A version of the app older than 1.4.0 cannot read a
+code with an address in it, and on Windows and macOS the first such send makes the
+firewall ask whether qrdrop may accept connections, which the switch says. The code
+also shows your local address to anyone who can see it. The website ignores the
+address and pairs over the internet as before.
+
 **Getting ready to fix a false code mismatch.** Pairing looks for the other device on
 two networks at once, and each device used to keep whichever answered first for it. Very
 occasionally the two devices kept different ones, and then the four symbols did not match

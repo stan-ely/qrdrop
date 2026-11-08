@@ -50,7 +50,8 @@
     "test:e2e:tryst": "node e2e/tryst.e2e.mjs",
     "test:e2e:interop:matrix": "node e2e/interop.e2e.mjs --matrix && node e2e/interop.e2e.mjs --matrix --lan && node e2e/interop.e2e.mjs --quic && node e2e/interop.e2e.mjs --offline",
     "test:e2e:browser-cli": "node e2e/browser-cli.e2e.mjs",
-    "test:e2e:app-native": "node e2e/app-native.e2e.mjs"
+    "test:e2e:app-native": "node e2e/app-native.e2e.mjs",
+    "test:e2e:app-android-offline": "node e2e/app-android-offline.e2e.mjs"
   },
   "dependencies": {
     "@trystero-p2p/nostr": "0.25.4",

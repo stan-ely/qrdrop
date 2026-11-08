@@ -75,6 +75,19 @@ Once the WebRTC data channel is open (DTLS over SCTP), the two exchange fresh
 ECDH public keys over it. That gives one key per direction for this session
 alone, salted with the code.
 
+**With no internet, the code can carry an address instead.** `send --offline` on
+the command line, or **Pair without internet** in the app's Settings, adds the
+sender's private IPv4 addresses and a port to the code. A native receiver dials
+that first, for up to three seconds, before it joins any relay. The two then
+prove the code to each other over a WebSocket before either keys anything, and
+the same ECDH runs over that socket. A pairing made this way involves none of
+the parties in the table above: no relay, no STUN, no TURN. The socket goes on
+to carry the whole session, so it is the route as well, **local**. The website
+cannot dial, so it ignores the address. Either way the sender keeps waiting on
+the relays too, so a receiver that cannot reach the address still pairs. The
+design is
+[protocol.md, "Pairing with no internet"](protocol.md#design-notes).
+
 ### 2. Verifying
 
 Both screens show four emoji derived from that ECDH. The two people compare them.
@@ -162,6 +175,10 @@ Three rules make this safe to choose automatically:
   - So someone on the network who takes the connection can neither join it nor
     pose as the peer
     ([protocol.md, the local-network fast path](protocol.md#design-notes)).
+
+A pairing made at the address in the code (step 1) is not on this chart. It is
+already a WebSocket on the local network, so neither side offers LAN or QUIC,
+and the file stays on the socket it paired over.
 
 ## Inside the app
 

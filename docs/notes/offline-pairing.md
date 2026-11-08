@@ -11,7 +11,7 @@ CLAUDE.md, the way the LAN path's did.
 |---|---|---|
 | A. Decoders tolerate a locator | released | npm 0.7.0 and app-v1.4.0, both 2026-11-03 |
 | B. Rust: the session over a socket, and the rendezvous | built 2026-11-07, unreleased | `160824c`..`9e9a171`; the gate is `crates/qrdrop-session/examples/offline.sh`. See "As built" under B |
-| C. Node CLI and the app | built 2026-11-08, unreleased; not yet tried on a phone | `send --offline` in both CLIs, and "Pair without internet" in the app's Settings. The gate passes in all four CLI pairings with no route out, the matrix gained an `--offline` run, and app-native gained an offline send on each of the app's sessions. See "As built" under C |
+| C. Node CLI and the app | built 2026-11-08, unreleased; checked on an Android 10 emulator, not yet on a phone | `send --offline` in both CLIs, and "Pair without internet" in the app's Settings. The gate passes in all four CLI pairings with no route out, the matrix gained an `--offline` run, and app-native gained an offline send on each of the app's sessions. See "As built" under C |
 | D. Docs, threat model, CLAUDE.md | done 2026-11-08 | `docs/protocol.md` ("Pairing with no internet"), two threat-model entries, and the CLAUDE.md invariant |
 
 ## The problem
@@ -287,6 +287,24 @@ This is most of the work, and it is the part the plan before this note underesti
       device's only other way to learn the address.
     - **A device with no private address** (mobile data alone) keeps no listener and shows
       the bare code, without a word. The person asked for a setting, not for this transfer.
+    - **Two arrivals are kept asked for, not one** (`SPARE_ARRIVALS`), and a page socket
+      that fails to open is retried rather than ending the listener. Both came from the
+      emulator. The page answers each ask by opening a WebSocket to its own relay, and with
+      one ask outstanding the replacement for a socket just handed a connection was still
+      opening when the next connection arrived. On a probe that connected five times in a
+      row, only the first ever heard a nonce. And an open that missed its five-second dial
+      timeout rejected `arrivals()`, which acceptRendezvous reads as the source gone, so
+      the device stopped accepting for the rest of the send. With both changes all five
+      heard one.
+    - **Measured on an Android 10 emulator** (`e2e/app-android-offline.e2e.mjs`): the app
+      receiving a CLI `send --offline` code on both sessions, and sending with the switch
+      on, each pairing at the address. Five runs in five, at 4 GB. At the AVD's default
+      2 GB the guest was swapping and the send leg failed four in five, which is the guest
+      and not the code. Two findings that are not about the app: the Node CLI sender
+      accepts nothing for about two seconds after printing its code (it is loading its
+      relay stack), so a scan inside that window falls back to the relays; and the
+      emulator's own address cannot be reached from the host, so the send leg goes through
+      `adb forward` and a rewritten locator.
     - **Tests:** `acceptRendezvous` against an in-memory relay in `test/offline.test.mjs`
       (a wrong code, the limit, a stop), the relay over loopback in `lan.rs`, the row in
       `test/app-view.test.mjs`, and two legs at the end of `e2e/app-native.e2e.mjs`: an

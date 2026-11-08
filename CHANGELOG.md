@@ -5,6 +5,23 @@ is the finer-grained record.
 
 ## Unreleased
 
+**Pair with no internet.** `qrdrop send --offline` puts this machine's address on the
+local network into the code. A device on the same Wi-Fi that reads it, with the
+qrdrop app or command line, connects straight to it and pairs with no internet at all:
+on a phone hotspot with no data, a plane, or a network that blocks the relays. You
+still check the same four symbols, and the file goes over that one connection, still
+encrypted end to end. Only someone holding the code can complete the connection, so
+another device on the Wi-Fi that finds the port gets nowhere. `qrdrop receive` tries
+the address in any code that has one before it tries the internet, and says so if it
+cannot reach it. The website cannot open such a connection, so it ignores the address
+and pairs over the internet as before.
+
+It is off unless you ask for it. A version older than 0.7.0 cannot read a code with an
+address in it, and on Windows and macOS the first `--offline` send makes the firewall
+ask whether qrdrop may accept connections. The code also shows your local address to
+anyone who can see it. `--offline` beside `--no-lan` is refused, since they ask for
+opposite things.
+
 **Getting ready to fix a false code mismatch.** Pairing looks for the other device on
 two networks at once, and each device used to keep whichever answered first for it. Very
 occasionally the two devices kept different ones, and then the four symbols did not match

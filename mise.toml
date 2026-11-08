@@ -189,6 +189,10 @@ description = "Run the desktop app on its native session against the Node CLI, b
 depends = ["app:build-site", "app:config"]
 run = ["cd app && npx tauri build --debug --no-bundle", "node e2e/app-native.e2e.mjs"]
 
+[tasks."test:e2e:app-android-offline"]
+description = "Offline pairing against the Android debug app, both ways, over CDP (needs the app open on an emulator or device)"
+run = "node e2e/app-android-offline.e2e.mjs"
+
 [tasks."test:e2e:tryst"]
 description = "Pair the Rust tryst peer with a Node Trystero peer, both ways, over both strategies (--live for the public relays)"
 run = "node e2e/tryst.e2e.mjs"
