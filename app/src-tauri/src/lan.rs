@@ -34,10 +34,22 @@
 //!
 //! One transfer at a time, like `SinkState`, so one slot: a second
 //! `lan_listen` aborts the first.
+//!
+//! OFFLINE PAIRING. `offline_listen` is the same relay for a different
+//! question (docs/notes/offline-pairing.md). The fast path's listener is
+//! proved by a token the page hands Rust, so Rust can decide which
+//! connection is the peer. The offline listener is proved by the rendezvous,
+//! which is keyed on the secret, and Rust is never handed that. So this one
+//! decides nothing: it hands the page every connection that arrives, each on
+//! a page socket of its own, and the page runs the handshake on each and keeps
+//! the first that proves the code (`acceptRendezvous` in
+//! src/transport/rendezvous.js). The page still presents the token on each of
+//! its sockets, for the local-process reason above.
 
+use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -72,6 +84,29 @@ const MODE: &str = if cfg!(any(target_os = "android", target_os = "linux")) {
 #[derive(Default)]
 pub struct LanState(Mutex<Option<tauri::async_runtime::JoinHandle<()>>>);
 
+/// The offline listener's accept loop. Only the loop: each connection it has
+/// handed the page runs in a task of its own, so stopping the listener once
+/// one has won does not cut the session riding it.
+///
+/// Each listener has an id, and `offline_close` names the one it means:
+/// the page closes a listener when its session ends, which can be after the
+/// next send has bound another, and a close that stopped whichever was
+/// current would take that one down instead.
+#[derive(Default)]
+pub struct OfflineState(Mutex<(u32, Option<tauri::async_runtime::JoinHandle<()>>)>);
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineListening {
+    id: u32,
+    #[serde(flatten)]
+    listening: Listening,
+}
+
+/// Most addresses a locator carries. Mirrors `LOCATOR_ADDRESSES` in
+/// src/transport/rendezvous.js and qrdrop-protocol's locator.
+const LOCATOR_ADDRESSES: usize = 4;
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Listening {
@@ -105,6 +140,47 @@ pub async fn lan_listen(
         previous.abort();
     }
     Ok(listening)
+}
+
+/// Binds the offline listener: every interface for the peer, 127.0.0.1 for
+/// the page, and the addresses that go in the locator. Binding before the
+/// code is shown is the point, since the code says where this is.
+#[tauri::command]
+pub async fn offline_listen(
+    state: tauri::State<'_, OfflineState>,
+    token: String,
+) -> Result<OfflineListening, String> {
+    let token = parse_token(&token)?;
+    let lan = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await.map_err(|e| e.to_string())?;
+    let local = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.map_err(|e| e.to_string())?;
+    let mut addrs = offered_addresses();
+    addrs.truncate(LOCATOR_ADDRESSES);
+    let listening = Listening {
+        port: lan.local_addr().map_err(|e| e.to_string())?.port(),
+        local_port: local.local_addr().map_err(|e| e.to_string())?.port(),
+        addrs,
+    };
+    let task = tauri::async_runtime::spawn(hand_over(lan, local, token));
+    let mut slot = state.0.lock().unwrap();
+    slot.0 = slot.0.wrapping_add(1);
+    if let Some(previous) = slot.1.replace(task) {
+        previous.abort();
+    }
+    Ok(OfflineListening { id: slot.0, listening })
+}
+
+/// Stops taking connections. The page calls it once a pairing has won, or
+/// the session ended without one, and either way the winner's link is
+/// untouched: it runs in its own task.
+#[tauri::command]
+pub fn offline_close(state: tauri::State<'_, OfflineState>, id: u32) {
+    let mut slot = state.0.lock().unwrap();
+    if slot.0 != id {
+        return;
+    }
+    if let Some(task) = slot.1.take() {
+        task.abort();
+    }
 }
 
 /// Stops a listener nobody reached. After both ends have arrived the page
@@ -298,7 +374,77 @@ async fn relay(
     if page.send(Message::Binary(vec![ACK].into())).await.is_err() {
         return;
     }
+    pipe(page, peer).await;
+}
 
+/// The offline listener's loop: page sockets that presented the token wait
+/// in `idle`, peers that completed a WebSocket upgrade wait in `arrived`,
+/// and each time there is one of each they are joined and handed to a task
+/// of their own. The page is told with ACK and the peer's IPv4 address, five
+/// bytes, which is its cue to start the rendezvous and to open the next page
+/// socket.
+///
+/// The page keeps at most `MAX_HANDSHAKES` handshakes running, so it is the
+/// page that bounds them; this side bounds what it holds, upgrades in flight
+/// and peers waiting for a page socket together, at the same number, and a
+/// peer that has waited `HANDSHAKE` is dropped rather than handed over late.
+async fn hand_over(lan: TcpListener, local: TcpListener, token: [u8; TOKEN_BYTES]) {
+    use futures_util::stream::FuturesUnordered;
+
+    let mut pages = FuturesUnordered::new();
+    let mut upgrades = FuturesUnordered::new();
+    let mut idle: VecDeque<WebSocketStream<TcpStream>> = VecDeque::new();
+    let mut arrived: VecDeque<(WebSocketStream<TcpStream>, Ipv4Addr, Instant)> = VecDeque::new();
+    loop {
+        tokio::select! {
+            r = local.accept() => {
+                let Ok((tcp, _)) = r else { return };
+                if pages.len() < MAX_HANDSHAKES {
+                    pages.push(tokio::time::timeout(HANDSHAKE, handshake(tcp, token, Reply::Later)));
+                }
+            }
+            r = lan.accept() => {
+                let Ok((tcp, from)) = r else { return };
+                // The locator carries IPv4 only, so a peer reaching this any
+                // other way is not one the code sent.
+                let IpAddr::V4(ip) = from.ip() else { continue };
+                if upgrades.len() + arrived.len() < MAX_HANDSHAKES {
+                    upgrades.push(tokio::time::timeout(HANDSHAKE, async move {
+                        let _ = tcp.set_nodelay(true);
+                        tokio_tungstenite::accept_async(tcp).await.ok().map(|ws| (ws, ip))
+                    }));
+                }
+            }
+            Some(r) = pages.next(), if !pages.is_empty() => {
+                if let Ok(Some(ws)) = r {
+                    idle.push_back(ws);
+                }
+            }
+            Some(r) = upgrades.next(), if !upgrades.is_empty() => {
+                if let Ok(Some((ws, ip))) = r {
+                    arrived.push_back((ws, ip, Instant::now()));
+                }
+            }
+        }
+        arrived.retain(|(_, _, at)| at.elapsed() < HANDSHAKE);
+        while !idle.is_empty() && !arrived.is_empty() {
+            let (Some(page), Some((peer, ip, _))) = (idle.pop_front(), arrived.pop_front()) else { break };
+            tokio::spawn(join(page, peer, ip));
+        }
+    }
+}
+
+async fn join(mut page: WebSocketStream<TcpStream>, peer: WebSocketStream<TcpStream>, ip: Ipv4Addr) {
+    let mut cue = vec![ACK];
+    cue.extend_from_slice(&ip.octets());
+    if page.send(Message::Binary(cue.into())).await.is_err() {
+        return;
+    }
+    pipe(page, peer).await;
+}
+
+/// Forwards between the page and its peer until either side closes.
+async fn pipe(page: WebSocketStream<TcpStream>, peer: WebSocketStream<TcpStream>) {
     let (mut page_tx, mut page_rx) = page.split();
     let (mut peer_tx, mut peer_rx) = peer.split();
     // Whole messages, binary only, in order. A close from either side is
@@ -411,6 +557,55 @@ mod tests {
 
         page.close(None).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+    }
+
+    /// The offline listener over loopback: a page socket without the token is
+    /// never handed a peer, each peer goes to its own page socket with the
+    /// cue and its address, both links carry, and stopping the loop leaves
+    /// a joined link running.
+    #[tokio::test]
+    async fn hands_every_peer_to_a_page_socket_of_its_own() {
+        use tokio_tungstenite::connect_async;
+        let token = [7u8; TOKEN_BYTES];
+        let lan = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let local = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let lan_url = format!("ws://{}/", lan.local_addr().unwrap());
+        let local_url = format!("ws://{}/", local.local_addr().unwrap());
+        let task = tokio::spawn(hand_over(lan, local, token));
+        let wait = Duration::from_secs(2);
+
+        let (mut impostor, _) = connect_async(&local_url).await.unwrap();
+        impostor.send(Message::Binary(vec![0u8; TOKEN_BYTES].into())).await.unwrap();
+        let (mut first, _) = connect_async(&local_url).await.unwrap();
+        first.send(Message::Binary(token.to_vec().into())).await.unwrap();
+        let (mut second, _) = connect_async(&local_url).await.unwrap();
+        second.send(Message::Binary(token.to_vec().into())).await.unwrap();
+        // Let both page sockets be checked before any peer arrives, so the
+        // order they are handed out in is the order they connected in.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let cue = Message::Binary(vec![ACK, 127, 0, 0, 1].into());
+
+        let (mut a, _) = connect_async(&lan_url).await.unwrap();
+        assert_eq!(tokio::time::timeout(wait, first.next()).await.unwrap().unwrap().unwrap(), cue);
+        let (mut b, _) = connect_async(&lan_url).await.unwrap();
+        assert_eq!(tokio::time::timeout(wait, second.next()).await.unwrap().unwrap().unwrap(), cue);
+
+        first.send(Message::Binary(vec![1u8; 16].into())).await.unwrap();
+        b.send(Message::Binary(vec![2u8; 97].into())).await.unwrap();
+        assert_eq!(a.next().await.unwrap().unwrap(), Message::Binary(vec![1u8; 16].into()));
+        assert_eq!(second.next().await.unwrap().unwrap(), Message::Binary(vec![2u8; 97].into()));
+
+        // The impostor was closed at its handshake, never handed a peer.
+        match tokio::time::timeout(wait, impostor.next()).await {
+            Ok(None | Some(Err(_)) | Some(Ok(Message::Close(_)))) => {}
+            other => panic!("a page socket without the token got {other:?}"),
+        }
+
+        task.abort();
+        let _ = task.await;
+        a.send(Message::Binary(vec![3u8; 70000].into())).await.unwrap();
+        assert_eq!(first.next().await.unwrap().unwrap(), Message::Binary(vec![3u8; 70000].into()));
+        assert!(connect_async(&lan_url).await.is_err(), "still listening after the loop stopped");
     }
 
     /// An older peer sends the bare token and is answered ACK, as before.

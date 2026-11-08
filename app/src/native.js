@@ -23,7 +23,14 @@
  * the JS session; a share handoff is a real path in the cache directory and
  * goes native. A typed message is the exception: it crosses as text and Rust
  * sends it from memory, so it never has a path to need.
+ *
+ * A send carries Settings' "Pair without internet" (offline.js), read as it
+ * starts: native.rs then binds the offline listener and returns a code with
+ * this device's address in it, exactly as the page's own session does
+ * through lan.js's openOffline.
  */
+
+import { offlinePairing } from './offline.js'
 
 const OVERRIDE_KEY = 'qrdrop:native-session'
 
@@ -70,12 +77,16 @@ export async function createNativeSession({ android }) {
   const session = {
     async send(file, onEvent) {
       /** @type {{ id: number, code: string }} */
-      const started = await invoke('native_send', { path: file.path, name: file.name, events: channel(onEvent) })
+      const started = await invoke('native_send', {
+        path: file.path, name: file.name, offline: offlinePairing(), events: channel(onEvent),
+      })
       return { code: started.code, control: control(started.id) }
     },
     async sendText({ text, name, mime }, onEvent) {
       /** @type {{ id: number, code: string }} */
-      const started = await invoke('native_send_text', { text, name, mime, events: channel(onEvent) })
+      const started = await invoke('native_send_text', {
+        text, name, mime, offline: offlinePairing(), events: channel(onEvent),
+      })
       return { code: started.code, control: control(started.id) }
     },
     async receive(code, onEvent) {

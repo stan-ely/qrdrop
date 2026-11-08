@@ -16,10 +16,17 @@
  */
 
 import { dialWebSocket, clientHandshake } from '../../src/transport/lan.js'
+import { acceptRendezvous, nextMessage } from '../../src/transport/rendezvous.js'
+import { offlinePairing } from './offline.js'
 
 // The page's side of its own relay: 127.0.0.1, on a port the relay just
 // bound, so anything longer than this is not a slow network.
 const LOCAL_DIAL_MS = 5000
+
+// The relay's cue that a peer has arrived on a page socket: lan.js's ACK,
+// then the peer's IPv4 address (src-tauri/src/lan.rs, `join`).
+const ACK = 0x06
+const CUE_BYTES = 5
 
 /** @param {Bytes} bytes */
 const toHex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
@@ -68,5 +75,48 @@ export async function createTauriLan() {
     },
 
     dial: (url, timeoutMs) => dialWebSocket(WebSocketImpl, url, timeoutMs),
+
+    /**
+     * The offline listener, when Settings has "Pair without internet" on
+     * (offline.js), and null when it is off. The relay accepts; this side
+     * proves. Each page socket presents the token, waits for the relay's cue
+     * that a peer is on the other end of it, and is then one connection for
+     * acceptRendezvous, which keeps the first that proves the code.
+     */
+    async openOffline(secret) {
+      if (!offlinePairing()) return null
+      const token = crypto.getRandomValues(new Uint8Array(16))
+      /** @type {{ id: number, port: number, localPort: number, addrs: string[] }} */
+      const { id, port, localPort, addrs } = await invoke('offline_listen', { token: toHex(token) })
+      const stop = () => { invoke('offline_close', { id }).catch(() => {}) }
+
+      const acceptor = acceptRendezvous({
+        secret,
+        arrivals: async () => {
+          const socket = await dialWebSocket(WebSocketImpl, `ws://127.0.0.1:${localPort}/`, LOCAL_DIAL_MS)
+          socket.send(token)
+          // Null once the relay has stopped, which drops its waiting sockets.
+          const cue = await nextMessage(socket)
+          if (!cue || cue.length !== CUE_BYTES || cue[0] !== ACK) {
+            socket.close()
+            return null
+          }
+          return { socket, from: Array.from(cue.subarray(1)).join('.') }
+        },
+      })
+      // A win stops the relay taking more; the winner's link is a task of its
+      // own there and runs on.
+      acceptor.accepted.then(stop, () => {})
+      return {
+        port,
+        addrs,
+        locator: addrs.length ? { port, addresses: addrs } : null,
+        accepted: acceptor.accepted,
+        close() {
+          acceptor.close()
+          stop()
+        },
+      }
+    },
   }
 }

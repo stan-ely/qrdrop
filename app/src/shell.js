@@ -64,8 +64,11 @@ const ENTRY = { qrdropShell: true }
  * @param {typeof import('./history.js')} [options.history] The store, in the
  *   app's Rust. Absent where there is no shell to keep one, and then History
  *   says nothing has been recorded, which is true.
+ * @param {{ get: () => boolean, set: (on: boolean) => boolean }} [options.offline]
+ *   "Pair without internet" (offline.js). Shown once main.js reports that a
+ *   LanPlatform registered, through setState's `offline.available`.
  */
-export function createShell({ el, barRoot, pageRoot, changeFolder, openLink, history: store }) {
+export function createShell({ el, barRoot, pageRoot, changeFolder, openLink, history: store, offline }) {
   const { buildLabel = '', buildHref = '', buildTitle = '' } = document.documentElement.dataset
 
   /** @type {ShellState} */
@@ -84,6 +87,7 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink, his
     // history.rs when the switch is off, so this guess cannot record past it.
     history: { enabled: true, entries: [], error: null },
     confirm: null,
+    offline: { on: offline?.get() ?? false, available: false, prompts: false },
   }
 
   /** @type {import('../../src/web/vdom.js').VNode[] | null} */
@@ -210,6 +214,15 @@ export function createShell({ el, barRoot, pageRoot, changeFolder, openLink, his
       case 'history:clear': return ask('clear')
       case 'history:clear-confirm': return void answered(store?.clear())
       case 'history:keep': return void answered()
+      // What storage kept, which is off when it refused, so the switch never
+      // shows a setting the next send will not read.
+      case 'offline:enabled': {
+        const on = offline ? offline.set(Boolean(payload)) : false
+        setState({ offline: { ...state.offline, on } })
+        const input = /** @type {HTMLInputElement | null} */ (document.getElementById('offline-enabled'))
+        if (input) input.checked = on
+        return
+      }
       default: throw new Error(`Unknown intent: ${intent}`)
     }
   }

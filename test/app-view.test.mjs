@@ -27,6 +27,7 @@ const shellState = overrides => /** @type {any} */ ({
   protect: { title: 'What this does and does not protect', node: null },
   history: { enabled: true, entries: [], error: null },
   confirm: null,
+  offline: { on: false, available: true, prompts: false },
   ...overrides,
 })
 
@@ -300,6 +301,42 @@ test('Settings has the History switch, and Clear only when there is something', 
   assert.equal(byId(full, 'history-clear').props.disabled, false)
   byId(full, 'history-clear').props.onclick()
   assert.deepEqual(seen.at(-1), ['history:clear', undefined])
+})
+
+test('Settings has "Pair without internet", off until switched on, and says what it costs', () => {
+  /** @type {any[]} */
+  const seen = []
+  const quiet = page(shellState({ page: 'settings' }), (i, p) => seen.push([i, p]))
+  const sw = byId(quiet, 'offline-enabled')
+  assert.equal(sw.props.role, 'switch')
+  assert.equal(sw.props.checked, false)
+  assert.match(text(quiet), /same Wi-Fi can pair with no internet/)
+  assert.match(text(quiet), /Older versions may not read the code/)
+  assert.doesNotMatch(text(quiet), /accept connections/)
+  sw.props.onchange({ target: { checked: true } })
+  assert.deepEqual(seen, [['offline:enabled', true]])
+
+  // Where listening asks the firewall, the row says so before it is on.
+  const prompts = page(shellState({ page: 'settings', offline: { on: false, available: true, prompts: true } }), () => {})
+  assert.match(text(prompts), /Your system may ask to let qrdrop accept connections/)
+
+  // With no LanPlatform nothing could listen, so the row is not offered.
+  const none = page(shellState({ page: 'settings', offline: { on: false, available: false, prompts: false } }), () => {})
+  assert.equal(byId(none, 'offline-enabled'), undefined)
+})
+
+test('the offline listener is read per send, and only in the app', () => {
+  // The setting is the app's: src/web never reads it, and the website has no
+  // LanPlatform, so getPlatform().lan?.openOffline is absent there.
+  const element = readFileSync(new URL('../src/web/element.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(element, /qrdrop:offline-pairing|offlinePairing/)
+  assert.match(element, /getPlatform\(\)\.lan\?\.openOffline/)
+  const site = readFileSync(new URL('../site/main.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(site, /registerPlatform/)
+  // Both of the app's sessions read it as a send starts.
+  for (const file of ['../app/src/lan.js', '../app/src/native.js']) {
+    assert.match(readFileSync(new URL(file, import.meta.url), 'utf8'), /offlinePairing\(\)/, file)
+  }
 })
 
 test('clearing is asked first, and switching off asks about what is kept', () => {

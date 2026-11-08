@@ -36,6 +36,10 @@ import { pathDescription, LAN_PATH, QUIC_PATH } from '../../src/core/messages.js
  * @property {'clear' | 'off' | null} confirm the question Settings is asking
  *   about the history: whether to clear it, or, having just been switched
  *   off, whether to clear what it already holds
+ * @property {{ on: boolean, available: boolean, prompts: boolean }} offline
+ *   "Pair without internet" (app/src/offline.js). `available` once the
+ *   shell's LanPlatform has registered, and `prompts` where listening raises
+ *   the OS's firewall prompt (lan.rs's MODE, 'prompt')
  *
  * @typedef {import('../../src/web/events.js').TransferRecord} Entry
  */
@@ -144,6 +148,7 @@ function settings(state, dispatch) {
       ]),
       state.saveError ? h('p', { class: 'note', role: 'alert' }, state.saveError) : null,
     ]),
+    offlineSettings(state, dispatch),
     historySettings(state, dispatch),
     h('section', { class: 'group' }, [
       h('button', {
@@ -152,6 +157,43 @@ function settings(state, dispatch) {
       }, [h('span', { class: 'row-label' }, 'About qrdrop'), CHEVRON_ICON()]),
     ]),
   ]
+}
+
+/**
+ * "Pair without internet". Off until switched on, and the reasons are in
+ * app/src/offline.js: an older receiver cannot read a code with an address
+ * in it, and on Windows and macOS listening asks the firewall first. Both are
+ * said on the row, because each is something the person will meet and
+ * should not have to guess at. Not drawn until the shell's LanPlatform has
+ * registered, since without one nothing could listen.
+ *
+ * @param {ShellState} state
+ * @param {Dispatch} dispatch
+ */
+function offlineSettings(state, dispatch) {
+  const { on, available, prompts } = state.offline
+  if (!available) return null
+  // "The app or command line", because the website cannot dial and pairs over
+  // the relays whatever the code says. No version number: the app and the
+  // CLI are versioned apart, and a receiver new enough to read the code is
+  // not always new enough to dial it (1.4 reads it and ignores the address).
+  const detail = 'Puts this device’s local address in the code, so the qrdrop app or command line on the '
+    + 'same Wi-Fi can pair with no internet. Older versions may not read the code.'
+    + (prompts ? ' Your system may ask to let qrdrop accept connections.' : '')
+  return h('section', { class: 'group', 'aria-labelledby': 'pairing-heading' }, [
+    h('h2', { id: 'pairing-heading' }, 'Pairing'),
+    h('label', { class: 'row', for: 'offline-enabled' }, [
+      h('span', { class: 'row-text' }, [
+        h('span', { class: 'row-label' }, 'Pair without internet'),
+        h('span', { class: 'row-value' }, detail),
+      ]),
+      h('input', {
+        id: 'offline-enabled', class: 'switch', type: 'checkbox', role: 'switch', checked: on,
+        onchange: (/** @type {Event} */ ev) =>
+          dispatch('offline:enabled', /** @type {HTMLInputElement} */ (ev.target).checked),
+      }),
+    ]),
+  ])
 }
 
 /**

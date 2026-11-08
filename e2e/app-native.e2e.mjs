@@ -30,6 +30,15 @@
  *    any. It is shown on the done screen, and nothing lands in Downloads.
  * 6. History holds those five, in a QRDROP_HISTORY_DIR of the suite's own,
  *    with no code, digest or message text anywhere in the file.
+ * 7. With Settings' "Pair without internet" on, the app sends on each of its
+ *    sessions, native and then the page's own, with a code that carries this
+ *    machine's address, and the CLI pairs at that address rather than over a
+ *    relay. The relays are reachable here, so what this proves is that the
+ *    two ends agree on the rendezvous through the app's listeners; that
+ *    neither needs a relay is offline.sh's gate. After History, so its five
+ *    stay five. Binding on every interface is what raises Windows' firewall
+ *    prompt, and the switch is how a person asks for it; the CLI dials this
+ *    machine's own address, which the firewall does not stand between.
  *
  * Build first: `mise run app:build-site`, then
  * `npx tauri build --debug --no-bundle` in app/. QRDROP_APP points at another
@@ -412,6 +421,80 @@ async function appHistory(page, dir) {
   console.log('\nPASS  app(native) history  five entries, newest first, no code, digest or text in it')
 }
 
+/**
+ * The app sends with "Pair without internet" on (app/src/offline.js's key),
+ * on the native session or, with `native` false, the page's own: the
+ * localStorage override switches the session for the reload toChoose does.
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} tmp
+ * @param {{ native: boolean }} opts
+ */
+async function appSendsOffline(page, tmp, { native }) {
+  const label = native ? 'app(native)' : 'app(js)'
+  const payload = randomBytes(256 * 1024)
+  const source = path.join(tmp, 'offline.bin')
+  fs.writeFileSync(source, payload)
+  const outDir = fs.mkdtempSync(path.join(tmp, 'cli-offline-'))
+
+  await page.evaluate(js => {
+    localStorage.setItem('qrdrop:offline-pairing', '1')
+    if (js) localStorage.setItem('qrdrop:native-session', '0')
+    else localStorage.removeItem('qrdrop:native-session')
+  }, !native)
+  await toChoose(page)
+  // A path for the native session; a File built in the page for its own,
+  // which cannot open a path.
+  const accepted = native
+    ? await page.evaluate(
+      file => /** @type {any} */ (document.querySelector('qr-drop')).sendFile(file),
+      { path: source, name: 'offline.bin', size: payload.length },
+    )
+    : await page.evaluate(
+      bytes => /** @type {any} */ (document.querySelector('qr-drop'))
+        .sendFile(new File([new Uint8Array(bytes)], 'offline.bin')),
+      Array.from(payload),
+    )
+  if (!accepted) throw new Error('sendFile declined on the choose screen')
+  await page.waitForFunction(
+    () => /^qrdrop:/.test(document.querySelector('qr-drop')?.shadowRoot?.querySelector('#manual-code')?.textContent?.trim() ?? ''),
+    null, { timeout: TIMEOUT },
+  )
+  const code = await text(page, '#manual-code')
+  if (!/^qrdrop:[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]+$/.test(code)) {
+    throw new Error(`${label}: the code carries no locator: ${code}`)
+  }
+  log(label, 'shows a code with a locator')
+
+  const peer = cli(['receive', code, '--out', outDir], 'recv:js')
+  try {
+    await peer.waitFor(/Paired over the local network/)
+    await page.waitForSelector('#screen-verify:not([hidden])', { timeout: TIMEOUT })
+    const appSas = await text(page, '#sas')
+    const theirs = await cliSas(peer)
+    if (appSas !== theirs) throw new Error(`SAS mismatch: app ${appSas} vs CLI ${theirs}`)
+
+    await page.click('#verify-status button.primary')
+    peer.say('y')
+    await peer.waitFor(/Incoming:.*Accept\?/)
+    peer.say('y')
+    const exit = await peer.exited
+    if (exit !== 0) throw new Error(`qrdrop receive exited ${exit}`)
+    await page.waitForSelector('#screen-done:not([hidden])', { timeout: TIMEOUT })
+
+    const written = fs.readdirSync(outDir)
+    const landed = fs.readFileSync(path.join(outDir, written[0]))
+    if (!landed.equals(payload)) throw new Error(`bytes differ: sent ${sha(payload)}, got ${sha(landed)}`)
+    console.log(`\nPASS  ${label} -> js offline  ${landed.length} bytes, paired at the code's address`)
+  } finally {
+    peer.child.kill()
+    await page.evaluate(() => {
+      localStorage.removeItem('qrdrop:offline-pairing')
+      localStorage.removeItem('qrdrop:native-session')
+    })
+  }
+}
+
 async function main() {
   if (process.platform !== 'win32') throw new Error('Windows only: it attaches to WebView2 over CDP')
   if (!fs.existsSync(APP)) throw new Error(`no app at ${APP}: build it with \`npx tauri build --debug --no-bundle\` in app/`)
@@ -453,6 +536,8 @@ async function main() {
     await appSendsText(page, tmp)
     await appReceivesText(page)
     await appHistory(page, historyDir)
+    await appSendsOffline(page, tmp, { native: true })
+    await appSendsOffline(page, tmp, { native: false })
     if (errors.length) throw new Error('page errors:\n' + errors.join('\n'))
     console.log('\nAPP-NATIVE E2E PASSED')
   } finally {

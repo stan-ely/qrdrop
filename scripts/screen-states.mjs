@@ -431,6 +431,9 @@ export const APP_FIXTURES = [
       page: 'settings', canChangeFolder: true,
       saveLocation: 'primary:Documents/Received from qrdrop/a folder with a long name',
       history: { enabled: true, entries: [], error: null },
+      // The switch's longest copy, the firewall line included, which is a
+      // desktop's; on a phone the same row is a sentence shorter.
+      offline: { on: false, available: true, prompts: true },
     },
   },
   {
@@ -439,6 +442,7 @@ export const APP_FIXTURES = [
     shell: {
       page: 'settings', canChangeFolder: false, saveLocation: 'Downloads/qrdrop',
       history: { enabled: true, entries: HISTORY_ENTRIES.slice(0, 2), error: null },
+      offline: { on: true, available: true, prompts: false },
     },
   },
   { name: 'app-about', shell: { page: 'about', version: '1.3.0' } },

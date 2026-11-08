@@ -63,6 +63,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(sink::SinkState::default())
         .manage(lan::LanState::default())
+        .manage(lan::OfflineState::default())
         .manage(native::NativeState::default())
         .invoke_handler(tauri::generate_handler![
             sink::sink_open,
@@ -109,6 +110,8 @@ pub fn run() {
             lan::lan_mode,
             lan::lan_listen,
             lan::lan_close,
+            lan::offline_listen,
+            lan::offline_close,
         ])
         .setup(|app| {
             // Desktop dev has no installer to have registered the `qrdrop`

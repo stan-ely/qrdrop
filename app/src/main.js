@@ -35,6 +35,7 @@ import { secretFromDeepLink } from './deep-link.js'
 import { createTauriLan } from './lan.js'
 import { createNativeSession, onNativeDrop, stat } from './native.js'
 import { createShell } from './shell.js'
+import { offlinePairing, setOfflinePairing } from './offline.js'
 import * as history from './history.js'
 
 const APP_LINK_ORIGIN = 'https://share.stan-ely.com/'
@@ -65,8 +66,14 @@ if (session) registerPlatform({ session })
 // is a few milliseconds and always before any pairing can finish (see
 // lan.js). A failure only means this app stays on WebRTC, as the website
 // always does, so it is logged and nothing else.
+// The same registration is what offers "Pair without internet" in Settings,
+// since the page's offline listener is the LanPlatform's openOffline. The
+// shell is created below and this lands after it, in a later task.
 createTauriLan().then(
-  lan => registerPlatform({ lan }),
+  lan => {
+    registerPlatform({ lan })
+    shell.setState({ offline: { on: offlinePairing(), available: true, prompts: lan.listen === 'prompt' } })
+  },
   error => console.warn('qrdrop: local-network fast path unavailable', String(error)),
 )
 
@@ -81,6 +88,7 @@ const shell = createShell({
   changeFolder: mode === 'android' ? changeSaveLocation : undefined,
   openLink: url => openUrl(url).catch(error => console.warn('qrdrop: could not open a link', String(error))),
   history,
+  offline: { get: offlinePairing, set: setOfflinePairing },
 })
 
 // The webview's own context menu is a browser's: Back, Refresh, Save as, Print,

@@ -22,7 +22,8 @@
  *
  * Isomorphic. No DOM, no fs, no socket of its own: the dial is a
  * LanPlatform's, and a listener is node/lan-server.js's, which runs
- * answerRendezvous on each connection it takes.
+ * answerRendezvous on each connection it takes, or the app's, which runs
+ * acceptRendezvous over the connections its shell's relay hands the page.
  */
 
 import { createEphemeralKeypair, exportPublicKey, establishSession } from '../core/session.js'
@@ -72,7 +73,7 @@ const EARLY_FRAME_LIMIT = 16
  * @param {LanSocket} socket
  * @returns {Promise<Bytes | null>}
  */
-function nextMessage(socket) {
+export function nextMessage(socket) {
   return new Promise(resolve => {
     let done = false
     /** @param {Bytes | null} bytes */
@@ -225,6 +226,105 @@ export async function dialRendezvous({ locator, secret, dial, timeoutMs = DIAL_T
   socket.send(await sealOk(key, nonce, dialPublic, listenPublic))
   const session = await establishSession({ keypair, peerPublicRaw: listenPublic, secret, role: 'guest' })
   return createSocketRoom({ session, socket, peer: addr })
+}
+
+/**
+ * A listener that does not own its socket server: it pulls arrived
+ * connections from `arrivals` and runs answerRendezvous on each, keeping the
+ * first that proves the code. The app's page is the caller
+ * (app/src/lan.js), because a webview cannot accept a connection and its
+ * shell's relay (src-tauri/src/lan.rs, `offline_listen`) can, but has no
+ * secret: the relay hands the page every connection, and the page decides.
+ *
+ * node/lan-server.js's listenOffline keeps the same rules with a server
+ * that pushes: at most `limit` handshakes at once, each cut at `timeoutMs`,
+ * and one win. Here the bound is kept by asking: one `arrivals()` is
+ * outstanding whenever fewer than `limit` handshakes are running, so the
+ * relay holds the rest, and drops them past its own cap.
+ *
+ * `arrivals` resolves null once the source has ended, which ends the
+ * listener as a failure unless it already won.
+ *
+ * @param {object} args
+ * @param {Bytes} args.secret
+ * @param {() => Promise<{ socket: LanSocket, from: string } | null>} args.arrivals
+ * @param {number} [args.limit]
+ * @param {number} [args.timeoutMs]
+ * @returns {{ accepted: Promise<PairedRoom>, close: () => void }}
+ */
+export function acceptRendezvous({ secret, arrivals, limit = MAX_HANDSHAKES, timeoutMs = HANDSHAKE_TIMEOUT_MS }) {
+  const keyed = rendezvousKey(secret)
+  /** @type {Set<LanSocket>} */
+  const running = new Set()
+  let asking = false
+  let done = false
+
+  /** @type {(room: PairedRoom) => void} */
+  let resolveAccepted = () => {}
+  /** @type {(error: Error) => void} */
+  let rejectAccepted = () => {}
+  /** @type {Promise<PairedRoom>} */
+  const accepted = new Promise((resolve, reject) => {
+    resolveAccepted = resolve
+    rejectAccepted = reject
+  })
+  accepted.catch(() => {})
+
+  /** @param {Error} error */
+  const end = error => {
+    if (done) return
+    done = true
+    for (const socket of running) socket.close()
+    running.clear()
+    rejectAccepted(error)
+  }
+
+  /**
+   * @param {LanSocket} socket
+   * @param {string} from
+   */
+  const handshake = async (socket, from) => {
+    running.add(socket)
+    const timer = setTimeout(() => socket.close(), timeoutMs)
+    /** @type {SessionKeys | null} */
+    let session = null
+    try {
+      session = await answerRendezvous(socket, secret, await keyed)
+    } catch { /* a malformed message is a stranger, like a wrong MAC */ }
+    clearTimeout(timer)
+    running.delete(socket)
+    // Open is checked as well: the timeout can land during the last await
+    // of a handshake that then succeeds, on a socket it has already closed.
+    if (!session || done || !socket.open) {
+      socket.close()
+      return ask()
+    }
+    done = true
+    for (const other of running) other.close()
+    running.clear()
+    resolveAccepted(createSocketRoom({ session, socket, peer: from }))
+  }
+
+  const ask = () => {
+    if (done || asking || running.size >= limit) return
+    asking = true
+    arrivals().then(arrived => {
+      asking = false
+      if (!arrived) return end(new Error('Stopped listening'))
+      if (done) return arrived.socket.close()
+      handshake(arrived.socket, arrived.from)
+      ask()
+    }, error => {
+      asking = false
+      end(error instanceof Error ? error : new Error(String(error)))
+    })
+  }
+  ask()
+
+  return {
+    accepted,
+    close: () => end(new Error('Stopped listening')),
+  }
 }
 
 /**

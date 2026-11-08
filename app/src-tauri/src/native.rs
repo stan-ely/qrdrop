@@ -32,6 +32,7 @@ use std::time::{Duration, Instant};
 use qrdrop_protocol::{Locator, Manifest, NetworkPath, PEER_DISCONNECTED, Role, Secret};
 use qrdrop_session::networks::STUN_SERVERS;
 use qrdrop_session::path::RELAYED_MAX_BYTES;
+use qrdrop_session::rendezvous::OfflineListener;
 use qrdrop_session::{
     LanConfig, OpenConfig, Paired, SessionEvent, SessionEvents, SessionHandle, SessionOptions, Sink,
     Source, messages, open_room,
@@ -323,12 +324,16 @@ pub struct Started {
 /// Start a send of `path`: generate the secret, return the code, and pair in
 /// the background. The SAS goes to the page as `paired`, and nothing more
 /// happens until it says `confirm` or `reject`.
+///
+/// `offline` is Settings' "Pair without internet": listen on the local
+/// network as well, and put this device's address in the code.
 #[tauri::command]
 pub async fn native_send(
     app: tauri::AppHandle,
     state: tauri::State<'_, NativeState>,
     path: String,
     name: Option<String>,
+    offline: Option<bool>,
     events: Channel<NativeEvent>,
 ) -> Result<Started, String> {
     let Ok(parsed) = path.parse::<FilePath>();
@@ -341,7 +346,8 @@ pub async fn native_send(
             .file_name()
             .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned())
     });
-    Ok(start_send(app, &state, Box::new(FileSource { name, size, file }), events))
+    let source = Box::new(FileSource { name, size, file });
+    Ok(start_send(app, &state, source, offline.unwrap_or(false), events).await)
 }
 
 /// Start a send of a typed message. The same send as `native_send` from here
@@ -353,26 +359,40 @@ pub async fn native_send_text(
     text: String,
     name: String,
     mime: String,
+    offline: Option<bool>,
     events: Channel<NativeEvent>,
 ) -> Result<Started, String> {
     let bytes = text.into_bytes();
     let size = bytes.len() as u64;
     let bytes = io::Cursor::new(bytes);
     let source = TextSource { name, mime, size, bytes };
-    Ok(start_send(app, &state, Box::new(source), events))
+    Ok(start_send(app, &state, Box::new(source), offline.unwrap_or(false), events).await)
 }
 
-fn start_send(
+async fn start_send(
     app: tauri::AppHandle,
     state: &NativeState,
     source: Box<dyn Source>,
+    offline: bool,
     events: Channel<NativeEvent>,
 ) -> Started {
     let secret = Secret::generate();
-    let code = secret.code();
+    // Bound before the code is returned, so the code can say where it is. A
+    // device with no private address (mobile data alone) keeps no listener
+    // and sends the bare code, as the CLI's `send --offline` does, though
+    // silently: the person asked for a setting, not for this transfer.
+    let listener = if offline {
+        OfflineListener::bind().await.ok().filter(|l| l.locator().is_some())
+    } else {
+        None
+    };
+    let code = match listener.as_ref().and_then(|l| l.locator()) {
+        Some(locator) => secret.code_with(locator),
+        None => secret.code(),
+    };
     let (id, words) = state.add();
     tauri::async_runtime::spawn(async move {
-        run_send(source, secret, &events, words).await;
+        run_send(source, secret, listener, &events, words).await;
         forget(&app, id);
     });
     Started { id, code }
@@ -412,10 +432,11 @@ pub fn native_control(state: tauri::State<'_, NativeState>, id: u32, word: Word)
 async fn run_send(
     source: Box<dyn Source>,
     secret: Secret,
+    listener: Option<OfflineListener>,
     events: &Channel<NativeEvent>,
     mut words: mpsc::UnboundedReceiver<Word>,
 ) {
-    let Some(paired) = pair(secret, Role::Host, None, events, &mut words).await else {
+    let Some(paired) = pair(secret, Role::Host, Offline::Listen(listener), events, &mut words).await else {
         return;
     };
     // The sender's half of the two safety gestures: the manifest -- the
@@ -447,7 +468,7 @@ async fn run_receive(
     events: &Channel<NativeEvent>,
     mut words: mpsc::UnboundedReceiver<Word>,
 ) {
-    let Some(paired) = pair(secret, Role::Guest, locator, events, &mut words).await else {
+    let Some(paired) = pair(secret, Role::Guest, Offline::Dial(locator), events, &mut words).await else {
         return;
     };
     // The receiver's Accept answers the SAS and the offer together, as on the
@@ -458,16 +479,27 @@ async fn run_receive(
 
 /// Pair, and tell the page the SAS. `None` when the page cancelled or the
 /// pairing failed, which the page has then been told.
+/// The offline half of a pairing: the sender's listener, whose locator is in
+/// the code it showed, or the receiver's locator, read from the code it was
+/// given. Either may be absent, and then the pairing is the relays' alone.
+enum Offline {
+    Listen(Option<OfflineListener>),
+    Dial(Option<Locator>),
+}
+
 async fn pair(
     secret: Secret,
     role: Role,
-    locator: Option<Locator>,
+    offline: Offline,
     events: &Channel<NativeEvent>,
     words: &mut mpsc::UnboundedReceiver<Word>,
 ) -> Option<Paired> {
     let mut cfg = OpenConfig::new(secret, role);
     cfg.on_status = Some(status_to(events));
-    cfg.locator = locator;
+    match offline {
+        Offline::Listen(listener) => cfg.listener = listener,
+        Offline::Dial(locator) => cfg.locator = locator,
+    }
     let paired = tokio::select! {
         r = open_room(cfg) => r,
         () = cancelled(words) => return None,

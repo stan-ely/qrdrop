@@ -370,6 +370,13 @@ interface LanPlatform {
   open?(token: Bytes, answer: Bytes): Promise<LanListener>
   /** Opens `ws://host:port/` and resolves once the socket is open. */
   dial(url: string, timeoutMs: number): Promise<LanSocket>
+  /**
+   * The app's offline listener (docs/notes/offline-pairing.md), bound before
+   * the code is shown so the code can carry its locator. Null when the person
+   * has not switched it on. Absent where nothing can listen for one: the CLI
+   * binds its own with --offline.
+   */
+  openOffline?(secret: Bytes): Promise<OfflineListener | null>
 }
 
 /**
@@ -486,8 +493,9 @@ interface ReceiveProgress {
 type TransferProgress = SendProgress | ReceiveProgress
 
 /**
- * node/lan-server.js's listenOffline: a listener whose win is a whole
- * PairedRoom, and the locator that tells a scanner where it is.
+ * An offline rendezvous listener (node/lan-server.js's listenOffline, the
+ * app's LanPlatform.openOffline): a listener whose win is a whole PairedRoom,
+ * and the locator that tells a scanner where it is.
  */
 interface OfflineListener {
   port: number

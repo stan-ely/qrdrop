@@ -37,7 +37,7 @@
  */
 
 import {
-  generateSecret, encodeSecret, encodeSecretURL, decodeSecret, decodePairing, deriveTopic, derivePassword,
+  generateSecret, encodeSecret, encodeSecretURL, decodePairing, deriveTopic, derivePassword,
 } from '../core/secret.js'
 import { openRoom, RELAYED_MAX_BYTES, combinePaths } from '../transport/room.js'
 import { createControlStream, sendControl } from '../core/control.js'
@@ -1762,9 +1762,11 @@ export class QRDropElement extends HTMLElement {
    *   and only where a native shell lends a LanPlatform: the website cannot
    *   open a socket to a LAN address, so it ignores the locator and pairs
    *   over the relays exactly as before (docs/notes/offline-pairing.md).
+   * @param {OfflineListener | null} [args.listener] The sender's, whose
+   *   locator is in the code it is showing. Raced against the rooms.
    * @returns {Promise<PairedRoom>}
    */
-  async _establish({ secret, role, locator = null }) {
+  async _establish({ secret, role, locator = null, listener = null }) {
     const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
     const lanPlatform = getPlatform().lan
 
@@ -1774,6 +1776,7 @@ export class QRDropElement extends HTMLElement {
       secret,
       role,
       onStatus: text => this._setState({ status: text }),
+      listener: listener ?? undefined,
       dial: locator && lanPlatform
         ? () => dialRendezvous({ locator, secret, dial: lanPlatform.dial })
         : undefined,
@@ -1788,10 +1791,36 @@ export class QRDropElement extends HTMLElement {
     return room
   }
 
+  /**
+   * The app's offline listener, when its shell lends one and the person has
+   * switched it on; null otherwise, and always on the website, which has no
+   * LanPlatform. A device with no private address (mobile data alone) has
+   * nowhere to be reached, so it keeps no listener and sends the bare code.
+   * A listener that cannot bind is no reason to fail a send that the relays
+   * can still carry, so it is logged and skipped.
+   *
+   * @param {Bytes} secret
+   * @returns {Promise<OfflineListener | null>}
+   */
+  async _openOffline(secret) {
+    const open = getPlatform().lan?.openOffline
+    if (!open) return null
+    try {
+      const listener = await open(secret)
+      if (listener && !listener.locator) listener.close()
+      return listener?.locator ? listener : null
+    } catch (error) {
+      console.warn('qrdrop: offline listener unavailable', error)
+      return null
+    }
+  }
+
   /** @param {File | NativeFile} file */
   async _startSend(file) {
     if (isNativeFile(file)) return this._startNativeSend(file)
     const secret = generateSecret()
+    const listener = await this._openOffline(secret)
+    const locator = listener?.locator ?? null
 
     // The QR and #manual-code deliberately encode different strings when
     // base-url is set. The QR is for a phone's own camera app -- it needs
@@ -1803,8 +1832,12 @@ export class QRDropElement extends HTMLElement {
     // both forms on the way back in, so nothing is lost by keeping the two
     // independent; a receiver typing the bare code in gets exactly the same
     // session as one who scanned the URL.
-    const qrText = this._baseURL ? encodeSecretURL(secret, this._baseURL) : encodeSecret(secret)
-    const code = encodeSecret(secret)
+    //
+    // Both carry the locator when there is one: it is what lets a device on
+    // the same Wi-Fi pair with no internet, and a code typed by hand is that
+    // device's only other way to learn it.
+    const qrText = this._baseURL ? encodeSecretURL(secret, this._baseURL, locator) : encodeSecret(secret, locator)
+    const code = encodeSecret(secret, locator)
 
     this._setState({
       screen: 'send', role: 'sender', code, qrNode: renderQR(qrText), qrIsLink: Boolean(this._baseURL),
@@ -1812,7 +1845,11 @@ export class QRDropElement extends HTMLElement {
       isText: isText(file),
     })
 
-    const room = await this._establish({ secret, role: 'host' })
+    // Cancel before pairing ends here, which is what stops the listener. A
+    // pairing that completes replaces this with the room's close.
+    if (listener) this._teardown = () => listener.close()
+    const room = await this._establish({ secret, role: 'host', listener })
+    listener?.close()
     this._setState({ pairing: false })
 
     // Free TURN is metered; refuse a large file before the manifest goes out
@@ -2171,7 +2208,10 @@ export class QRDropElement extends HTMLElement {
     control.to(started.control)
     if (!live()) return started.control('cancel')
 
-    const qrText = this._baseURL ? encodeSecretURL(decodeSecret(started.code), this._baseURL) : started.code
+    // decodePairing and not decodeSecret, which drops the locator native.rs
+    // put in the code when "Pair without internet" is on.
+    const pairing = decodePairing(started.code)
+    const qrText = this._baseURL ? encodeSecretURL(pairing.secret, this._baseURL, pairing.locator) : started.code
     this._setState({ code: started.code, qrNode: renderQR(qrText), qrIsLink: Boolean(this._baseURL) })
   }
 

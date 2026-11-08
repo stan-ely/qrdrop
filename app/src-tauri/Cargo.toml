@@ -74,21 +74,21 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # all -- Linux's WebKitGTK has no WebRTC, and a phone's main thread is what
 # caps the JS session's send (docs/notes/rust-session.md, "Why"). Path
 # dependencies, which is why the app is a member of the root workspace: see
-# the root Cargo.toml. Dialling the peer's listener is quiet everywhere, so
-# lan-dial is everyone's; listening is not, so lan-listen is below, on the
-# targets where it raises no firewall prompt -- the same line lan.rs draws at
-# run time, drawn here at build time.
+# the root Cargo.toml. Both lan features are everyone's. lan-listen used to
+# be Android's and Linux's alone, the targets where listening raises no
+# firewall prompt; that line is still drawn, at run time, by
+# `default_listen()`, which says `prompt` elsewhere so the fast path never
+# listens there. What a Windows or macOS build gained is the offline
+# listener, bound only when the person has switched on "Pair without
+# internet" and so asked for the prompt (docs/notes/offline-pairing.md).
 qrdrop-protocol = { path = "../../crates/qrdrop-protocol" }
-qrdrop-session = { path = "../../crates/qrdrop-session", features = ["lan-dial"] }
+qrdrop-session = { path = "../../crates/qrdrop-session", features = ["lan-dial", "lan-listen"] }
 
 [features]
 # The QUIC path to another Rust peer (crates/qrdrop-session/src/quic.rs).
 # Off in every shipped build until the phone gate in docs/notes/rust-session.md
 # passes; `--features quic` builds one to measure it.
 quic = ["qrdrop-session/quic"]
-
-[target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
-qrdrop-session = { path = "../../crates/qrdrop-session", features = ["lan-dial", "lan-listen"] }
 
 [dev-dependencies]
 # lan.rs's test dials the relay as both the page and the peer would.
