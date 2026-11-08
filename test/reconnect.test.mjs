@@ -63,17 +63,29 @@ async function advance(t, ms) {
 function setup(t) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
   const net = refusingNetwork()
+  /** @typedef {ReturnType<typeof makeSocket>} Client */
+  /** @type {Client[]} */
+  const clients = []
   t.after(() => {
+    // Every client is closed before the lock is released, and that order is
+    // the point. A held client still open here has an init queued behind the
+    // lock; releasing it redials with the real WebSocket and the real timers,
+    // and Trystero then backs off through DNS failures on .invalid for as
+    // long as it likes. The tests passed in a quarter of a second and the
+    // process took 30 to 70 more to exit.
+    for (const client of clients) client.close?.()
     // Leave the shared lock released, as Trystero's own default is.
     resumeRelayReconnection()
     net.restore()
   })
-  return net
+  /** @param {Client} client */
+  const track = client => (clients.push(client), client)
+  return { ...net, track }
 }
 
 test('without the gate, trystero retires a relay that keeps refusing, for good', async t => {
-  const { dials } = setup(t)
-  const client = makeSocket('wss://retired.invalid', () => {})
+  const { dials, track } = setup(t)
+  const client = track(makeSocket('wss://retired.invalid', () => {}))
 
   await advance(t, PAST_EVERY_RETRY_MS)
   assert.equal(client.isClosed, true)
@@ -84,10 +96,10 @@ test('without the gate, trystero retires a relay that keeps refusing, for good',
 })
 
 test('held, a refusing relay is never retired, and redials when a pairing waits', async t => {
-  const { dials } = setup(t)
+  const { dials, track } = setup(t)
   const gate = createReconnectGate(lock, 5000, fn => { setImmediate(fn) })
   gate.hold()
-  const client = makeSocket('wss://held.invalid', () => {})
+  const client = track(makeSocket('wss://held.invalid', () => {}))
 
   await advance(t, PAST_EVERY_RETRY_MS)
   assert.equal(client.isClosed, false)
