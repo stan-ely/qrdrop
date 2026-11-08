@@ -91,6 +91,11 @@ pub struct SendArgs {
     pub strategy: Option<String>,
     pub qr_url: Option<String>,
     pub lan: bool,
+    /// `--offline`: listen on the local network and put the locator in the
+    /// code. Opt-in, and not yet the default, because a decoder older than
+    /// npm 0.7.0 and app 1.4.0 refuses a code with a locator, and
+    /// docs/notes/offline-pairing.md waits a release cycle after those.
+    pub offline: bool,
     pub debug: bool,
 }
 
@@ -214,17 +219,6 @@ enum Offline {
     Listen(OfflineListener),
     /// The locator read from the code the receiver was given.
     Dial(Locator),
-}
-
-/// Whether `send` puts a locator in its code: only when `QRDROP_OFFLINE=1`
-/// asks for it, for now. Two reasons, and both are temporary. A decoder
-/// older than npm 0.7.0 and app 1.4.0 refuses a code with a locator, and
-/// docs/notes/offline-pairing.md waits a release cycle after those before
-/// anything emits one by default. And the flag this will become, `--offline`,
-/// has to arrive in both CLIs at once, since their usage text is one
-/// contract (`text.rs` holds this one to cli.js's).
-fn offline_requested() -> bool {
-    std::env::var("QRDROP_OFFLINE").as_deref() == Ok("1")
 }
 
 async fn establish(
@@ -354,13 +348,18 @@ pub async fn send(a: SendArgs, hooks: Hooks) -> Result<i32, Error> {
     let style = Style::stdout();
     let secret = Secret::generate();
     // Bound before the code is printed, so the code can say where it is. A
-    // machine with no private address to offer sends the bare code, and
-    // the listener is not kept: nobody could be told how to reach it.
-    let listener = if a.lan && offline_requested() {
-        OfflineListener::bind()
+    // machine with no private address to offer sends the bare code, says
+    // so, and does not keep the listener: nobody could be told how to reach
+    // it. The parser has already refused --offline beside --no-lan.
+    let listener = if a.offline {
+        let bound = OfflineListener::bind()
             .await
             .ok()
-            .filter(|l| l.locator().is_some())
+            .filter(|l| l.locator().is_some());
+        if bound.is_none() {
+            eprintln!("{}", text::NO_LOCAL_ADDRESS);
+        }
+        bound
     } else {
         None
     };

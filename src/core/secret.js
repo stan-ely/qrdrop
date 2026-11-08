@@ -227,9 +227,12 @@ const MALFORMED_LOCATOR = 'Malformed qrdrop code — the part after the key is d
  * @param {string} baseURL Must be an absolute http(s) URL. Any existing
  *   fragment or query on it is discarded -- the code is the only thing that
  *   belongs there.
+ * @param {Locator | null} [locator] Kept in the fragment with the code, for
+ *   the reason encodeSecret gives: splitting the two would mean reading half
+ *   a code from somewhere else.
  * @returns {string}
  */
-export function encodeSecretURL(secret, baseURL) {
+export function encodeSecretURL(secret, baseURL, locator = null) {
   let url
   try {
     url = new URL(baseURL)
@@ -241,7 +244,7 @@ export function encodeSecretURL(secret, baseURL) {
   }
   url.hash = ''
   url.search = ''
-  return `${url.toString()}#${encodeSecret(secret)}`
+  return `${url.toString()}#${encodeSecret(secret, locator)}`
 }
 
 // Shared by both decodeSecret branches: turn a 43-char base64url code into

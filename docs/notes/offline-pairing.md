@@ -10,8 +10,8 @@ CLAUDE.md, the way the LAN path's did.
 | Phase | State | Notes |
 |---|---|---|
 | A. Decoders tolerate a locator | released | npm 0.7.0 and app-v1.4.0, both 2026-11-03 |
-| B. Rust: the session over a socket, and the rendezvous | built 2026-11-07, unreleased | `160824c`..; the gate is `crates/qrdrop-session/examples/offline.sh`. Emitting is opt-in (`QRDROP_OFFLINE=1` on the Rust CLI's `send`) until a release cycle after A has passed; see "As built" under B |
-| C. Node CLI and the app | not started | the JS `PairedRoom` over a socket. `src/core/rendezvous.js` (the four messages) is already in, since the vectors are written from it |
+| B. Rust: the session over a socket, and the rendezvous | built 2026-11-07, unreleased | `160824c`..`9e9a171`; the gate is `crates/qrdrop-session/examples/offline.sh`. See "As built" under B |
+| C. Node CLI and the app | Node CLI built 2026-11-08, unreleased; the app not started | `send --offline` in both CLIs. The gate passes in all four pairings with no route out, and the matrix gained an `--offline` run. See "As built" under C |
 | D. Docs, threat model, CLAUDE.md | not started | at the end of C |
 
 ## The problem
@@ -231,6 +231,24 @@ This is most of the work, and it is the part the plan before this note underesti
   - The Node CLI (dial and listen through `node/lan-server.js`'s pieces) and the app, through
     `src-tauri/src/lan.rs`.
   - The matrix gains offline legs.
+  - **As built (the Node CLI):**
+    - **`--offline` on `send`, in both CLIs at once**, replacing `QRDROP_OFFLINE=1`. It is
+      still opt-in for the rollout reason in A. Beside `--no-lan` it is a usage error, exit 2,
+      since the two ask for opposite things. A machine with no private address says so and
+      prints a code without a locator.
+    - **`src/transport/rendezvous.js`** holds both ends and `createSocketRoom`, the second
+      `PairedRoom`. That room carries `direct: true`, which is how a sender knows to send no
+      lan-hello. The server in `node/lan-server.js` became `listenOnce`, shared by
+      `listenLan` and the new `listenOffline`. Both now cap handshakes in flight at 32;
+      `listenLan` had no cap before.
+    - **`openRoom` takes `listener` and `dial`**, with the Rust session's rules and status
+      lines. `test/offline.test.mjs` pins the same cases as the Rust tests, over loopback.
+    - **The gate runs either CLI on either side** (`SEND_CLI`, `RECV_CLI`). It answers each
+      prompt only after the prompt is printed. Piping `y` in early worked for Rust and hung
+      Node, whose readline drops a line that arrives before its question is asked.
+    - **`interop.e2e.mjs --offline`** is the matrix's fourth run, 4/4 on Windows. The relays
+      are reachable there, so it proves that the four pairings agree on the wire, not that
+      they need no relay; the gate covers that.
 - **D.** The docs moves above, and this file's Status.
 
 ## Open questions

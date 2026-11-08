@@ -70,6 +70,15 @@ const OPTIONS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "--offline",
+        &[
+            "Also wait for the other device directly on the local network,",
+            "and put this machine's address in the code, so two devices",
+            "with no internet can still pair (send only; may raise a",
+            "firewall prompt on Windows or macOS)",
+        ],
+    ),
+    (
         "--debug",
         &["Print stack traces instead of one-line error messages"],
     ),
@@ -103,7 +112,7 @@ fn options() -> String {
 const USAGE_HEAD: &str = "qrdrop -- send a file peer-to-peer, keyed by a QR code
 
 Usage:
-  qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
+  qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--offline] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
   qrdrop receive [code] [--out <dir>] [--yes] [--no-lan] [--strategy <name>] [--relay <url>]... [--debug]
   qrdrop web [--port <n>] [--no-open]
   qrdrop --help
@@ -153,6 +162,12 @@ the page.\n";
 
 pub const NO_WEB_UI: &str = "The web UI is not present in this install. It ships in published \
 releases; from a source checkout, run `npm run build` first.";
+
+pub const OFFLINE_WITHOUT_LAN: &str =
+    "--offline pairs over the local network, which --no-lan turns off.\n";
+
+pub const NO_LOCAL_ADDRESS: &str =
+    "No local network address to offer, so the code cannot pair offline.";
 
 pub const CODES_DID_NOT_MATCH: &str =
     "Codes did not match -- refusing to continue. This could mean a third party is in the room.";
@@ -237,6 +252,14 @@ mod tests {
         for (ours, js) in [
             (BEAM_REFUSED, "'There is no \"qrdrop beam\" command."),
             (CODES_DID_NOT_MATCH, "'Codes did not match -- refusing"),
+            (
+                OFFLINE_WITHOUT_LAN,
+                "'--offline pairs over the local network, which --no-lan turns off.",
+            ),
+            (
+                NO_LOCAL_ADDRESS,
+                "'No local network address to offer, so the code cannot pair offline.'",
+            ),
             (
                 OFFERED_WHILE_SENDING,
                 "'Peer offered a file while we were sending one'",

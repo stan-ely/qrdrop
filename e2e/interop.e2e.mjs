@@ -39,6 +39,17 @@
  * pairing with the Node CLI must still complete over WebRTC. That second
  * half is the check that a JS peer ignores the Rust sender's quic-hello.
  *
+ * With --offline (the fourth run of test:e2e:interop:matrix; it implies
+ * --matrix) the sender runs `send --offline`: its code carries a locator, the
+ * receiver dials it before any relay, and the pairing itself happens over
+ * the local network (docs/notes/offline-pairing.md). The relays are still
+ * reachable here, so this proves the four pairings agree on the rendezvous
+ * and carry a whole session on its socket; that they need no relay at all is
+ * crates/qrdrop-session/examples/offline.sh's job, in namespaces with no
+ * route out. Every side is pinned to 'none' and QUIC off, so a run that
+ * quietly upgraded to a second link would fail here rather than pass. The
+ * sender listens, so on Windows the first run may raise a firewall prompt.
+ *
  * EITHER SIDE CAN BE THE RUST CLI. QRDROP_SEND_CLI and QRDROP_RECV_CLI pick
  * each side's launcher: `js` (the default, `node src/cli.js`), `rust` (the
  * crates/qrdrop-cli binary, from QRDROP_RUST_CLI or target/debug), or a path
@@ -65,8 +76,11 @@ const PAYLOAD_BYTES = 300 * 1024
 
 const LAN = process.argv.includes('--lan')
 const QUIC = process.argv.includes('--quic')
-const MATRIX = process.argv.includes('--matrix') || QUIC
-if (LAN && QUIC) throw new Error('--lan and --quic each pin one route; pass one')
+const OFFLINE = process.argv.includes('--offline')
+const MATRIX = process.argv.includes('--matrix') || QUIC || OFFLINE
+if ([LAN, QUIC, OFFLINE].filter(Boolean).length > 1) {
+  throw new Error('--lan, --quic and --offline each pin one route; pass one')
+}
 
 const RUST_CLI = process.env.QRDROP_RUST_CLI
   ?? path.join(ROOT, 'target', 'debug', process.platform === 'win32' ? 'qrdrop.exe' : 'qrdrop')
@@ -170,12 +184,15 @@ async function run(send, recv) {
 
   console.log(`payload ${PAYLOAD_BYTES} bytes, sha256 ${sha(payload)}`)
 
-  const sender = launch(send, ['send', source, '--no-qr'], `send:${send.name}`, LAN ? 'prompt' : 'none')
+  const sender = launch(send, ['send', source, '--no-qr', ...(OFFLINE ? ['--offline'] : [])], `send:${send.name}`, LAN ? 'prompt' : 'none')
   let receiver
 
   try {
     // The sender prints the code before it starts waiting for a peer.
-    const [, code] = await sender.waitFor(/(qrdrop:[A-Za-z0-9_-]{43})/)
+    // With the locator, when there is one: cut at 43 characters, an offline
+    // run would pass over the relays and prove nothing.
+    const [, code] = await sender.waitFor(/Transfer code: (qrdrop:[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9_-]+)?)/)
+    if (OFFLINE && !code.includes('.')) throw new Error(`--offline printed a code with no locator: ${code}`)
     console.log(`\ncode: ${code}\n`)
 
     receiver = launch(recv, ['receive', code, '--out', outDir], `recv:${recv.name}`, LAN ? 'quiet' : 'none')
@@ -230,7 +247,16 @@ async function run(send, recv) {
         : 'the transfer took the QUIC path where it should not exist')
     }
 
-    const route = LAN ? 'local network' : quic ? 'QUIC' : 'WebRTC'
+    if (OFFLINE) {
+      if (!/Paired over the local network/.test(sender.output)) {
+        throw new Error('the sender paired over a relay, not over its listener')
+      }
+      if (!/Paired over the local network/.test(receiver.output)) {
+        throw new Error('the receiver paired over a relay, not the locator in the code')
+      }
+    }
+
+    const route = OFFLINE ? 'offline pairing' : LAN ? 'local network' : quic ? 'QUIC' : 'WebRTC'
     console.log(`\nPASS  ${send.name} -> ${recv.name} (${route}) ${written[0]} (${landed.length} bytes) matched, digest ${senderDigest}`)
   } finally {
     sender.child.kill()

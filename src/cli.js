@@ -3,7 +3,7 @@
  * qrdrop: send a file straight from one device to another over WebRTC, keyed
  * by a QR code, with nothing readable in between.
  *
- *   qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--relay <url>]... [--debug]
+ *   qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--offline] [--relay <url>]... [--debug]
  *   qrdrop receive [code] [--out <dir>] [--yes] [--no-lan] [--relay <url>]... [--debug]
  *   qrdrop --help | --version
  *
@@ -25,13 +25,15 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 
 import {
-  generateSecret, encodeSecret, decodeSecret, deriveTopic, derivePassword,
+  generateSecret, encodeSecret, deriveTopic, derivePassword,
   openRoom, STRATEGIES, RELAYED_MAX_BYTES, createControlStream, createReceiver, sendFile,
   combinePaths, sendPathVerdict, sendControl,
 } from './index.js'
 import { createLanLink } from './transport/lan.js'
 import { nodeLanPlatform } from './node/lan.js'
-import { encodeSecretURL } from './core/secret.js'
+import { encodeSecretURL, decodePairing } from './core/secret.js'
+import { dialRendezvous } from './transport/rendezvous.js'
+import { listenOffline } from './node/lan-server.js'
 import { bytes as formatBytes } from './core/format.js'
 import {
   relayCapMessage, relayCapDeclineMessage, pathDescription, meteredWarning,
@@ -88,6 +90,12 @@ const OPTIONS = [
     'Keep the file on WebRTC even when both devices could use a',
     'direct connection on the local network',
   ] },
+  { flag: '--offline', desc: [
+    'Also wait for the other device directly on the local network,',
+    'and put this machine\'s address in the code, so two devices',
+    'with no internet can still pair (send only; may raise a',
+    'firewall prompt on Windows or macOS)',
+  ] },
   { flag: '--debug', desc: [
     'Print stack traces instead of one-line error messages',
   ] },
@@ -118,7 +126,7 @@ function formatOptions(options) {
 const USAGE = `qrdrop -- send a file peer-to-peer, keyed by a QR code
 
 Usage:
-  qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
+  qrdrop send <file> [--no-qr] [--yes] [--no-lan] [--offline] [--strategy <name>] [--relay <url>]... [--qr-url <base>] [--debug]
   qrdrop receive [code] [--out <dir>] [--yes] [--no-lan] [--strategy <name>] [--relay <url>]... [--debug]
   qrdrop web [--port <n>] [--no-open]
   qrdrop --help
@@ -152,6 +160,13 @@ not and cannot skip it.
 `
 
 class UsageError extends Error {}
+
+const OFFLINE_WITHOUT_LAN = '--offline pairs over the local network, which --no-lan turns off.\n'
+
+// A machine on no network but loopback has nowhere to tell the other device
+// to look. Said, because the person asked for --offline and is about to get
+// a code that cannot pair without the internet.
+const NO_LOCAL_ADDRESS = 'No local network address to offer, so the code cannot pair offline.'
 
 /**
  * A prompt-and-confirm helper bound to one readline interface, so callers
@@ -408,9 +423,13 @@ function resolveStrategies({ relays, strategy }) {
  * @param {readonly string[] | undefined} args.relays
  * @param {string | undefined} args.strategy
  * @param {ReturnType<typeof makePrompter>} args.prompter
+ * @param {OfflineListener} [args.listener] send --offline: the listener whose
+ *   locator is in the printed code.
+ * @param {() => Promise<PairedRoom | null>} [args.dial] receive: the way to
+ *   the locator in the code, when it had one.
  * @returns {Promise<PairedRoom>}
  */
-async function establish({ secret, role, relays, strategy, prompter }) {
+async function establish({ secret, role, relays, strategy, prompter, listener, dial }) {
   const rtcPolyfill = await loadRTCPolyfill()
   const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
   // The SAS prompt is asked through the readline interface, whose output is
@@ -427,6 +446,8 @@ async function establish({ secret, role, relays, strategy, prompter }) {
     rtcPolyfill,
     strategies: resolveStrategies({ relays, strategy }),
     onStatus: text => process.stderr.write(`${text}\n`),
+    listener,
+    dial,
   })
 
   // Each emoji is shown next to its word name (session.js's sasWords, same
@@ -459,31 +480,45 @@ async function establish({ secret, role, relays, strategy, prompter }) {
  * @param {string | undefined} args.strategy
  * @param {string | undefined} args.qrUrl
  * @param {boolean} args.lan
+ * @param {boolean} args.offline
  * @param {ReturnType<typeof makePrompter>} args.prompter
  */
-async function runSend({ filePath, showQR, relays, strategy, qrUrl, lan: useLan, prompter }) {
+async function runSend({ filePath, showQR, relays, strategy, qrUrl, lan: useLan, offline, prompter }) {
   const source = await fromPath(filePath)
   const style = styleFor(process.stdout)
   let room
   /** @type {(() => Promise<void>) | undefined} */
   let leaveRoom
+  /** @type {OfflineListener | undefined} */
+  let listener
 
   try {
     const secret = generateSecret()
-    const code = encodeSecret(secret)
+    // Bound before the code is printed, so the code can say where it is.
+    // parseCliArgs has already refused --offline beside --no-lan.
+    if (offline) {
+      listener = await listenOffline({ secret })
+      if (!listener.locator) {
+        listener.close()
+        listener = undefined
+        process.stderr.write(`${NO_LOCAL_ADDRESS}\n`)
+      }
+    }
+    const locator = listener?.locator ?? null
+    const code = encodeSecret(secret, locator)
 
     // --qr-url, when given, is the only thing that changes what the QR
     // encodes -- see the flag's own comment in parseCliArgs for why there is
     // no default to fall back to here. The bare code is printed either way,
     // labelled "Code:": e2e/interop.e2e.mjs and every "type the code in by
     // hand" path depend on that exact form still being there.
-    const qrText = qrUrl ? encodeSecretURL(secret, qrUrl) : code
+    const qrText = qrUrl ? encodeSecretURL(secret, qrUrl, locator) : code
     if (showQR) process.stdout.write(`\n${renderQRToTerminal(qrText)}\n\n`)
     if (qrUrl) process.stdout.write(`URL: ${style.accent(qrText)}\n`)
     process.stdout.write(`Transfer code: ${style.accent(code)}\n`)
 
     const sessionEnded = { done: false }
-    room = await establish({ secret, role: 'host', relays, strategy, prompter })
+    room = await establish({ secret, role: 'host', relays, strategy, prompter, listener })
     leaveRoom = room.close
     interruptHooks.add(leaveRoom)
 
@@ -505,8 +540,11 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, lan: useLan,
     // After establish(), which is to say after the SAS was confirmed: the
     // hello says whether this machine will listen, the offer that may follow
     // names its addresses, and neither goes to a peer nobody has verified
-    // yet (transport/lan.js, "WHEN IT IS SAID").
-    if (useLan) {
+    // yet (transport/lan.js, "WHEN IT IS SAID"). Not on a room that is
+    // already a socket on the local network: there is nothing faster to
+    // move to, and the receiver only ever answers a hello, so saying none
+    // is the whole of opting out.
+    if (useLan && !room.direct) {
       const paired = room
       lan = createLanLink({
         role: 'sender',
@@ -583,6 +621,9 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, lan: useLan,
     process.stdout.write(`${style.ok('Sent.')} digest=${result.digest}\n`)
     return 0
   } finally {
+    // openRoom closes the listener when a room wins; this is the rest: a
+    // failure before pairing, and Ctrl-C at the SAS prompt.
+    listener?.close()
     if (leaveRoom) interruptHooks.delete(leaveRoom)
     room?.close()
     await source.close?.()
@@ -601,7 +642,13 @@ async function runSend({ filePath, showQR, relays, strategy, qrUrl, lan: useLan,
  */
 async function runReceive({ code, outDir, assumeYes, relays, strategy, lan: useLan, prompter }) {
   const raw = code ?? await prompter.ask('Code (or paste a shared link): ')
-  const secret = decodeSecret(raw)
+  const { secret, locator } = decodePairing(raw)
+  // --no-lan keeps everything off a direct connection, and dialling the
+  // sender at the address in its code would be the one exception to it.
+  const platform = nodeLanPlatform()
+  const dial = locator && useLan
+    ? () => dialRendezvous({ locator, secret, dial: platform.dial })
+    : undefined
   const createSink = createFileSink({ outDir })
   // --out defaults to '.', which says nothing about what that resolves to --
   // and by the time the success line prints, the file has already landed
@@ -622,7 +669,7 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, lan: useL
     // reassignable `room` into the callbacks below -- while `finally` still
     // needs the outer binding, to close a room we may have failed after.
     const sessionEnded = { done: false }
-    const paired = await establish({ secret, role: 'guest', relays, strategy, prompter })
+    const paired = await establish({ secret, role: 'guest', relays, strategy, prompter, dial })
     room = paired
     leaveRoom = paired.close
     interruptHooks.add(leaveRoom)
@@ -702,10 +749,10 @@ async function runReceive({ code, outDir, assumeYes, relays, strategy, lan: useL
       // Speaks only in reply to the sender's hello, which the sender sends
       // only after its own SAS confirm -- and this side's frames were held
       // until establish() returned, after ours.
-      if (useLan) {
+      if (useLan && !paired.direct) {
         lan = createLanLink({
           role: 'receiver',
-          platform: nodeLanPlatform(),
+          platform,
           room: paired,
           send: msg => sendControl({ channel: paired.channel, key: paired.session.sendKey, nextControlIndex }, msg),
           // The sender's frames stopped arriving over the link while WebRTC
@@ -819,7 +866,7 @@ async function runWeb({ port, open }) {
  * @typedef {
  *   | { command: 'help' }
  *   | { command: 'version' }
- *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, qrUrl: string | undefined, lan: boolean, debug: boolean }
+ *   | { command: 'send', filePath: string, showQR: boolean, relays: readonly string[] | undefined, strategy: string | undefined, qrUrl: string | undefined, lan: boolean, offline: boolean, debug: boolean }
  *   | { command: 'receive', code: string | undefined, outDir: string, assumeYes: boolean, relays: readonly string[] | undefined, strategy: string | undefined, lan: boolean, debug: boolean }
  *   | { command: 'web', port: number, open: boolean, debug: boolean }
  * } ParsedArgs
@@ -877,6 +924,7 @@ function parseCliArgs(argv) {
       // that origin instead of at nothing. Send-only, and opt-in per run.
       'qr-url': { type: 'string' },
       'no-lan': { type: 'boolean', default: false },
+      offline: { type: 'boolean', default: false },
       debug: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -900,6 +948,9 @@ function parseCliArgs(argv) {
   if (command === 'send') {
     const [filePath] = positionals
     if (!filePath) throw new UsageError(`send requires a file path\n\n${USAGE}`)
+    // Refused rather than one quietly winning: an offline pairing IS a
+    // connection on the local network, so the two ask for opposite things.
+    if (values.offline && values['no-lan']) throw new UsageError(OFFLINE_WITHOUT_LAN)
     return {
       command,
       filePath,
@@ -908,6 +959,7 @@ function parseCliArgs(argv) {
       strategy: values.strategy,
       qrUrl: values['qr-url'],
       lan: !values['no-lan'],
+      offline: values.offline,
       debug: values.debug,
     }
   }
@@ -994,7 +1046,7 @@ async function main() {
     if (parsed.command === 'send') {
       return await runSend({
         filePath: parsed.filePath, showQR: parsed.showQR,
-        relays: parsed.relays, strategy: parsed.strategy, qrUrl: parsed.qrUrl, lan: parsed.lan, prompter,
+        relays: parsed.relays, strategy: parsed.strategy, qrUrl: parsed.qrUrl, lan: parsed.lan, offline: parsed.offline, prompter,
       })
     }
     return await runReceive({

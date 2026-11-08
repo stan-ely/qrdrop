@@ -41,7 +41,9 @@ struct Usage(String);
 
 /// The options `parseArgs` is given in cli.js, and what each takes.
 const STRINGS: &[&str] = &["out", "port", "relay", "strategy", "qr-url"];
-const BOOLEANS: &[&str] = &["no-qr", "yes", "no-open", "no-lan", "debug", "help"];
+const BOOLEANS: &[&str] = &[
+    "no-qr", "yes", "no-open", "no-lan", "offline", "debug", "help",
+];
 
 #[derive(Default)]
 struct Values {
@@ -164,6 +166,11 @@ fn parse(argv: &[String], stdout_tty: bool) -> Result<Command, Usage> {
             let Some(file) = v.positionals.first() else {
                 return Err(Usage(format!("send requires a file path\n\n{usage}")));
             };
+            // An offline pairing is a connection on the local network, so the
+            // two flags ask for opposite things; neither quietly wins.
+            if v.flag("offline") && v.flag("no-lan") {
+                return Err(Usage(text::OFFLINE_WITHOUT_LAN.into()));
+            }
             Ok(Command::Send(run::SendArgs {
                 file: file.into(),
                 show_qr: !v.flag("no-qr") && stdout_tty,
@@ -171,6 +178,7 @@ fn parse(argv: &[String], stdout_tty: bool) -> Result<Command, Usage> {
                 strategy,
                 qr_url: v.string("qr-url").map(str::to_owned),
                 lan: !v.flag("no-lan"),
+                offline: v.flag("offline"),
                 debug,
             }))
         }
@@ -297,6 +305,14 @@ mod tests {
             parse(&args("beam"), true),
             Err(Usage(text::BEAM_REFUSED.into()))
         );
+        assert_eq!(
+            parse(&args("send a.bin --offline --no-lan"), true),
+            Err(Usage(text::OFFLINE_WITHOUT_LAN.into()))
+        );
+        let Ok(Command::Send(s)) = parse(&args("send a.bin --offline"), true) else {
+            panic!("--offline did not parse");
+        };
+        assert!(s.offline && s.lan);
         assert_eq!(
             parse(&args("fetch"), true),
             Err(Usage(format!("Unknown command: fetch\n\n{usage}")))

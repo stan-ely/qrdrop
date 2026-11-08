@@ -17,7 +17,9 @@
  *
  * Only the CLI listens, and only where listening is quiet (node/lan.js):
  * Linux. On Windows, binding here is what puts a firewall dialog in front of
- * the person, which is why nothing calls it there.
+ * the person, which is why nothing calls it there -- with one exception,
+ * `send --offline`, where the person asked for exactly this and the prompt is
+ * the price of their choice (docs/notes/offline-pairing.md).
  */
 
 import { createServer } from 'node:http'
@@ -25,6 +27,11 @@ import { createHash } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
 import { createLanSocket, serverHandshake } from '../transport/lan.js'
 import { isPrivateAddress } from '../transport/room.js'
+import {
+  HANDSHAKE_TIMEOUT_MS, LOCATOR_ADDRESSES, MAX_HANDSHAKES,
+  answerRendezvous, createSocketRoom,
+} from '../transport/rendezvous.js'
+import { rendezvousKey } from '../core/rendezvous.js'
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 const MAX_MESSAGE = 64 * 1024
@@ -197,28 +204,37 @@ function adopt(tcp, head) {
 }
 
 /**
- * Listens on every interface for the one connection that presents `token`,
- * and stops listening the moment it has one.
+ * A WebSocket server on every interface that runs `handshake` on each
+ * connection and keeps the first one to succeed, then stops listening.
  *
+ * Shared by the two listeners below, which differ only in what a dialler has
+ * to prove. A connection that fails, or takes longer than `timeoutMs`, is
+ * closed and costs nothing more. Past `maxPending` at once, a new one is
+ * refused at the upgrade rather than queued, so a stranger hammering the port
+ * holds a bounded number of slots and the real peer finds one free as soon
+ * as any of theirs times out.
+ *
+ * @template T
  * @param {object} args
- * @param {Bytes} args.token
- * @param {Bytes} [args.answer] The offer's, for a dialler that asks for it
- *   (transport/lan.js, "THE ANSWER"). Without one, every dialler gets ACK.
- * @param {string} [args.host]
- * @param {number} [args.port] 0 picks a free one.
- * @param {() => string[]} [args.addresses] Overridable for tests.
- * @returns {Promise<LanListener>}
+ * @param {(socket: LanSocket, from: string) => Promise<T | null>} args.handshake
+ *   Resolves with the win, or null or a rejection for a connection to drop.
+ * @param {string} args.host
+ * @param {number} args.port
+ * @param {() => string[]} args.addresses
+ * @param {number} args.timeoutMs
+ * @param {number} args.maxPending
+ * @returns {Promise<{ port: number, addrs: string[], accepted: Promise<T>, close: () => void }>}
  */
-export async function listenLan({ token, answer, host = '0.0.0.0', port = 0, addresses = lanAddresses }) {
+async function listenOnce({ handshake, host, port, addresses, timeoutMs, maxPending }) {
   /** @type {Set<import('node:net').Socket>} */
   const pending = new Set()
   let done = false
 
-  /** @type {(socket: LanSocket) => void} */
+  /** @type {(value: T) => void} */
   let resolveAccepted = () => {}
   /** @type {(error: Error) => void} */
   let rejectAccepted = () => {}
-  /** @type {Promise<LanSocket>} */
+  /** @type {Promise<T>} */
   const accepted = new Promise((resolve, reject) => {
     resolveAccepted = resolve
     rejectAccepted = reject
@@ -233,6 +249,7 @@ export async function listenLan({ token, answer, host = '0.0.0.0', port = 0, add
   server.on('upgrade', (req, tcp, head) => {
     const key = req.headers['sec-websocket-key']
     if (done
+      || pending.size >= maxPending
       || String(req.headers.upgrade).toLowerCase() !== 'websocket'
       || req.headers['sec-websocket-version'] !== '13'
       || typeof key !== 'string') {
@@ -246,18 +263,22 @@ export async function listenLan({ token, answer, host = '0.0.0.0', port = 0, add
 
     const sock = /** @type {import('node:net').Socket} */ (tcp)
     pending.add(sock)
-    serverHandshake(adopt(sock, head), token, HANDSHAKE_MS, answer).then(
-      socket => {
-        pending.delete(sock)
-        if (done) return socket.close()
-        done = true
-        server.close()
-        for (const other of pending) other.destroy()
-        pending.clear()
-        resolveAccepted(socket)
-      },
-      () => { pending.delete(sock) },
-    )
+    const socket = adopt(sock, head)
+    // An IPv4 peer on a dual-stack socket reads as ::ffff:a.b.c.d.
+    const from = (sock.remoteAddress ?? '').replace(/^::ffff:/, '')
+    const timer = setTimeout(() => sock.destroy(), timeoutMs)
+    handshake(socket, from).catch(() => null).then(won => {
+      clearTimeout(timer)
+      pending.delete(sock)
+      // Open is checked as well: the timeout can land during the last await
+      // of a handshake that then succeeds, on a socket already destroyed.
+      if (won === null || done || !socket.open) return socket.close()
+      done = true
+      server.close()
+      for (const other of pending) other.destroy()
+      pending.clear()
+      resolveAccepted(won)
+    })
   })
 
   await new Promise((resolve, reject) => {
@@ -284,4 +305,61 @@ export async function listenLan({ token, answer, host = '0.0.0.0', port = 0, add
       }
     },
   }
+}
+
+/**
+ * Listens on every interface for the one connection that presents `token`,
+ * and stops listening the moment it has one.
+ *
+ * @param {object} args
+ * @param {Bytes} args.token
+ * @param {Bytes} [args.answer] The offer's, for a dialler that asks for it
+ *   (transport/lan.js, "THE ANSWER"). Without one, every dialler gets ACK.
+ * @param {string} [args.host]
+ * @param {number} [args.port] 0 picks a free one.
+ * @param {() => string[]} [args.addresses] Overridable for tests.
+ * @returns {Promise<LanListener>}
+ */
+export function listenLan({ token, answer, host = '0.0.0.0', port = 0, addresses = lanAddresses }) {
+  return listenOnce({
+    handshake: socket => serverHandshake(socket, token, HANDSHAKE_MS, answer),
+    host,
+    port,
+    addresses,
+    timeoutMs: HANDSHAKE_MS,
+    maxPending: MAX_HANDSHAKES,
+  })
+}
+
+/**
+ * The offline rendezvous's listener (transport/rendezvous.js): waits for the
+ * one dialler that proves the code, and resolves with the room its socket
+ * becomes. Bound before the code is printed, so the code can say where it is.
+ *
+ * The locator is null when this machine has no private address to offer.
+ * The caller then sends a code without one and closes this, since nobody
+ * could be told how to reach it.
+ *
+ * @param {object} args
+ * @param {Bytes} args.secret
+ * @param {string} [args.host]
+ * @param {number} [args.port]
+ * @param {() => string[]} [args.addresses] Overridable for tests.
+ * @returns {Promise<OfflineListener>}
+ */
+export async function listenOffline({ secret, host = '0.0.0.0', port = 0, addresses = lanAddresses }) {
+  const key = await rendezvousKey(secret)
+  const listener = await listenOnce({
+    handshake: async (socket, from) => {
+      const session = await answerRendezvous(socket, secret, key)
+      return session && createSocketRoom({ session, socket, peer: from })
+    },
+    host,
+    port,
+    addresses: () => addresses().slice(0, LOCATOR_ADDRESSES),
+    timeoutMs: HANDSHAKE_TIMEOUT_MS,
+    maxPending: MAX_HANDSHAKES,
+  })
+  const locator = listener.addrs.length ? { port: listener.port, addresses: listener.addrs } : null
+  return { ...listener, locator }
 }

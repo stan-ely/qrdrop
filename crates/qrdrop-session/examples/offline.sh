@@ -1,28 +1,33 @@
 #!/bin/bash
-# The offline pairing's gate (docs/notes/offline-pairing.md, phase B): two
-# Rust CLIs that can reach each other and nothing else pair, verify and move
-# a file, with no relay anywhere.
+# The offline pairing's gate (docs/notes/offline-pairing.md): two CLIs that
+# can reach each other and nothing else pair, verify and move a file, with no
+# relay anywhere.
 #
 #   cargo build --release -p qrdrop-cli
 #   unshare -rn bash crates/qrdrop-session/examples/offline.sh
+#   SEND_CLI="node src/cli.js" unshare -rn bash crates/qrdrop-session/examples/offline.sh
 #
 # Two network namespaces over a veth pair, as netem.sh builds them, but with
 # NO default route on either side: every public relay is unreachable, so the
 # only way the two can meet is the locator in the sender's code. The sender
-# runs here with QRDROP_OFFLINE=1, which is what puts the locator in the code
-# until both CLIs share an --offline flag; the receiver runs in the other
-# namespace with the code as printed. Linux only, and no root: `unshare -r`
+# runs `send --offline`, which is what puts the locator in the code; the
+# receiver runs in the other namespace with the code as printed. Linux only, and no root: `unshare -r`
 # stands in for it, so this runs as an ordinary user under WSL as well.
 #
 # Pass means: both sides printed the same SAS, both report the same digest,
 # and the received bytes equal the sent ones. Every line of both logs is
 # printed on a failure.
 #
-# Variables: QRDROP (the binary; default target/release/qrdrop), SIZE (bytes,
-# default 3 MiB), WAIT (seconds for the whole run, default 120).
+# Variables: QRDROP (the binary; default target/release/qrdrop), SEND_CLI and
+# RECV_CLI (each side's command, default $QRDROP; "node src/cli.js" runs the
+# Node CLI, from the repository root), SIZE (bytes, default 3 MiB), WAIT
+# (seconds for the whole run, default 120).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 Q=${QRDROP:-$here/../../../target/release/qrdrop}
+# Word-split on purpose, so a command with arguments works.
+SEND_CLI=${SEND_CLI:-$Q}
+RECV_CLI=${RECV_CLI:-$Q}
 SIZE=${SIZE:-3145728}
 work=$(mktemp -d)
 trap 'kill $PEER 2>/dev/null; rm -rf "$work"' EXIT
@@ -45,12 +50,19 @@ fi
 head -c "$SIZE" /dev/urandom >"$work/payload.bin"
 mkdir "$work/out"
 
-# Each side answers its SAS prompt with y and keeps stdin open after it, so an
-# EOF is never read as an answer. The script compares the SAS itself below,
+# Each side answers its SAS prompt with y once the prompt is on its stdout,
+# and keeps stdin open after it, so an EOF is never read as an answer. Not
+# before the prompt: the Rust CLI keeps a line typed early, and Node's
+# readline drops one that arrives before its question is asked, which hung
+# every run with a Node CLI in it. The script compares the SAS itself below,
 # which is the person's job everywhere else.
-answer() { { printf 'y\n'; sleep "${WAIT:-120}"; } }
+answer() {
+  until grep -q 'Do they match' "$1" 2>/dev/null; do sleep 0.1; done
+  printf 'y\n'
+  sleep "${WAIT:-120}"
+}
 
-answer | QRDROP_OFFLINE=1 timeout "${WAIT:-120}" "$Q" send --no-qr "$work/payload.bin" >"$work/send.out" 2>"$work/send.err" &
+answer "$work/send.out" | NO_COLOR=1 timeout "${WAIT:-120}" $SEND_CLI send --offline --no-qr "$work/payload.bin" >"$work/send.out" 2>"$work/send.err" &
 sp=$!
 code=
 for _ in $(seq 1 100); do
@@ -78,7 +90,7 @@ case "$code" in
     ;;
 esac
 
-answer | nsenter -t $PEER -n timeout "${WAIT:-120}" "$Q" receive --yes --out "$work/out" "$code" >"$work/recv.out" 2>"$work/recv.err"
+answer "$work/recv.out" | nsenter -t $PEER -n env NO_COLOR=1 timeout "${WAIT:-120}" $RECV_CLI receive --yes --out "$work/out" "$code" >"$work/recv.out" 2>"$work/recv.err"
 rc=$?
 wait $sp
 sc=$?

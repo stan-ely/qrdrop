@@ -155,6 +155,12 @@ interface PairedRoom {
   peerId: string
   channel: Channel
   /**
+   * True when the room is itself a socket to the peer on the local network
+   * (an offline pairing, transport/rendezvous.js), so there is no faster
+   * link to negotiate: a sender sends no lan-hello. Absent on a relay room.
+   */
+  direct?: boolean
+  /**
    * Registers the single inbound-frame handler. Replaces any previous one.
    * Resolving whether the frame passed its tag is what lets attachLan count
    * a LAN link as carrying.
@@ -478,3 +484,17 @@ interface ReceiveProgress {
 
 /** The UI renders either direction with one function, so it sees the union. */
 type TransferProgress = SendProgress | ReceiveProgress
+
+/**
+ * node/lan-server.js's listenOffline: a listener whose win is a whole
+ * PairedRoom, and the locator that tells a scanner where it is.
+ */
+interface OfflineListener {
+  port: number
+  addrs: string[]
+  /** Null when this machine has no private address to offer. */
+  locator: { port: number, addresses: string[] } | null
+  /** The room of the one dialler that proved the code. Rejects once closed. */
+  accepted: Promise<PairedRoom>
+  close(): void
+}

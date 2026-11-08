@@ -859,6 +859,13 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
  * @param {readonly RTCIceServer[]} [args.iceServers] Defaults to ICE_SERVERS.
  * @param {typeof RTCPeerConnection} [args.rtcPolyfill] The CLI passes
  *   node-datachannel's implementation here; browsers leave it undefined.
+ * @param {{ accepted: Promise<PairedRoom>, close: () => void }} [args.listener]
+ *   A host's offline listener (node/lan-server.js's listenOffline), whose
+ *   locator is in the code it showed. Raced against the rooms, and closed
+ *   when a room wins.
+ * @param {() => Promise<PairedRoom | null>} [args.dial] A guest's way to the
+ *   locator in the code it read (transport/rendezvous.js's dialRendezvous).
+ *   Tried before any room is joined; null sends it to the rooms.
  * @returns {Promise<PairedRoom>}
  */
 export async function openRoom({
@@ -871,7 +878,24 @@ export async function openRoom({
   strategies = STRATEGIES,
   iceServers = ICE_SERVERS,
   rtcPolyfill,
+  listener,
+  dial,
 }) {
+  // A scanner that was told where the other device is tries there first, and
+  // goes to the relays only when nobody holding the code answered. Once the
+  // dial resolves with a room it has sent its `ok`, and the listener may be
+  // showing a SAS: there is no falling back from that, and nothing here does
+  // (transport/rendezvous.js, "ONE ROLL PER SECRET").
+  if (dial) {
+    onStatus?.('Trying the other device on the local network…')
+    const local = await dial()
+    if (local) {
+      onStatus?.('Paired over the local network')
+      return local
+    }
+    onStatus?.('Couldn’t reach the other device directly, trying the internet…')
+  }
+
   const ac = new AbortController()
 
   // Before the joins, so a relay socket created by the first one ever made is
@@ -898,13 +922,47 @@ export async function openRoom({
     )
   })
 
+  /** @type {Promise<never>} */
+  const never = new Promise(() => {})
+
+  // With a listener up, every room failing is not the end: on a network with
+  // no route out every one of them fails, and that is exactly the network the
+  // listener is for. So it keeps waiting, and only the deadline ends it.
+  const rooms = Promise.any(attempts).then(
+    resolved => ({ room: resolved }),
+    error => {
+      if (!listener) throw error
+      // Only while still waiting: the rooms can all fail after the listener
+      // has won, and saying so then reads as a pairing that is not happening.
+      if (!pairedLocally) onStatus?.('No signalling network answered; still waiting on the local network…')
+      return never
+    },
+  )
+  // A listener that stops on its own (an error in the server) is one way in
+  // fewer, not a failure of the pairing: the rooms may still win.
+  let pairedLocally = false
+  const local = listener
+    ? listener.accepted.then(paired => {
+      pairedLocally = true
+      return { local: paired }
+    }, () => never)
+    : never
+
   /** @type {ResolvedAttempt} */
   let winner
   try {
-    winner = await reconnectGate.whilePairing(Promise.race([Promise.any(attempts), timeout]))
+    const won = await reconnectGate.whilePairing(Promise.race([rooms, local, timeout]))
+    if ('local' in won) {
+      ac.abort()
+      clearTimeout(timer)
+      onStatus?.('Paired over the local network')
+      return won.local
+    }
+    winner = won.room
   } catch (error) {
     ac.abort()
     clearTimeout(timer)
+    listener?.close()
     // Promise.any rejects with an AggregateError only when every strategy
     // failed; collapse it to one readable line but keep .errors for --debug.
     if (error instanceof AggregateError) {
@@ -913,6 +971,9 @@ export async function openRoom({
     throw error
   }
   clearTimeout(timer)
+  // A room won, so nobody will dial: stop listening. Only a checked `ok`
+  // resolves the listener, so no SAS was shown on that side to forget.
+  listener?.close()
 
   // Winner found. Aborting tears down every strategy still trying; the .then()
   // mops up the rare loser that resolved in the same tick as the winner.
