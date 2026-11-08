@@ -59,6 +59,19 @@ export const MAX_HANDSHAKES = 32
 /** What a locator carries, and so what a listener offers. */
 export const LOCATOR_ADDRESSES = 4
 
+/**
+ * How many arrivals acceptRendezvous keeps asked for ahead of need. One is
+ * not enough, and that was measured: the app's page answers each ask by
+ * opening a WebSocket to its own relay, and on an Android emulator mid-pairing
+ * that open took 1.6 to 2.2 s. With one ask outstanding, the replacement for
+ * a socket just handed a connection was still opening when the next one
+ * arrived, so every connection after the first waited out a whole open
+ * before it heard a nonce, and a dialler's DIAL_TIMEOUT_MS ran out on it --
+ * three of four runs, with a stranger connecting first. Two keeps one ready
+ * while the other is replaced.
+ */
+export const SPARE_ARRIVALS = 2
+
 // Messages a socket room holds for a caller that has not registered onFrame
 // yet, as room.js's EARLY_FRAME_LIMIT and for its reason: the peer does not
 // wait for this side's SAS prompt, and its path verdict is control index 0.
@@ -238,9 +251,10 @@ export async function dialRendezvous({ locator, secret, dial, timeoutMs = DIAL_T
  *
  * node/lan-server.js's listenOffline keeps the same rules with a server
  * that pushes: at most `limit` handshakes at once, each cut at `timeoutMs`,
- * and one win. Here the bound is kept by asking: one `arrivals()` is
- * outstanding whenever fewer than `limit` handshakes are running, so the
- * relay holds the rest, and drops them past its own cap.
+ * and one win. Here the bound is kept by asking: up to `spare` calls to
+ * `arrivals()` are outstanding, and handshakes running plus asks outstanding
+ * never pass `limit`, so the relay holds the rest, and drops them past its
+ * own cap.
  *
  * `arrivals` resolves null once the source has ended, which ends the
  * listener as a failure unless it already won.
@@ -250,13 +264,16 @@ export async function dialRendezvous({ locator, secret, dial, timeoutMs = DIAL_T
  * @param {() => Promise<{ socket: LanSocket, from: string } | null>} args.arrivals
  * @param {number} [args.limit]
  * @param {number} [args.timeoutMs]
+ * @param {number} [args.spare] Arrivals asked for ahead of need (SPARE_ARRIVALS).
  * @returns {{ accepted: Promise<PairedRoom>, close: () => void }}
  */
-export function acceptRendezvous({ secret, arrivals, limit = MAX_HANDSHAKES, timeoutMs = HANDSHAKE_TIMEOUT_MS }) {
+export function acceptRendezvous({
+  secret, arrivals, limit = MAX_HANDSHAKES, timeoutMs = HANDSHAKE_TIMEOUT_MS, spare = SPARE_ARRIVALS,
+}) {
   const keyed = rendezvousKey(secret)
   /** @type {Set<LanSocket>} */
   const running = new Set()
-  let asking = false
+  let asking = 0
   let done = false
 
   /** @type {(room: PairedRoom) => void} */
@@ -306,18 +323,19 @@ export function acceptRendezvous({ secret, arrivals, limit = MAX_HANDSHAKES, tim
   }
 
   const ask = () => {
-    if (done || asking || running.size >= limit) return
-    asking = true
-    arrivals().then(arrived => {
-      asking = false
-      if (!arrived) return end(new Error('Stopped listening'))
-      if (done) return arrived.socket.close()
-      handshake(arrived.socket, arrived.from)
-      ask()
-    }, error => {
-      asking = false
-      end(error instanceof Error ? error : new Error(String(error)))
-    })
+    while (!done && asking < spare && running.size + asking < limit) {
+      asking++
+      arrivals().then(arrived => {
+        asking--
+        if (!arrived) return end(new Error('Stopped listening'))
+        if (done) return arrived.socket.close()
+        handshake(arrived.socket, arrived.from)
+        ask()
+      }, error => {
+        asking--
+        end(error instanceof Error ? error : new Error(String(error)))
+      })
+    }
   }
   ask()
 

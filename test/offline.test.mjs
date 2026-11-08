@@ -390,7 +390,7 @@ test('acceptRendezvous: a wrong code is dropped, and the real one pairs through 
 test('acceptRendezvous: past its limit nothing more is taken, until a stranger times out', async () => {
   const secret = generateSecret()
   const relay = fakeRelay()
-  const acceptor = acceptRendezvous({ secret, arrivals: relay.arrivals, limit: 2, timeoutMs: 150 })
+  const acceptor = acceptRendezvous({ secret, arrivals: relay.arrivals, limit: 2, timeoutMs: 150, spare: 2 })
   /** @type {LanSocket[]} */
   const strangers = []
   try {
@@ -407,6 +407,29 @@ test('acceptRendezvous: past its limit nothing more is taken, until a stranger t
     assert.equal(host.session.sas, paired.session.sas)
     assert.ok(strangers.every(s => !s.open), 'a stranger was left open')
     await Promise.all([host.close(), paired.close()])
+  } finally {
+    acceptor.close()
+  }
+})
+
+test('acceptRendezvous: a spare arrival is always asked for, so a peer behind a stranger is not kept waiting', async () => {
+  // The app's relay answers each ask by opening a page socket, which can take
+  // seconds; the peer arriving behind a stranger must find one already open.
+  const secret = generateSecret()
+  const relay = fakeRelay()
+  const acceptor = acceptRendezvous({ secret, arrivals: relay.arrivals })
+  try {
+    await sleep(10)
+    assert.equal(relay.asked, 2, 'two arrivals asked for up front')
+    await relay.dial()
+    await sleep(20)
+    // One handed to the stranger, and the spare replaced at once.
+    assert.equal(relay.asked, 3)
+    const guest = await dialThrough(relay, secret)
+    assert.ok(guest)
+    const host = await acceptor.accepted
+    assert.equal(host.session.sas, guest.session.sas)
+    await Promise.all([host.close(), guest.close()])
   } finally {
     acceptor.close()
   }

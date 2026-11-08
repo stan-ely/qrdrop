@@ -23,6 +23,14 @@ import { offlinePairing } from './offline.js'
 // bound, so anything longer than this is not a slow network.
 const LOCAL_DIAL_MS = 5000
 
+// Between tries at a page socket for the offline listener that did not open.
+// Doubling to the cap, for as long as the listener is wanted.
+const RETRY_FIRST_MS = 250
+const RETRY_MAX_MS = 2000
+
+/** @param {number} ms */
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
 // The relay's cue that a peer has arrived on a page socket: lan.js's ACK,
 // then the peer's IPv4 address (src-tauri/src/lan.rs, `join`).
 const ACK = 0x06
@@ -88,12 +96,36 @@ export async function createTauriLan() {
       const token = crypto.getRandomValues(new Uint8Array(16))
       /** @type {{ id: number, port: number, localPort: number, addrs: string[] }} */
       const { id, port, localPort, addrs } = await invoke('offline_listen', { token: toHex(token) })
-      const stop = () => { invoke('offline_close', { id }).catch(() => {}) }
+      let stopped = false
+      const stop = () => {
+        stopped = true
+        invoke('offline_close', { id }).catch(() => {})
+      }
+
+      // A page socket that did not open is tried again rather than ending
+      // the listener. It used to reject arrivals(), and acceptRendezvous takes
+      // a rejection as the source being gone: one open that missed
+      // LOCAL_DIAL_MS on a busy emulator, measured past five seconds mid-
+      // pairing, stopped this device accepting anyone for the rest of the
+      // send. The relay going away is still the end, and says so with a null
+      // cue on a socket that did open; a relay this side stopped is `stopped`.
+      /** @returns {Promise<LanSocket | null>} */
+      const pageSocket = async () => {
+        for (let wait = RETRY_FIRST_MS; !stopped; wait = Math.min(wait * 2, RETRY_MAX_MS)) {
+          try {
+            return await dialWebSocket(WebSocketImpl, `ws://127.0.0.1:${localPort}/`, LOCAL_DIAL_MS)
+          } catch {
+            await sleep(wait)
+          }
+        }
+        return null
+      }
 
       const acceptor = acceptRendezvous({
         secret,
         arrivals: async () => {
-          const socket = await dialWebSocket(WebSocketImpl, `ws://127.0.0.1:${localPort}/`, LOCAL_DIAL_MS)
+          const socket = await pageSocket()
+          if (!socket) return null
           socket.send(token)
           // Null once the relay has stopped, which drops its waiting sockets.
           const cue = await nextMessage(socket)
