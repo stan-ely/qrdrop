@@ -224,9 +224,49 @@ test('openRoom: a locator nobody answers at falls back to the room, and says so'
   try {
     assert.equal(guest.direct, undefined)
     assert.equal(host.session.sas, guest.session.sas)
-    assert.ok(said.includes('Couldn’t reach the other device directly, trying the internet…'), said.join(' | '))
+    // The reason has to be the line left standing while the rooms are tried.
+    // It used to be followed at once by a plain "Waiting for the other
+    // device", which replaced it on screen in the same tick.
+    const fell = said.findIndex(t => t.startsWith('Couldn’t reach the other device directly, waiting for it over the internet ('))
+    assert.ok(fell >= 0, said.join(' | '))
+    assert.ok(!said.slice(fell + 1).some(t => t.startsWith('Waiting for the other device')), said.join(' | '))
   } finally {
     await Promise.all([host.close(), guest.close()])
+  }
+})
+
+test('openRoom: a caller that cannot dial says its own waiting line, and a failed dial outranks it', async () => {
+  const secret = generateSecret()
+  const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+  const { strategy } = fakeNetwork()
+  /** @type {string[]} */
+  const said = []
+  /** @type {string[]} */
+  const dialled = []
+  const [host, guest, other] = await Promise.all([
+    openRoom({ topic, password, secret, role: 'host', strategies: [strategy], iceServers: [], timeoutMs: 5000 }),
+    // The site: a locator it cannot dial, so no `dial`, and its own line.
+    openRoom({
+      topic, password, secret, role: 'guest', strategies: [strategy], iceServers: [], timeoutMs: 5000,
+      onStatus: t => said.push(t),
+      waitingStatus: names => `site line (${names})`,
+    }),
+    // Both at once is a caller mistake, but the reason a dial failed is the
+    // more useful thing to have on screen, so it wins.
+    openRoom({
+      topic: 'unused', password, secret, role: 'guest', strategies: [], iceServers: [], timeoutMs: 50,
+      onStatus: t => dialled.push(t),
+      dial: async () => null,
+      waitingStatus: () => 'site line',
+    }).catch(() => null),
+  ])
+  try {
+    assert.ok(said.includes(`site line (${strategy.name})`), said.join(' | '))
+    assert.ok(!said.some(t => t.startsWith('Waiting for the other device')), said.join(' | '))
+    assert.ok(dialled.some(t => t.startsWith('Couldn’t reach the other device directly')), dialled.join(' | '))
+    assert.ok(!dialled.includes('site line'), dialled.join(' | '))
+  } finally {
+    await Promise.all([host.close(), guest.close(), other?.close()])
   }
 })
 

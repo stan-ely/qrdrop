@@ -221,8 +221,11 @@ This is most of the work, and it is the part the plan before this note underesti
       have taken the listener down on exactly the network it is for. A listener still up at
       the deadline is a `Timeout`. `with_every_relay_unreachable_the_listener_still_pairs` takes
       16 s on purpose: a shorter version passed without reaching the branch.
-    - **The dial fallback is said** ("Couldn't reach the other device directly, trying the
-      internet…"), as the open question below recommended.
+    - **The dial fallback is said**, as the open question below recommended. It was two
+      lines at first, the reason and then the ordinary "Waiting for the other device", and
+      the app draws each line over the last, so the reason never stayed on screen. It is
+      one line in both sessions now: "Couldn't reach the other device directly, waiting
+      for it over the internet (nostr, torrent)…" (app UI revamp, phase 6).
     - **`Paired::strategy` became `Paired::via`** (`Via::Network(Strategy)` or `Via::Local`).
     - **`QRDROP_OFFLINE=1` on `send`, not `--offline`.** `text.rs` holds the Rust CLI's usage
       to `cli.js`'s, so the flag has to arrive in both CLIs at once, in phase C. `receive` needs
@@ -318,8 +321,9 @@ This is most of the work, and it is the part the plan before this note underesti
 
 ## Open questions
 
-- **Should the scanner say when the dial fails** ("Couldn't reach the other device directly,
-  trying the internet…"), or stay quiet and fall back? It should say so: a person on an offline
-  network then knows at once why nothing is happening.
+- ~~Should the scanner say when the dial fails?~~ Answered: it does, in the one line left
+  standing while the rooms are tried (see "As built" under B). The website, which cannot dial,
+  says instead that the other device may be offline and that the app could pair
+  (`LOCATOR_UNREACHABLE` in `src/web/view.js`).
 - **IPv6.** Global addresses would work across some networks without NAT, but every address in
   the QR makes it denser. Leave it out until someone asks.

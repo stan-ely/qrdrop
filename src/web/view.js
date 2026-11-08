@@ -142,6 +142,10 @@ import { TEXT_NAME } from './text.js'
  * @property {boolean} canSendText whether the choose screen offers "Send text":
  *   wherever a transfer can run at all, on this page's WebRTC or a native
  *   session (see element.js).
+ * @property {boolean} canPairOffline whether this device can pair on a Wi-Fi
+ *   with no internet: the app, whose shell lends a LanPlatform with an
+ *   offline listener. Read as a sheet opens; it changes the No network?
+ *   sheet's copy only.
  * @property {boolean} isText whether this session's file is text (web/text.js),
  *   set from the file on the sending end and from the manifest on the
  *   receiving one. It changes copy only: the screens are the same screens.
@@ -945,8 +949,20 @@ function choose(state, dispatch) {
       label: 'No network?',
       title: 'No network?',
       content: [
+        // Beam used to be this sheet's only answer, and since offline pairing
+        // it is the second one: two devices on one Wi-Fi with no internet pair
+        // encrypted, at the network's speed, which beats beam on everything
+        // beam is measured by. So that comes first, and beam is for when there
+        // is no shared network at all. The app is told where the switch is
+        // (only the sender needs it; a receiving app dials any address it
+        // reads). The site, which cannot listen or dial, can only say that
+        // the app can, rather than imply beam is all there is.
+        h('p', { class: 'note' }, state.canPairOffline
+          ? 'On the same Wi-Fi, two devices can pair without internet, encrypted as usual: on the sending '
+            + 'device, turn on Pair without internet in Settings.'
+          : 'On the same Wi-Fi, the qrdrop app can pair two devices without internet, encrypted as usual.'),
         h('p', { class: 'note' },
-          'No network needed: the file plays as an animated QR code and is read back by a camera, at '
+          'With no shared network at all, the file can play as an animated QR code read back by a camera, at '
           + 'about 6 kB/s. Not encrypted, and capped at 1 MiB compressed — text and code, rarely photos.'),
         // "No network?" was said three times inside one interaction: on the
         // ghost button that opens this sheet, as the sheet's own title
@@ -1623,6 +1639,14 @@ export function errorCopy(message) {
  * there the sentence has to say the mode is simply unavailable here.
  */
 export const NO_CAMERA_SCAN = 'No camera available — enter the code by hand.'
+/**
+ * The receiver's waiting line on the website, when the code it read names a
+ * local address (docs/notes/offline-pairing.md). A browser cannot dial one,
+ * so it waits on the internet, and the sender may have none. "May": the
+ * sender races the relays beside its listener, so this often pairs anyway,
+ * and the line must not promise a failure. It says what would work instead.
+ */
+export const LOCATOR_UNREACHABLE = 'Waiting over the internet. If the other device has none, scan with the qrdrop app: a browser can’t pair offline.'
 /**
  * Said when a receive cannot start because the person dismissed the folder
  * picker -- the app on Android 9 and older, which can save nowhere until a

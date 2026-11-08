@@ -866,6 +866,10 @@ async function joinVia(strategy, { topic, password, secret, role, iceServers, rt
  * @param {() => Promise<PairedRoom | null>} [args.dial] A guest's way to the
  *   locator in the code it read (transport/rendezvous.js's dialRendezvous).
  *   Tried before any room is joined; null sends it to the rooms.
+ * @param {(networks: string) => string} [args.waitingStatus] The line said
+ *   while the rooms are joined, given the networks' names. The site passes one
+ *   when a code names a local address it cannot dial; a failed dial has its
+ *   own line and ignores this.
  * @returns {Promise<PairedRoom>}
  */
 export async function openRoom({
@@ -880,12 +884,14 @@ export async function openRoom({
   rtcPolyfill,
   listener,
   dial,
+  waitingStatus,
 }) {
   // A scanner that was told where the other device is tries there first, and
   // goes to the relays only when nobody holding the code answered. Once the
   // dial resolves with a room it has sent its `ok`, and the listener may be
   // showing a SAS: there is no falling back from that, and nothing here does
   // (transport/rendezvous.js, "ONE ROLL PER SECRET").
+  let dialFailed = false
   if (dial) {
     onStatus?.('Trying the other device on the local network…')
     const local = await dial()
@@ -893,7 +899,7 @@ export async function openRoom({
       onStatus?.('Paired over the local network')
       return local
     }
-    onStatus?.('Couldn’t reach the other device directly, trying the internet…')
+    dialFailed = true
   }
 
   const ac = new AbortController()
@@ -910,7 +916,17 @@ export async function openRoom({
   // unhandledRejection.
   attempts.forEach(p => p.catch(() => {}))
 
-  onStatus?.(`Waiting for the other device (${strategies.map(s => s.name).join(', ')})…`)
+  // After a failed dial the waiting line carries the reason, rather than
+  // following a line that did. The two used to be said back to back, and the
+  // second replaced the first on screen within the same tick: the scanner
+  // never once showed why it had gone to the relays, which on a network with
+  // no route out is the one thing that explains why nothing happens next.
+  // The site, which cannot dial, passes `waitingStatus` to say instead why a
+  // code that names a local address is waiting on the internet.
+  const names = strategies.map(s => s.name).join(', ')
+  onStatus?.(dialFailed
+    ? `Couldn’t reach the other device directly, waiting for it over the internet (${names})…`
+    : waitingStatus?.(names) ?? `Waiting for the other device (${names})…`)
 
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer

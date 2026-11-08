@@ -21,7 +21,10 @@ relays. Scanning works the other way round whatever the switch says: a code made
 `qrdrop send --offline`, or by another app with the switch on, is tried at its address
 first. You still check the same four symbols, and the file goes over that one
 connection, still encrypted end to end. Only a device holding the code can complete the
-connection, so another device on the Wi-Fi that finds it gets nowhere.
+connection, so another device on the Wi-Fi that finds it gets nowhere. When the address
+in a scanned code does not answer, the scanner says so while it tries the internet
+instead. The No network? sheet on the home screen points to the switch, before the
+animated QR code, which is now for when the two devices share no network at all.
 
 The switch is off to begin with. A version of the app older than 1.4.0 cannot read a
 code with an address in it, and on Windows and macOS the first such send makes the

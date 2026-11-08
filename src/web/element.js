@@ -53,7 +53,7 @@ import { startBeamSend, startBeamReceive, DEFAULT_FPS } from './beam.js'
 import { fromFile } from './source.js'
 import { isText, textFile, textBytes, tooLongMessage, createTextSink, TEXT_MAX_BYTES, TEXT_MIME } from './text.js'
 import { patch } from './vdom.js'
-import { render, dialogContent, NO_CAMERA_SCAN, NO_SAVE_FOLDER } from './view.js'
+import { render, dialogContent, NO_CAMERA_SCAN, NO_SAVE_FOLDER, LOCATOR_UNREACHABLE } from './view.js'
 import { enableSheetDismiss } from './sheet-gesture.js'
 import { copyText } from './copy.js'
 import { STYLES } from './styles.js'
@@ -605,6 +605,7 @@ export class QRDropElement extends HTMLElement {
       // native session takes the text itself rather than as a path (_sendText),
       // so Linux's webview, with no WebRTC of its own, has it too.
       canSendText: typeof RTCPeerConnection !== 'undefined' || Boolean(getPlatform().session),
+      canPairOffline: false,
       isText: false,
       text: /** @type {string | null} */ (null),
       draft: '',
@@ -1008,7 +1009,11 @@ export class QRDropElement extends HTMLElement {
       // explanation is not declining a transfer, and a sheet whose Close
       // button silently cancelled the thing it was explaining would be the
       // most expensive possible reading of a dismissal.
-      case 'modal:open': return this._setState({ modal: payload })
+      // canPairOffline is read here rather than kept from construction: the
+      // app registers its LanPlatform a few milliseconds after the component
+      // is defined (app/src/main.js), and the No network? sheet is the one
+      // reader, so the moment it opens is the moment to ask.
+      case 'modal:open': return this._setState({ modal: payload, canPairOffline: Boolean(getPlatform().lan?.openOffline) })
       case 'modal:close': return this._setState({ modal: null })
       case 'cancel': return this._reset()
       case 'restart': return this._reset()
@@ -1780,6 +1785,14 @@ export class QRDropElement extends HTMLElement {
       dial: locator && lanPlatform
         ? () => dialRendezvous({ locator, secret, dial: lanPlatform.dial })
         : undefined,
+      // A code that names a local address was made by a sender asking to pair
+      // without internet, and a browser cannot open a socket to that address.
+      // Waiting on the relays is still right, since the sender races them
+      // beside its listener, but if it has no route out the wait can only
+      // time out, and a plain "Waiting for the other device" would read as a
+      // hang. Said once, in the line the wait already shows, with the one
+      // thing that would work instead.
+      waitingStatus: locator && !lanPlatform ? () => LOCATOR_UNREACHABLE : undefined,
     })
 
     this._sessionEnded = false

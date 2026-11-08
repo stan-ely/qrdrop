@@ -319,6 +319,8 @@ struct Won {
 /// exchange, and leave the rest. With a locator, a guest dials it first; with
 /// a listener, a host waits on it beside the rooms.
 pub async fn open_room(#[allow(unused_mut)] mut cfg: OpenConfig) -> Result<Paired, OpenError> {
+    #[allow(unused_mut)]
+    let mut dial_failed = false;
     #[cfg(feature = "lan-dial")]
     if let Some(locator) = cfg.locator.take() {
         cfg.status("Trying the other device on the local network\u{2026}");
@@ -326,18 +328,29 @@ pub async fn open_room(#[allow(unused_mut)] mut cfg: OpenConfig) -> Result<Paire
             cfg.status("Paired over the local network");
             return Ok(p);
         }
-        // Said rather than fallen back on quietly: on a network with no route
-        // out, this line is the reason nothing else is about to happen.
-        cfg.status("Couldn\u{2019}t reach the other device directly, trying the internet\u{2026}");
+        dial_failed = true;
     }
 
     let topic = cfg.secret.topic();
     let password = cfg.secret.password();
-    let names: Vec<&str> = cfg.networks.iter().map(Network::name).collect();
-    cfg.status(&format!(
-        "Waiting for the other device ({})…",
-        names.join(", ")
-    ));
+    let names = cfg
+        .networks
+        .iter()
+        .map(Network::name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    // Said rather than fallen back on quietly: on a network with no route
+    // out, this line is the reason nothing else is about to happen. One line
+    // and not two, because the app draws each line over the last, and a plain
+    // "Waiting for the other device" said straight after it replaced the
+    // reason on screen at once. room.js's openRoom says the same.
+    cfg.status(&if dial_failed {
+        format!(
+            "Couldn\u{2019}t reach the other device directly, waiting for it over the internet ({names})\u{2026}"
+        )
+    } else {
+        format!("Waiting for the other device ({names})\u{2026}")
+    });
 
     // `true` once a winner is chosen or the wait is over: every attempt still
     // running leaves its room and returns.

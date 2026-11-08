@@ -328,6 +328,19 @@ test('the compose sheet starts nothing until Send, and Send is the only pairing 
   assert.equal(heading?.props.autofocus, true, 'the heading takes focus, never a control')
 })
 
+test('the No network? sheet offers Wi-Fi pairing before beam, and says where the switch is only in the app', () => {
+  const site = textOf(dialogContent(state({ modal: 'info' }), () => {}))
+  const app = textOf(dialogContent(state({ modal: 'info', canPairOffline: true }), () => {}))
+  for (const text of [site, app]) {
+    // Beam is no longer the only answer, and the sheet must not imply it is.
+    assert.ok(text.indexOf('without internet') >= 0 && text.indexOf('without internet') < text.indexOf('6 kB/s'), text)
+    assert.match(text, /no shared network at all/)
+  }
+  assert.match(app, /Pair without internet in Settings/)
+  assert.doesNotMatch(site, /Settings/, 'the site has no Settings to send anyone to')
+  assert.match(site, /qrdrop app/)
+})
+
 test('the choose screen offers Send text only where the page can send it', () => {
   assert.ok(intentsOn(state({}), 'choose').has('text:compose'))
   assert.ok(!intentsOn(state({ canSendText: false }), 'choose').has('text:compose'))

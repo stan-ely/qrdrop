@@ -17,6 +17,7 @@
  */
 
 import { SAS_EMOJI } from '../src/core/session.js'
+import { LOCATOR_UNREACHABLE } from '../src/web/view.js'
 
 /**
  * A stand-in pairing code: the real encoder's shape (43 base64url characters,
@@ -90,6 +91,13 @@ export const FIXTURES = [
     state: { screen: 'choose', modal: 'info' },
   },
   {
+    // The same sheet in the app, which can pair on a Wi-Fi with no internet
+    // and says where the switch is. One sentence longer than the site's.
+    name: 'choose-offline-sheet',
+    screen: 'choose',
+    state: { screen: 'choose', modal: 'info', canPairOffline: true },
+  },
+  {
     // The sender's beam confirm: a file has been picked and nothing is shown
     // yet. This sheet is the one place the sender reads BEAM_WARNING in full,
     // so Start beaming has to be reachable under it on every viewport.
@@ -143,6 +151,26 @@ export const FIXTURES = [
     state: {
       screen: 'receive', role: 'receiver', cameraAvailable: false,
       status: 'No camera available — enter the code by hand.',
+    },
+  },
+  {
+    // A scanned code whose address did not answer: the longest line the
+    // scanner caption carries, and the one that explains a wait on a network
+    // with no route out.
+    name: 'receive-dial-failed',
+    screen: 'receive',
+    state: {
+      screen: 'receive', role: 'receiver', cameraAvailable: true, pairing: true,
+      status: 'Couldn’t reach the other device directly, waiting for it over the internet (nostr, torrent)…',
+    },
+  },
+  {
+    // The website reading a code that names a local address it cannot dial.
+    name: 'receive-locator-site',
+    screen: 'receive',
+    state: {
+      screen: 'receive', role: 'receiver', cameraAvailable: true, pairing: true,
+      status: LOCATOR_UNREACHABLE,
     },
   },
   {

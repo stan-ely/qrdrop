@@ -13,7 +13,7 @@ change could break moves into CLAUDE.md, the way the LAN path's rules did.
 | 3. Screen redesign, shared with the site | built | 2 | no | direction approved 2026-11-03; see "Phase 3: as built". Not yet seen on a phone |
 | 4. History | built | 2 | Android recommended | see "Phase 4: as built". Desktop verified end to end; not yet run on a phone |
 | 5. Platform polish | built | 3, 4 | yes | see "Phase 5: as built". Android on one phone; Windows; Linux under WSLg; macOS not run |
-| 6. Offline-pairing UI | blocked | 3 and offline pairing phase C | yes | phases B and C of `offline-pairing.md` are unbuilt, and this copy must not ship before the feature works |
+| 6. Offline-pairing UI | built, no phone yet | 3 and offline pairing phase C | yes | see "Phase 6: as built". Checked in Playwright and the unit suites; real scans of a locator code at phone size not yet done |
 
 Phases 3 and 4 can run in either order. Each runs in a fresh session.
 
@@ -184,6 +184,47 @@ sliding up is off-screen then, so it waits for finite animations first, as
 
 **Phase 2's follow-ups taken here:** the disclosure's website-only wording, the `fastlane/`
 screenshots, and how the tall viewfinder looks.
+
+## Phase 6: as built
+
+Built 2026-11-08, after offline pairing phases B and C. Two of the prompt's five items were
+already done when the session started, and one of those turned out not to work.
+
+**The dial fallback was said and never seen.** `openRoom` and Rust's `open_room` both said
+"Couldn't reach the other device directly, trying the internet…" and then, straight after,
+"Waiting for the other device (nostr, torrent)…". Each status line replaces the last on screen,
+so the reason was gone within the same tick on both sessions; the Rust CLI prints every line,
+which is why it looked done. It is one line now, in both:
+"Couldn't reach the other device directly, waiting for it over the internet (nostr, torrent)…".
+`test/offline.test.mjs` fails if any waiting line follows it.
+
+**The No network? sheet puts Wi-Fi pairing first.** Beam had been the sheet's only answer.
+Now a line before it says two devices on the same Wi-Fi can pair without internet. In the app
+it names the Settings switch, and only the sender needs that, since a receiving app dials any
+address it reads. On the site it says the qrdrop app can. Beam's paragraph now opens "With no
+shared network at all". `canPairOffline` is read from `getPlatform().lan` when a sheet opens,
+not at construction, because the app registers its LanPlatform a few milliseconds after the
+component is defined. `test/view.test.mjs` pins both variants.
+
+**The site explains a locator code's wait** (`LOCATOR_UNREACHABLE`, via `openRoom`'s new
+`waitingStatus`). It does not promise a failure: the sender races the relays beside its
+listener, so a sender with internet still pairs.
+
+**The opt-in on Windows and macOS was already built**: phase C's Settings row, which states
+the firewall prompt when `lan.listen === 'prompt'`. Nothing changed there.
+
+**QR density, measured with the real encoder at level M** (the pairing QR's):
+
+| Code | No locator | One address | Four addresses |
+|---|---|---|---|
+| stable link | v5 (78 chars) | v6 | v6 |
+| /edge/ link | v5 | v6 | v7 (110 chars) |
+| bare `qrdrop:` | v4 | v4 | v5 |
+
+The plan's estimate holds. Whether v6 and v7 scan reliably from a phone held at a laptop
+screen has **not** been measured: no phone was attached. That, and the three new fixtures
+(`choose-offline-sheet`, `receive-dial-failed`, `receive-locator-site`) seen on a real screen,
+go to the next device session.
 
 ## Phase 5: as built
 

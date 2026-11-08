@@ -13,8 +13,10 @@ still check the same four symbols, and the file goes over that one connection, s
 encrypted end to end. Only someone holding the code can complete the connection, so
 another device on the Wi-Fi that finds the port gets nowhere. `qrdrop receive` tries
 the address in any code that has one before it tries the internet, and says so if it
-cannot reach it. The website cannot open such a connection, so it ignores the address
-and pairs over the internet as before.
+cannot reach it. The website cannot open such a connection, so it pairs over the
+internet as before, and while it waits it says that the other device may be offline and
+that the qrdrop app could pair without internet. Its No network? sheet now mentions
+this too, before the animated QR code.
 
 It is off unless you ask for it. A version older than 0.7.0 cannot read a code with an
 address in it, and on Windows and macOS the first `--offline` send makes the firewall
