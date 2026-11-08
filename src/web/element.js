@@ -37,11 +37,12 @@
  */
 
 import {
-  generateSecret, encodeSecret, encodeSecretURL, decodeSecret, deriveTopic, derivePassword,
+  generateSecret, encodeSecret, encodeSecretURL, decodeSecret, decodePairing, deriveTopic, derivePassword,
 } from '../core/secret.js'
 import { openRoom, RELAYED_MAX_BYTES, combinePaths } from '../transport/room.js'
 import { createControlStream, sendControl } from '../core/control.js'
 import { createLanLink } from '../transport/lan.js'
+import { dialRendezvous } from '../transport/rendezvous.js'
 import { createReceiver, sendPathVerdict } from '../core/receiver.js'
 import { sendFile } from '../core/sender.js'
 import { relayCapMessage, relayCapDeclineMessage, METERED_WARN_BYTES, PEER_DISCONNECTED, LAN_CLOSED, pathDescription } from '../core/messages.js'
@@ -907,7 +908,8 @@ export class QRDropElement extends HTMLElement {
     if (!hash) return
     history.replaceState(null, '', location.pathname + location.search)
     try {
-      this._startReceive(decodeSecret(hash)).catch(e => this._fail(e))
+      const { secret, locator } = decodePairing(hash)
+      this._startReceive(secret, locator).catch(e => this._fail(e))
     } catch {
       // Not a qrdrop code -- an ordinary in-page anchor, most likely.
       // Nothing to do; this element does not own the rest of the page's hashes.
@@ -1634,10 +1636,10 @@ export class QRDropElement extends HTMLElement {
   /** @param {string} raw */
   _submitManualCode(raw) {
     try {
-      const secret = decodeSecret(raw)
+      const { secret, locator } = decodePairing(raw)
       this._teardown?.()
       this._setState({ manualError: null })
-      this._startReceive(secret).catch(e => this._fail(e))
+      this._startReceive(secret, locator).catch(e => this._fail(e))
     } catch (error) {
       // Not _fail: decodeSecret rejecting is a complaint about the text in
       // the field, so it is shown against the field (see view.js's receive()).
@@ -1755,10 +1757,16 @@ export class QRDropElement extends HTMLElement {
    * @param {object} args
    * @param {Bytes} args.secret
    * @param {'host' | 'guest'} args.role
+   * @param {import('../core/secret.js').Locator | null} [args.locator] Where
+   *   the code says the other device is listening. Dialled before any relay,
+   *   and only where a native shell lends a LanPlatform: the website cannot
+   *   open a socket to a LAN address, so it ignores the locator and pairs
+   *   over the relays exactly as before (docs/notes/offline-pairing.md).
    * @returns {Promise<PairedRoom>}
    */
-  async _establish({ secret, role }) {
+  async _establish({ secret, role, locator = null }) {
     const [topic, password] = await Promise.all([deriveTopic(secret), derivePassword(secret)])
+    const lanPlatform = getPlatform().lan
 
     const room = await openRoom({
       topic,
@@ -1766,6 +1774,9 @@ export class QRDropElement extends HTMLElement {
       secret,
       role,
       onStatus: text => this._setState({ status: text }),
+      dial: locator && lanPlatform
+        ? () => dialRendezvous({ locator, secret, dial: lanPlatform.dial })
+        : undefined,
     })
 
     this._sessionEnded = false
@@ -1821,9 +1832,10 @@ export class QRDropElement extends HTMLElement {
     // The local-network fast path, where a native shell lends one (only
     // app/src/main.js registers getPlatform().lan, so the website never
     // has it). Created here and silent until Confirm below: start() is what
-    // says anything, and it runs only after the SAS.
+    // says anything, and it runs only after the SAS. Not on a room that is
+    // already a socket on the local network: there is nothing faster.
     const lanPlatform = getPlatform().lan
-    if (lanPlatform) {
+    if (lanPlatform && !room.direct) {
       lan = createLanLink({
         role: 'sender',
         platform: lanPlatform,
@@ -1916,12 +1928,16 @@ export class QRDropElement extends HTMLElement {
   }
 
   /** @param {Bytes} secret */
-  async _startReceive(secret) {
+  /**
+   * @param {Bytes} secret
+   * @param {import('../core/secret.js').Locator | null} [locator]
+   */
+  async _startReceive(secret, locator = null) {
     if (!await this._ensureSaveLocation()) return
-    if (getPlatform().session) return this._startNativeReceive(secret)
+    if (getPlatform().session) return this._startNativeReceive(secret, locator)
     this._setState({ screen: 'receive', role: 'receiver', status: 'Starting…', pairing: true })
 
-    const room = await this._establish({ secret, role: 'guest' })
+    const room = await this._establish({ secret, role: 'guest', locator })
     this._setState({ pairing: false })
 
     /** @type {ReturnType<typeof createLanLink> | null} */
@@ -2069,8 +2085,9 @@ export class QRDropElement extends HTMLElement {
     // link that dies mid-file stops the sender's frames while WebRTC may stay
     // up, so no leave is coming to end the transfer screen. Guarded and
     // deferred exactly as the leave handler above is, for the same reasons.
+    // A direct room has nothing to upgrade to, and its sender sends no hello.
     const lanPlatform = getPlatform().lan
-    if (lanPlatform) {
+    if (lanPlatform && !room.direct) {
       lan = createLanLink({
         role: 'receiver',
         platform: lanPlatform,
@@ -2170,14 +2187,19 @@ export class QRDropElement extends HTMLElement {
    *
    * @param {Bytes} secret
    */
-  async _startNativeReceive(secret) {
+  /**
+   * @param {Bytes} secret
+   * @param {import('../core/secret.js').Locator | null} [locator] Passed on in
+   *   the code, which native.rs decodes with it and dials first.
+   */
+  async _startNativeReceive(secret, locator = null) {
     const native = /** @type {NativeSession} */ (getPlatform().session)
     this._setState({ screen: 'receive', role: 'receiver', status: 'Starting…', pairing: true })
     const progress = this._trackProgress('Received')
     let paired = false
     const { control, live } = this._nativeTeardown()
 
-    const started = await native.receive(encodeSecret(secret), ev => {
+    const started = await native.receive(encodeSecret(secret, locator), ev => {
       if (!live()) return
       switch (ev.t) {
         case 'paired':
@@ -2690,7 +2712,8 @@ export class QRDropElement extends HTMLElement {
     try {
       const video = /** @type {HTMLVideoElement} */ (this._root.getElementById('scanner'))
       const value = await scanQR({ video, signal: controller.signal })
-      this._startReceive(decodeSecret(value)).catch(e => this._fail(e))
+      const { secret, locator } = decodePairing(value)
+      this._startReceive(secret, locator).catch(e => this._fail(e))
     } catch (error) {
       // Cancelling is the ordinary way out of this screen, not a fault.
       if (!(error instanceof Error) || error.name !== 'AbortError') this._fail(error)

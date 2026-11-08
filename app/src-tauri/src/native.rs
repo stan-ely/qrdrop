@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use qrdrop_protocol::{Manifest, NetworkPath, PEER_DISCONNECTED, Role, Secret};
+use qrdrop_protocol::{Locator, Manifest, NetworkPath, PEER_DISCONNECTED, Role, Secret};
 use qrdrop_session::networks::STUN_SERVERS;
 use qrdrop_session::path::RELAYED_MAX_BYTES;
 use qrdrop_session::{
@@ -387,11 +387,14 @@ pub async fn native_receive(
     code: String,
     events: Channel<NativeEvent>,
 ) -> Result<u32, String> {
-    let secret = Secret::decode(&code).map_err(|e| e.to_string())?;
+    // The locator, when the code carries one, is dialled before any relay
+    // (docs/notes/offline-pairing.md): a scanned CLI `send --offline` pairs
+    // with no internet. Every app build can dial; only listening is gated.
+    let (secret, locator) = Secret::decode_pairing(&code).map_err(|e| e.to_string())?;
     let (id, words) = state.add();
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
-        run_receive(app2.clone(), secret, &events, words).await;
+        run_receive(app2.clone(), secret, locator, &events, words).await;
         forget(&app2, id);
     });
     Ok(id)
@@ -412,7 +415,7 @@ async fn run_send(
     events: &Channel<NativeEvent>,
     mut words: mpsc::UnboundedReceiver<Word>,
 ) {
-    let Some(paired) = pair(secret, Role::Host, events, &mut words).await else {
+    let Some(paired) = pair(secret, Role::Host, None, events, &mut words).await else {
         return;
     };
     // The sender's half of the two safety gestures: the manifest -- the
@@ -440,10 +443,11 @@ async fn run_send(
 async fn run_receive(
     app: tauri::AppHandle,
     secret: Secret,
+    locator: Option<Locator>,
     events: &Channel<NativeEvent>,
     mut words: mpsc::UnboundedReceiver<Word>,
 ) {
-    let Some(paired) = pair(secret, Role::Guest, events, &mut words).await else {
+    let Some(paired) = pair(secret, Role::Guest, locator, events, &mut words).await else {
         return;
     };
     // The receiver's Accept answers the SAS and the offer together, as on the
@@ -457,11 +461,13 @@ async fn run_receive(
 async fn pair(
     secret: Secret,
     role: Role,
+    locator: Option<Locator>,
     events: &Channel<NativeEvent>,
     words: &mut mpsc::UnboundedReceiver<Word>,
 ) -> Option<Paired> {
     let mut cfg = OpenConfig::new(secret, role);
     cfg.on_status = Some(status_to(events));
+    cfg.locator = locator;
     let paired = tokio::select! {
         r = open_room(cfg) => r,
         () = cancelled(words) => return None,

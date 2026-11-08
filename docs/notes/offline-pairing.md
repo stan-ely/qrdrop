@@ -11,7 +11,7 @@ CLAUDE.md, the way the LAN path's did.
 |---|---|---|
 | A. Decoders tolerate a locator | released | npm 0.7.0 and app-v1.4.0, both 2026-11-03 |
 | B. Rust: the session over a socket, and the rendezvous | built 2026-11-07, unreleased | `160824c`..`9e9a171`; the gate is `crates/qrdrop-session/examples/offline.sh`. See "As built" under B |
-| C. Node CLI and the app | Node CLI built 2026-11-08, unreleased; the app not started | `send --offline` in both CLIs. The gate passes in all four pairings with no route out, and the matrix gained an `--offline` run. See "As built" under C |
+| C. Node CLI and the app | Node CLI and the app's receive side built 2026-11-08, unreleased; the app does not listen yet | `send --offline` in both CLIs. The gate passes in all four pairings with no route out, and the matrix gained an `--offline` run. See "As built" under C |
 | D. Docs, threat model, CLAUDE.md | not started | at the end of C |
 
 ## The problem
@@ -249,6 +249,21 @@ This is most of the work, and it is the part the plan before this note underesti
     - **`interop.e2e.mjs --offline`** is the matrix's fourth run, 4/4 on Windows. The relays
       are reachable there, so it proves that the four pairings agree on the wire, not that
       they need no relay; the gate covers that.
+  - **As built (the app, receiving):**
+    - **The app dials a scanned locator on both of its sessions.** On the JS session that
+      is `element.js`'s `_establish`, through the shell's `LanPlatform`, and every entry
+      point (scan, typed code, `location.hash`) now keeps the locator. The website has no
+      `LanPlatform`, so it ignores the locator and pairs over the relays as before. On the
+      native session, `native.rs`'s `native_receive` decodes the locator and sets
+      `OpenConfig::locator`; every app build already has `lan-dial`. A direct room skips
+      the LAN link on both sides.
+    - **Not measured on a device yet.** The next phone session should scan a CLI
+      `send --offline` code on a Wi-Fi with no route out.
+  - **Still to do: the app listening.** The relay in `lan.rs` hands the page one connection
+    that presented a token. A listener here has to run the rendezvous on every connection
+    until one proves the code, either in that relay or on the native session, where
+    `OfflineListener` already does it. The app also needs somewhere to ask for it, since it
+    has no `--offline`. That is a UI decision, and it waits on the default-on question in A.
 - **D.** The docs moves above, and this file's Status.
 
 ## Open questions
