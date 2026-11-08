@@ -11,8 +11,8 @@ CLAUDE.md, the way the LAN path's did.
 |---|---|---|
 | A. Decoders tolerate a locator | released | npm 0.7.0 and app-v1.4.0, both 2026-11-03 |
 | B. Rust: the session over a socket, and the rendezvous | built 2026-11-07, unreleased | `160824c`..`9e9a171`; the gate is `crates/qrdrop-session/examples/offline.sh`. See "As built" under B |
-| C. Node CLI and the app | Node CLI and the app's receive side built 2026-11-08, unreleased; the app does not listen yet | `send --offline` in both CLIs. The gate passes in all four pairings with no route out, and the matrix gained an `--offline` run. See "As built" under C |
-| D. Docs, threat model, CLAUDE.md | not started | at the end of C |
+| C. Node CLI and the app | built 2026-11-08, unreleased; not yet tried on a phone | `send --offline` in both CLIs, and "Pair without internet" in the app's Settings. The gate passes in all four CLI pairings with no route out, the matrix gained an `--offline` run, and app-native gained an offline send on each of the app's sessions. See "As built" under C |
+| D. Docs, threat model, CLAUDE.md | done 2026-11-08 | `docs/protocol.md` ("Pairing with no internet"), two threat-model entries, and the CLAUDE.md invariant |
 
 ## The problem
 
@@ -259,12 +259,44 @@ This is most of the work, and it is the part the plan before this note underesti
       the LAN link on both sides.
     - **Not measured on a device yet.** The next phone session should scan a CLI
       `send --offline` code on a Wi-Fi with no route out.
-  - **Still to do: the app listening.** The relay in `lan.rs` hands the page one connection
-    that presented a token. A listener here has to run the rendezvous on every connection
-    until one proves the code, either in that relay or on the native session, where
-    `OfflineListener` already does it. The app also needs somewhere to ask for it, since it
-    has no `--offline`. That is a UI decision, and it waits on the default-on question in A.
+  - **As built (the app, sending):**
+    - **"Pair without internet" in Settings, off by default**, in `app/src/offline.js`
+      (localStorage). Off for A's rollout reason, and because on Windows and macOS it raises
+      the firewall prompt, which the row says. It is read as each send starts, by both
+      sessions, so it never changes a code already on screen. localStorage rather than
+      history.rs's store, because storage that is lost reads as off, which is the harmless
+      direction.
+    - **The page's session listens through a second relay, `offline_listen` in `lan.rs`.**
+      The fast-path relay decides which connection is the peer by the token Rust was
+      handed. The rendezvous is keyed on the secret, which Rust is never handed, so this
+      relay decides nothing. Each page socket presents the token and waits. Each connection
+      that arrives is joined to one, the page is cued with ACK and the peer's address, and
+      `acceptRendezvous` (`src/transport/rendezvous.js`) runs the handshake and keeps the
+      first that proves the code. The page keeps at most 32 handshakes running by asking
+      for one connection at a time, and the relay holds at most 32 waiting. Stopping the
+      listener stops only the accept loop; each joined pair is a task of its own, so a win
+      runs on. Each listener has an id, so a late close from an ended send cannot stop
+      the next one's.
+    - **The native session binds `OfflineListener`** in `native.rs`'s `start_send`, as the
+      Rust CLI does, and `lan-listen` is now built on every app target. That changes
+      nothing for the fast path: `default_listen()` still says `prompt` on Windows and
+      macOS, so only the offline listener, asked for by the switch, listens there.
+    - **The native send's QR used to drop the locator**, because it re-encoded the code
+      through `decodeSecret`. It goes through `decodePairing` now. The typed code carries
+      the locator on both sessions, as the CLI's does: a code read out is the other
+      device's only other way to learn the address.
+    - **A device with no private address** (mobile data alone) keeps no listener and shows
+      the bare code, without a word. The person asked for a setting, not for this transfer.
+    - **Tests:** `acceptRendezvous` against an in-memory relay in `test/offline.test.mjs`
+      (a wrong code, the limit, a stop), the relay over loopback in `lan.rs`, the row in
+      `test/app-view.test.mjs`, and two legs at the end of `e2e/app-native.e2e.mjs`: an
+      offline send on each session, the Node CLI pairing at the code's address.
 - **D.** The docs moves above, and this file's Status.
+  - **As built:** "Pairing with no internet" in `docs/protocol.md`, with the new HKDF label
+    in its table. Two threat-model entries: the listener under Protected, and the address a
+    locator shows under Not protected. In CLAUDE.md, an invariant for the rendezvous, the QR
+    locator's sentence under the QUIC rule, and the keypair rule, which now names
+    `rendezvous.js` as its second home. This file stays as the record of why.
 
 ## Open questions
 

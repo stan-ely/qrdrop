@@ -492,12 +492,16 @@ never released; `test/qr.test.mjs` asserts both that the track ends and that the
 call settles.
 
 **The ECDH keypair is generated per `joinVia` call and never cached.** `src/transport/room.js`
-is the only place `createEphemeralKeypair()` is called, and its result must stay a local.
+and `src/transport/rendezvous.js` are the only places `createEphemeralKeypair()` is
+called, and its result must stay a local in both.
 `openRoom` races two strategies, so one pairing generates two keypairs and discards one —
 hoisting the call to module scope to save that looks like an obvious win and silently
 costs forward secrecy, which is the only reason there is an ECDH at all. `test/room.test.mjs`
 pairs twice over one secret against an in-memory fake strategy and asserts the sessions
-cannot open each other; nothing else in the suite notices.
+cannot open each other; nothing else in the suite notices. The offline rendezvous keeps
+the same rule per connection: `answerRendezvous` generates the listener's keypair only
+after the dial message verifies, so a stranger never costs a key, and `dialRendezvous`
+generates one for the single connection it keys.
 
 **`decodeSecret` accepts the code only from a URL fragment, never the query string.** A
 fragment is the one part of a URL never sent to the server, which is the entire reason a
@@ -680,6 +684,43 @@ so a Rust sender's wait at Accept costs it nothing. `--no-lan` turns QUIC off as
 keeping the file on WebRTC as its help says, and the interop suite pins `QRDROP_QUIC=0`
 except in its `--quic` leg. The app is built without the `quic` feature until the phone
 has been measured.
+
+The offline locator in the QR does not break this rule, and the reason is worth keeping
+straight. The rule protects a public address in a signal anyone with the code can read.
+A locator is a *private* address in the same picture as the code, so anyone who can read
+it already holds the code, and racing to it gets them nothing pairing would not. The
+rendezvous below means a racer without the code gets nothing at all.
+
+**The offline rendezvous proves the code before anything latches, and a side that has
+shown a SAS never falls back.** `docs/notes/offline-pairing.md` is the design;
+`src/core/rendezvous.js` and `qrdrop-protocol`'s `rendezvous.rs` are the four
+messages, pinned by `test/vectors/rendezvous.json`. A listening port is open to the whole
+Wi-Fi before anyone pairs, which a relay room never is, so a listener that latched on the
+first key to arrive would let anyone on the network force a SAS mismatch and spend the
+one roll. Four things are load-bearing, and each was a decision rather than an accident:
+
+- **The dialler races the addresses only as far as the nonce, and keys one connection.**
+  Keying every address that answered gives each its own keypair, and a listener reachable
+  at two addresses can finish on one while the dialler keeps the other: a false mismatch,
+  `docs/notes/pairing-race.md` again. Its `ok` goes out after the dial timeout is
+  cleared, so the timeout cannot cut it half-sent while the listener latches on the whole.
+- **Paired means "sent ok" to the dialler and "checked ok" to the listener.** Before that
+  either side may go to the relays, since nothing has been shown. After it a failure is
+  terminal. A host whose rooms have all failed keeps waiting on its listener, because no
+  relay answering is exactly the network it is for (`with_every_relay_unreachable_the_listener_still_pairs`
+  in `qrdrop-session`'s tests, and the JS `openRoom` test "with every room failed").
+- **A direct room does no upgrade.** `createSocketRoom` and Rust's `Via::Local` carry the
+  whole session on the socket, and `room.direct` is what stops a sender sending a
+  `lan-hello` that would open a second socket to the same peer.
+- **The app's relay never sees the secret.** `offline_listen` in `src-tauri/src/lan.rs`
+  hands every connection to the page, which runs `acceptRendezvous`. Deciding in Rust would
+  mean handing Rust the secret, which the fast-path relay was designed never to hold.
+
+Nothing emits a locator by default yet. `send --offline` and the app's "Pair without
+internet" switch (`app/src/offline.js`, localStorage, off) are opt-in, because a receiver
+older than npm 0.7.0 or app 1.4.0 calls such a code "Not a qrdrop code", and listening on
+Windows or macOS raises the firewall prompt. Turning it on by default waits a release cycle
+past those, and on Windows and macOS it should stay a choice.
 
 **A control stream's `fail()` is sticky, and the first error wins.** It used to reject the
 waiter parked in `next()` if there was one and forget the error otherwise — and in the

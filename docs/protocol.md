@@ -26,6 +26,7 @@ The QR carries 32 bytes of CSPRNG output. Everything else derives from it:
 | --- | --- |
 | `HKDF(secret, "topic")` | Trystero room ID — what peers meet on |
 | `HKDF(secret, "signal")` | Trystero `password`, encrypting session descriptions |
+| `HKDF(secret, "lan-rendezvous")` | the HMAC key of the offline rendezvous, for a code that carries an address (below) |
 | `HKDF(ECDH, salt=secret, "host->guest")` | file bytes, sender to receiver |
 | `HKDF(ECDH, salt=secret, "guest->host")` | file bytes, the other way |
 | `HKDF(ECDH, salt=secret, "sas")` | the four emoji shown on both screens |
@@ -306,6 +307,75 @@ above holds for it:
   end can listen quietly.
 
 `--no-lan` keeps the Rust CLI's file on WebRTC, which turns this path off too.
+
+</details>
+
+<details>
+<summary><b>Pairing with no internet, through an address in the code</b></summary>
+
+Every path above is negotiated after pairing, over a room that met on the
+public relays. So two devices on one Wi-Fi with no route out could not pair
+at all. A phone hotspot with no data, a plane or a site network were all
+dead ends. The QR is already the one channel nobody can stand in the middle
+of, and the only thing the relays did that the QR could not was say where
+the other device is. So the code can say it:
+
+```
+qrdrop:<43 characters>.<locator>
+```
+
+The locator is base64url of a version byte, a port and one to four private
+IPv4 addresses. `.` is outside the base64url alphabet, so the code's own 43
+characters stay unambiguous, and in the URL form the whole thing is still in
+the fragment. A decoder that does not know the locator's version ignores it,
+so the format can grow. The bare form stays valid for good.
+
+- **The side showing the code listens; the scanner dials.** Only the listener
+  can say where it is. The Rust CLI and the Node CLI emit a locator with
+  `send --offline`, and the app with "Pair without internet" in Settings. All
+  of them are off by default: a receiver older than npm 0.7.0 or app 1.4.0
+  rejects such a code, and on Windows or macOS listening raises the
+  firewall prompt. Every native receiver dials a locator it reads, before any
+  relay, for at most three seconds, and says so when it falls back. The
+  website cannot open a socket, so it ignores the locator and pairs over the
+  relays as before.
+- **The code is proved before anything latches.** A relay room cannot even
+  be found without the code, but a listening port is open to the whole
+  network. So the first four messages on the WebSocket are a rendezvous keyed
+  on `k_rv = HKDF(secret, "lan-rendezvous")`. The listener sends a 16-byte
+  nonce. The dialler answers with its ECDH key and an HMAC over both, and only
+  a valid MAC gets a reply. The listener sends its own key and a MAC over the
+  nonce and both keys, and the dialler sends a last MAC, `ok`. A stranger
+  without the code is closed with nothing latched and costs one handshake
+  slot, never a key. The MACs cover both public keys, so nobody on the path
+  can substitute one. That is stronger than the relay path, where catching a
+  substitution is the SAS's job.
+- **The keys are the room's keys.** Both ends then run the same
+  `establishSession` with the secret as salt and the listener as host. The
+  session keys and the SAS come out of the same derivation as on every other
+  pairing.
+- **One roll per secret, across two ways in.** The dialler counts itself
+  paired once it has sent `ok`, and the listener once it has checked it.
+  Before that point either side may fall back to the relays, because nothing
+  has been shown to anyone. After it, any failure is final, like a mismatch.
+  The dialler races the addresses only as far as the nonce and keys a single
+  connection. Keying every address that answered would give each its own
+  keypair, and a listener reachable at two addresses could finish on one
+  while the dialler kept the other.
+- **The socket carries the whole session.** An offline pairing has no room,
+  so the control stream, the manifest, Accept and every frame ride the same
+  WebSocket from the first frame (`createSocketRoom` in
+  `src/transport/rendezvous.js`, `carrier.rs` in Rust). It is already the
+  local path, so neither side offers a LAN or QUIC upgrade.
+- **A listener waits on both.** The sender keeps its rooms up beside the
+  listener, so a receiver that cannot reach the address still pairs over the
+  relays. With every relay unreachable it keeps waiting on the listener
+  rather than giving up, since that is the network it is for.
+
+The app's page cannot accept a connection, so its listener is a relay in the
+app's Rust (`offline_listen` in `src-tauri/src/lan.rs`) that never sees the
+secret. It hands every connection to the page on a socket of its own, and the
+page runs the rendezvous on each and keeps the first that proves the code.
 
 </details>
 

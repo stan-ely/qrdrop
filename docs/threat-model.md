@@ -39,8 +39,27 @@ before relying on it. The mechanisms referred to here are described in
   only with the certificate the other one named. A stranger who finds the
   receiver's UDP port in the seconds it waits can send it packets, and can
   get no connection out of them.
+- An offline pairing (see [protocol.md](protocol.md), "Pairing with no
+  internet") opens a listening port before anyone has paired. It is
+  defended by a rendezvous keyed on the code, so it is no softer than the
+  relay room. Someone on the Wi-Fi without the code who connects is closed
+  without latching anything, and spends neither the sender's keypair nor its
+  one SAS roll. The handshakes run concurrently, each one cut after five
+  seconds, at most 32 at once, so holding the port open does not keep the
+  real peer out. The handshake's MACs cover both public keys, so nobody
+  without the code can substitute one. Someone *with* the code can race the
+  real receiver to the port, exactly as they can race it to the relay room,
+  and the SAS surfaces that the same way.
 
 **Not protected**
+
+- **A code with an address in it shows that address.** "Pair without
+  internet" and `send --offline` put the sender's private IPv4 addresses and
+  a port into the QR. Anyone who can read the QR learns where the sender is
+  on the local network, as well as the code itself. A private address is
+  rarely worth much on its own, and whoever reads the QR already holds the
+  stronger credential. But it is information a code without a locator does
+  not give away, and it is why the setting is off by default.
 
 - **Anyone with the code can join.** It is the entire credential. Show the QR to
   a person, not to a room. Note the boundary this draws, though: someone
